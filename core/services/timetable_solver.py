@@ -30,7 +30,12 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
-from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge, cpsat_workers
+from core.services.cpsat_resources import (
+    BudgetedCpModel,
+    ModelTooLarge,
+    cpsat_workers,
+    tighter_model_limit,
+)
 from core.services.instructor_availability import EMPTY_AVAILABILITY
 from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_autoplace import (
@@ -152,6 +157,17 @@ def _add_day_run_penalties(model, sections, sec_options, assign, penalties) -> N
             run = model.new_bool_var(f"day_run_{i}_{first}")
             model.add(sum(in_window) - 2 <= run)
             penalties.append(run * DAY_RUN_PENALTY)
+
+
+#: The size past which the "optimal" strategy does not build a placement model: production's own
+#: ``TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS`` (render.yaml; a test holds the two equal). Measured
+#: 2026-11-23: every uncapped ``solve_board`` of the strategy (models of 63,000 to 100,000
+#: elements, limits of 1.5 s in the V2 sweep and 5 s in the winner's re-placement) answered
+#: UNKNOWN having searched nothing, so a workstation with no cap paid 40-70 s of every Generate
+#: to land on the compact board production gets in 0.2 s a board. The V2 flow asks for it
+#: (``cap_placement_model``); a standalone "optimal" run does not get it, since a small board over
+#: the ceiling does solve on a workstation (tests/test_instructor_availability_engine_build.py).
+OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS = 40_000
 
 
 def _within_model_budget(**extra):
@@ -643,8 +659,15 @@ def _add_locked_reservations(
 
 
 @_within_model_budget()
-def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
-    """Find optimal placement using CP-SAT solver."""
+def solve_board(
+    board_id: int, time_limit_seconds: float = 10.0, max_model_elements: int | None = None
+) -> dict:
+    """Find optimal placement using CP-SAT solver.
+
+    ``max_model_elements`` tightens the configured model-size cap for this solve (see
+    ``OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS``); a model past it is answered as a solve that
+    ran out of time, nothing placed.
+    """
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
@@ -760,7 +783,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     # ── Build CP-SAT model ───────────────────────────────────────
 
-    model = BudgetedCpModel()
+    model = BudgetedCpModel(tighter_model_limit(max_model_elements))
 
     # Boolean vars: assign[sec_idx][meeting_idx][option_idx] = 1 if assigned
     assign = []
@@ -1250,14 +1273,16 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     return result
 
 
-def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
+def solve_and_persist_board(
+    board_id: int, time_limit_seconds: float = 10.0, max_model_elements: int | None = None
+) -> dict:
     """Solve and persist placements, then assign rooms.
 
     The instructor-clash backstop runs inside ``persist_solver_result`` (the
     writer), so it covers this wrapper and the direct callers in
     ``timetable_autoplace`` alike.
     """
-    result = solve_board(board_id, time_limit_seconds)
+    result = solve_board(board_id, time_limit_seconds, max_model_elements=max_model_elements)
     persist_solver_result(board_id, result)
     from core.services.timetable_rooming import assign_rooms_to_board
     from core.services.timetable_validation import is_lock_enforcement_enabled
@@ -1708,13 +1733,17 @@ def solve_board_with_hints(
     }
 
 
-def solve_scenario(scenario_id: int, time_limit_seconds: float = 5.0) -> dict:
+def solve_scenario(
+    scenario_id: int, time_limit_seconds: float = 5.0, max_model_elements: int | None = None
+) -> dict:
     """Solve all boards in a scenario."""
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
     total_placed = 0
     for board in boards:
-        r = solve_and_persist_board(board.id, time_limit_seconds)
+        r = solve_and_persist_board(
+            board.id, time_limit_seconds, max_model_elements=max_model_elements
+        )
         results[board.label] = r
         total_placed += r.get("placed", 0)
     return {"boards": results, "total_placed": total_placed}

@@ -710,8 +710,8 @@ STRATEGIES: dict[str, dict] = {
         "slot_preference": 0,
     },
     "adaptive": {
-        "label": "Adaptive (Greedy + CP-SAT + SA)",
-        "description": "Greedy baseline → per-board CP-SAT improvement → simulated-annealing polish",
+        "label": "Adaptive (Greedy + SA)",
+        "description": "Greedy baseline → simulated-annealing polish",
         "gap_multiplier": 10,
         "slot_preference": 0,
     },
@@ -3178,19 +3178,17 @@ def auto_place_board(
 
 
 def _adaptive_scenario(scenario_id: int, candidate_gen_budget: float | None = None) -> dict:
-    """Adaptive portfolio: greedy → CP-SAT → local search per board.
+    """Adaptive portfolio: greedy → local search per board.
 
     1. Greedy compact baseline (always produces a feasible solution).
-    2. CP-SAT warm-started from greedy (dynamic time budget by board size).
-       If CP-SAT finds an equal-or-better solution, persist it.
-    3. Simulated annealing polish on whatever is persisted (greedy or CP-SAT).
+    2. (No CP-SAT solve: the warm-started one never changed a board; see Phase 2 below.)
+    3. Simulated annealing polish on the greedy board.
 
     Never returns an empty board — greedy baseline is the floor.
     """
     import logging
 
     from core.services.timetable_local_search import optimize_and_persist_board
-    from core.services.timetable_solver import persist_solver_result, solve_board_with_hints
 
     logger = logging.getLogger(__name__)
 
@@ -3209,53 +3207,25 @@ def _adaptive_scenario(scenario_id: int, candidate_gen_budget: float | None = No
         phase_info["greedy"] = {"placed": greedy["placed"], "skipped": greedy["skipped"]}
         best_placed = greedy["placed"]
 
-        # ── Phase 2: CP-SAT with warm-start hints ───────────────
-        n_sections = greedy["placed"] + greedy["skipped"]
-        if n_sections > 0:
-            # Dynamic time budget: small boards get full solver, large ones less
-            if n_sections < 15:
-                cpsat_budget = 3.0
-            elif n_sections < 30:
-                cpsat_budget = 5.0
-            else:
-                cpsat_budget = 8.0
-            # Candidate-gen sweep: cap the doomed/redundant CP-SAT solve so it
-            # fails fast instead of burning the full budget on a result that is
-            # re-polished anyway.
-            if candidate_gen_budget and candidate_gen_budget > 0:
-                cpsat_budget = min(cpsat_budget, candidate_gen_budget)
-
-            try:
-                cpsat = solve_board_with_hints(
-                    board.id,
-                    greedy["placements"],
-                    time_limit_seconds=cpsat_budget,
-                )
-                phase_info["cpsat"] = {
-                    "status": cpsat["status"],
-                    "placed": cpsat["placed"],
-                    "objective": cpsat.get("objective", 0),
-                    "improved": cpsat.get("improved", False),
-                }
-                if cpsat["status"] in ("optimal", "feasible") and cpsat["placed"] >= best_placed:
-                    # CP-SAT found an equal-or-better solution (more placements, or
-                    # same count but solver-optimized objective) — persist it
-                    persist_solver_result(board.id, cpsat)
-                    from core.services.timetable_rooming import (
-                        assign_rooms_to_board as _assign_rooms,
-                    )
-
-                    _assign_rooms(board.id)
-                    best_placed = cpsat["placed"]
-                    logger.info(
-                        "adaptive[%s]: CP-SAT improved (%s→%s placed)",
-                        label,
-                        greedy["placed"],
-                        cpsat["placed"],
-                    )
-            except Exception:
-                logger.exception("adaptive[%s]: CP-SAT failed, keeping greedy baseline", label)
-                phase_info["cpsat"] = {"status": "error", "placed": 0}
+        # ── Phase 2: no CP-SAT solve ────────────────────────────
+        # The warm-started placement solve that stood here never changed a board
+        # (measured 2026-11-23: it returned "optimal" with nothing placed in every
+        # solve of six scenarios, none was kept). Its model holds only the sections
+        # still free after the greedy placement: empty when the greedy placed them
+        # all, and otherwise "place every one of the sections the greedy could not",
+        # which the solver does not finish (UNKNOWN after the whole 3-8 s budget,
+        # and after 30 s on a crowded board). Its hints name placements that are
+        # not in its model, and it was never kept in any measured solve: a kept
+        # result would have replaced the greedy's placements
+        # (``persist_solver_result`` clears them all) with its own leftovers.
+        # ``solve_board_with_hints`` stays in ``timetable_solver`` for its own
+        # callers; see tests/test_adaptive_no_hinted_solve.py.
+        phase_info["cpsat"] = {
+            "status": "skipped",
+            "placed": 0,
+            "objective": 0,
+            "improved": False,
+        }
 
         # ── Phase 3: Local search polish ────────────────────────
         _sa_seconds = 5.0
@@ -3443,8 +3413,12 @@ def auto_place_scenario(
     strategy: str = DEFAULT_STRATEGY,
     baseline_placements: dict | None = None,
     candidate_gen_budget: float | None = None,
+    cap_placement_model: bool = False,
 ) -> dict:
-    """Place each board in a replayable strategy stream when a run seed is bound."""
+    """Place each board in a replayable strategy stream when a run seed is bound.
+
+    ``cap_placement_model``: the "optimal" strategy does not build a CP-SAT placement model
+    past ``OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS`` (the V2 flow asks for it; see there)."""
     # Candidate evaluation and winner re-placement must enter the same logical
     # strategy stream, independently of which portfolio stages ran before them.
     context = (
@@ -3460,6 +3434,7 @@ def auto_place_scenario(
             strategy=strategy,
             baseline_placements=baseline_placements,
             candidate_gen_budget=candidate_gen_budget,
+            cap_placement_model=cap_placement_model,
         )
 
 
@@ -3468,6 +3443,7 @@ def _auto_place_scenario(
     strategy: str = DEFAULT_STRATEGY,
     baseline_placements: dict | None = None,
     candidate_gen_budget: float | None = None,
+    cap_placement_model: bool = False,
 ) -> dict:
     """Auto-place sections on every board in a scenario.
 
@@ -3514,7 +3490,7 @@ def _auto_place_scenario(
             return min(seconds, candidate_gen_budget)
         return seconds
 
-    # Adaptive: greedy baseline → CP-SAT improvement → local search polish
+    # Adaptive: greedy baseline → local search polish
     if strategy == "adaptive":
         result = _adaptive_scenario(scenario_id, candidate_gen_budget=candidate_gen_budget)
         result.setdefault("decision_trace", _merge_board_decision_traces(result.get("boards", {})))
@@ -3530,10 +3506,23 @@ def _auto_place_scenario(
     if strategy == "optimal":
         import logging
 
-        from core.services.timetable_solver import solve_scenario
+        from core.services.timetable_solver import (
+            OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS,
+            solve_scenario,
+        )
 
         logger = logging.getLogger(__name__)
-        result = solve_scenario(scenario_id, time_limit_seconds=_cap(5.0))
+        # With cap_placement_model (the V2 sweep and the re-placement of its winner) the
+        # strategy does not build a placement model past production's size cap: every such
+        # model answered UNKNOWN (see OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS). Without it
+        # (a standalone run) nothing changes.
+        result = solve_scenario(
+            scenario_id,
+            time_limit_seconds=_cap(5.0),
+            max_model_elements=OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS
+            if cap_placement_model
+            else None,
+        )
         boards_result = result.get("boards", {})
 
         # Per-board fallback: only re-run compact on boards that got 0 placements

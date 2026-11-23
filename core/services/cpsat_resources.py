@@ -60,6 +60,15 @@ def max_model_elements() -> int:
     return int(getattr(settings, "TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS", _DEFAULT_MAX_MODEL_ELEMENTS))
 
 
+def tighter_model_limit(extra: int | None = None) -> int:
+    """The element budget for one solve: the configured one, or ``extra`` where that is tighter
+    (0 or None is no limit on that side; both unset is no limit)."""
+    configured = max_model_elements()
+    if not extra or extra <= 0:
+        return configured
+    return extra if configured <= 0 else min(configured, extra)
+
+
 class BudgetedCpModel(cp_model.CpModel):
     """A ``CpModel`` that raises ``ModelTooLarge`` once it holds more than
     ``budget`` variables and constraints.
