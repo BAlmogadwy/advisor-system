@@ -136,6 +136,102 @@ function planStatusLabel(raw){
   return (IS_AR?PLAN_STATUS_AR:PLAN_STATUS_EN)[key] || raw;
 }
 
+/* What the suggestions table DRAWS for a status or a priority. The values kept
+   in the shortlist objects and sent to the server stay English; an unknown
+   value is shown as it came. */
+const REC_STATUS_AR={Eligible:'مؤهل', Blocked:'غير مؤهل'};
+const REC_PRIORITY_AR={High:'عالية', Med:'متوسطة', Low:'منخفضة'};
+function recLabel(map,raw){
+  return IS_AR ? (map[raw] || raw) : raw;
+}
+
+/* The three builder methods, by plain name. */
+const METHOD_NAME={
+  A: IS_AR ? 'أكبر عدد من المقررات' : 'Most courses scheduled',
+  B: IS_AR ? 'أسبوع مضغوط: أيام وفجوات أقل معًا' : 'Compact week: few days and few gaps together',
+  C: IS_AR ? 'أقل أيام أولًا ثم أقل فجوات' : 'Fewest days first, then fewest gaps',
+};
+function methodName(opt){
+  return METHOD_NAME[String(opt.method||opt.name||'').charAt(0).toUpperCase()] || METHOD_NAME.C;
+}
+
+/* Why a course was not scheduled, from the server's structured reason_code
+   (the English sentence is free to change; the code is the contract). Numbers
+   are isolated so they read left to right inside an Arabic sentence. An unknown
+   code shows the server's own sentence. Built with safeHtml, so every value is
+   escaped. */
+function reasonHtml(u){
+  const detail=(Array.isArray(u.details) && u.details[0]) || {};
+  const limit=Number(detail.credit_limit);
+  const credits=Number(detail.course_credits);
+  const n=(v)=> IS_AR ? safeHtml`<bdi dir="ltr">${v}</bdi>` : v;
+  switch(String(u.reason_code||'')){
+    case 'DID_NOT_FIT':
+      if(Number.isFinite(limit) && limit>0){
+        if(Number.isFinite(credits) && credits>limit){
+          return IS_AR
+            ? safeHtml`${n(credits)} ساعات، أعلى من حد ${n(limit)} ساعة لهذا البناء`
+            : safeHtml`${n(credits)} credits, above the ${n(limit)}-credit limit of this build`;
+        }
+        return IS_AR
+          ? safeHtml`تعذّر إدراجه ضمن حد ${n(limit)} ساعة، أو أن شُعبه متعارضة`
+          : safeHtml`Could not fit within the ${n(limit)}-credit limit, or its sections clash`;
+      }
+      break;
+    case 'ALL_SECTIONS_CLASH':
+      return safeHtml`${IS_AR ? 'كل الشُعب تتعارض مع الخطة المختارة' : 'Every section clashes with the chosen plan'}`;
+    case 'NOT_ON_FILE':
+      return safeHtml`${IS_AR ? 'لا توجد شعبة مطروحة لهذا الطالب هذا الفصل' : 'No section is offered to this student this term'}`;
+    case 'MEETING_DATA_INCOMPLETE':
+      return safeHtml`${IS_AR ? 'بيانات لقاءات الشعبة غير مكتملة' : 'Section meeting data is incomplete'}`;
+    case 'SEARCH_BUDGET_EXHAUSTED':
+      return safeHtml`${IS_AR ? 'انتهى وقت البحث قبل إدراجه' : 'The search ran out of time before placing it'}`;
+    case 'SOLVER_MODEL_INVALID':
+      return safeHtml`${IS_AR ? 'رفض المُحلّل هذا البناء' : 'The solver rejected this build'}`;
+  }
+  return safeHtml`${u.reason || (IS_AR ? 'سبب غير محدد' : 'no reason given')}`;
+}
+
+/* One line per distinct reason: "Not scheduled (3): A, B, C — reason". */
+const WARN_ICON=safeHtml`<span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>`;
+function unscheduledByReasonHtml(list){
+  const groups=new Map();
+  (list||[]).forEach(u=>{
+    const why=reasonHtml(u);
+    const key=String(why);
+    if(!groups.has(key)) groups.set(key,{why, codes:[]});
+    const code=String(u.course_code||'');
+    if(code) groups.get(key).codes.push(code);
+  });
+  const lines=[...groups.values()].map(({why,codes})=>{
+    const codeList=codes.map(c=>safeHtml`<bdi dir="ltr">${c}</bdi>`).flatMap((h,i)=>i?[', ',h]:[h]);
+    const head=codes.length
+      ? safeHtml`${IS_AR?'غير مجدولة':'Not scheduled'} (${IS_AR?safeHtml`<bdi dir="ltr">${codes.length}</bdi>`:codes.length}): ${codeList} — `
+      : '';
+    return safeHtml`<div class="opt-reason">${WARN_ICON}<span>${head}${why}</span></div>`;
+  });
+  return safeHtml`${lines}`;
+}
+
+/* A section's meetings, one group per distinct start-end: the days that share
+   it (week order) and the range. */
+const WEEK_ORDER=['SUN','MON','TUE','WED','THU','FRI','SAT'];
+function groupMeetingsByTime(meetings){
+  const byTime=new Map();
+  (meetings||[]).forEach(m=>{
+    const start=m.start_time||'', end=m.end_time||'';
+    const key=`${start}-${end}`;
+    if(!byTime.has(key)) byTime.set(key,{start, end, days:[]});
+    const day=normalizeDay(m.day);
+    const g=byTime.get(key);
+    if(!g.days.includes(day)) g.days.push(day);
+  });
+  const rank=(d)=>{ const i=WEEK_ORDER.indexOf(d); return i<0 ? 99 : i; };
+  return [...byTime.values()]
+    .map(g=>({...g, days:g.days.slice().sort((a,b)=>rank(a)-rank(b))}))
+    .sort((a,b)=>(toMins(a.start)??1e9)-(toMins(b.start)??1e9));
+}
+
 function useProgrammeSectionsOnly(){
   return !!q('programSectionsOnly')?.checked;
 }
@@ -427,29 +523,27 @@ function renderShortlist(){
   shortlist.forEach((c,idx)=>{
     credits += Number(c.credits||0);
     const row=document.createElement('div');
-    row.className='border rounded p-2 mb-2';
+    row.className='sl-row';
 
+    const code=escapeHtml(c.course_code);
     const hasPinned=(c.pinned_sections&&c.pinned_sections.length>0);
     const pinnedHtml=hasPinned
-      ? `<div class="d-flex align-items-center flex-wrap" style="margin-top:3px; gap:4px">
+      ? `<span class="sl-pin">
            <span class="fs-11 fw-semibold text-teal" title="${IS_AR?'هذه هي الشعبة الوحيدة المسموح بها لهذا المقرر':'This is the only allowed section for this course'}">${IS_AR?'الشعبة المثبّتة:':'Pinned section:'}</span>
-           ${c.pinned_sections.map((p,pi)=>`<button type="button" class="sl-pin-badge align-items-center fs-11 fw-semibold text-teal u-cursor-pointer" data-pi="${pi}" aria-label="${IS_AR?'إزالة تثبيت الشعبة':'Remove pinned section'} ${p.section}" style="display:inline-flex; gap:3px; padding:1px 7px; border-radius:5px; background:var(--teal-dim); border:0">§${p.section} <span style="font-size:9px;opacity:0.6" aria-hidden="true">✕</span></button>`).join('')}
-         </div>`
-      : `<div class="fs-11 text-t4" style="margin-top:2px">${IS_AR?'أي شعبة (البناء يختار الأنسب)':'Any section (builder picks best)'}</div>`;
+           ${c.pinned_sections.map((p,pi)=>`<button type="button" class="sl-pin-badge fs-11 fw-semibold" data-pi="${pi}" aria-label="${IS_AR?'إزالة تثبيت الشعبة':'Remove pinned section'} ${escapeHtml(p.section)}">§${escapeHtml(p.section)} <span class="sl-pin-x" aria-hidden="true">✕</span></button>`).join('')}
+         </span>`
+      : `<span class="sl-pin fs-11 text-t4">${IS_AR?'أي شعبة':'Any section'}</span>`;
+    const removeLabel=`${IS_AR?'إزالة':'Remove'} ${c.course_code}`;
 
     row.innerHTML=`
-      <div class="d-flex justify-content-between">
-        <div class="flex-fill">
-          <strong>${c.course_code}</strong> ${c.course_name||''}
-          <span class="text-secondary">(${c.credits||0} ${IS_AR?'ساعة':'cr'})</span>
-          ${pinnedHtml}
-        </div>
-        <button class="pl-btn pl-btn-red" data-i="${idx}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>${IS_AR?'إزالة':'Remove'}</button>
-      </div>
-      <div class="form-check mt-1">
+      <span class="sl-main"><strong>${code}</strong> ${escapeHtml(c.course_name||'')}
+        <span class="text-secondary">(${escapeHtml(c.credits||0)} ${IS_AR?'ساعة':'cr'})</span></span>
+      ${pinnedHtml}
+      <span class="sl-must">
         <input type="checkbox" class="form-check-input" id="m${idx}" ${c.must_take?'checked':''}>
         <label class="form-check-label" for="m${idx}" title="${IS_AR?'يجب أن يظهر هذا المقرر في كل نتيجة':'This course is required in every result'}">${IS_AR?'إلزامي — في كل نتيجة':'Must-take — every result'}</label>
-      </div>`;
+      </span>
+      <button type="button" class="btn btn-sm btn-neutral btn-icon sl-remove" data-sl-remove data-i="${idx}" aria-label="${escapeHtml(removeLabel)}" title="${escapeHtml(removeLabel)}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button>`;
 
     /* Remove individual pinned section badges */
     row.querySelectorAll('.sl-pin-badge').forEach(badge=>{
@@ -567,15 +661,15 @@ async function renderPlanPalette(studentId){
         const hasOpen=list.some(s=> !sectionCapacity(s).full);
         const prereqOk = (String(c.status||'') !== 'not_taken') ? true : Boolean(c.can_register);
 
-        let cls='plan-black';
+        let offer='none';
         let label=IS_AR?'غير مطروح':'not offered';
 
         if(!prereqOk){
-          cls='plan-prereq'; label=IS_AR?'المتطلبات غير مستوفاة':'prereq missing';
+          offer='prereq'; label=IS_AR?'المتطلبات غير مستوفاة':'prereq missing';
         }else if(hasAny && hasOpen){
-          cls='plan-green'; label=IS_AR?'شعب متاحة':'open sections';
+          offer='open'; label=IS_AR?'شعب متاحة':'open sections';
         }else if(hasAny){
-          cls='plan-red'; label=IS_AR?'كل الشعب ممتلئة':'all full';
+          offer='full'; label=IS_AR?'كل الشعب ممتلئة':'all full';
         }
 
         const modeIgnoreRegistered = (q('mode')?.value === 'ignore');
@@ -589,7 +683,7 @@ async function renderPlanPalette(studentId){
         if(onlyHigh && Number(c.importance_score||0) < 1) return;
 
         const tr=document.createElement('tr');
-        tr.style.cursor=canAdd?'pointer':'default';
+        if(canAdd) tr.className='is-addable';
         tr.innerHTML=`
           <td>
             <input type="checkbox" class="form-check-input me-2 planPick"
@@ -602,7 +696,7 @@ async function renderPlanPalette(studentId){
           </td>
           <td>${planStatusLabel(c.status)}</td>
           <td>${Number(c.importance_score||0).toFixed(2)}</td>
-          <td><span class="plan-chip ${cls}">${label}</span></td>
+          <td><span class="pl-offer" data-state="${safeHtml`${offer}`}">${label}</span></td>
           <td><button class="pl-btn pl-btn-teal" ${canAdd?'':'disabled'}><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>${IS_AR?'إضافة':'Add'}</button></td>`;
 
         const addCourse=()=>{
@@ -753,18 +847,15 @@ async function renderAvailableSections(){
           statusLabel=IS_AR?'ممتلئ':'Full'; counts.gray++;
         }
 
-        const timeStr=(s.meetings||[]).map(m=>
-          `${UI.dayShort[normalizeDay(m.day)]||normalizeDay(m.day)} ${m.start_time||''}-${m.end_time||''}`
-        ).join(', ')||(IS_AR?'غير محدد':'TBA');
+        /* one line per distinct start-end: the days that share it, then the range */
+        const timeGroups=groupMeetingsByTime(s.meetings);
+        const groupDays=g=>g.days.map(d=>UI.dayShort[d]||d).join(' ');
+        const timeStr=timeGroups.map(g=>`${groupDays(g)} ${g.start}-${g.end}`).join(', ')
+          ||(IS_AR?'غير محدد':'TBA');
         /* the HTML twin of timeStr for the visible cell; timeStr stays plain text
            for the aria-label */
-        const meetingsHtml=(s.meetings||[]).map(m=>
-          safeHtml`${UI.dayShort[normalizeDay(m.day)]||normalizeDay(m.day)} ${timeRangeHtml(m.start_time||'',m.end_time||'')}`
-        );
-        /* the safeHtml wrapper where timeHtml is written below keeps that sink
-           out of the html-sinks allow-list */
-        const timeHtml=meetingsHtml.length
-          ? safeHtml`${meetingsHtml.flatMap((h,i)=>i?[', ',h]:[h])}`
+        const timeHtml=timeGroups.length
+          ? safeHtml`${timeGroups.map(g=>safeHtml`<span class="sec-time-line">${groupDays(g)} ${timeRangeHtml(g.start,g.end)}</span>`)}`
           : (IS_AR?'غير محدد':'TBA');
 
         const capacityText=capacity.known
@@ -800,7 +891,7 @@ async function renderAvailableSections(){
             <div class="avail-course-name">${course.name}</div>
           </div>
           <span class="avail-course-credits" style="margin-inline-end:4px">${course.credits} ${IS_AR?'ساعة':'cr'}</span>
-          <span class="avail-course-credits" style="background:${course.importance>=3?'var(--teal-dim);color:var(--teal)':course.importance>=1?'var(--amber-dim);color:var(--warning)':'var(--pl-overlay-2);color:var(--t4)'}">⚡${course.importance.toFixed(1)}</span>
+          <span class="avail-course-credits" data-tone="${course.importance>=3?'high':course.importance>=1?'mid':'low'}">⚡${course.importance.toFixed(1)}</span>
         </button>
         ${secHtml}`;
 
@@ -1043,17 +1134,7 @@ q('runBuilder').onclick=async()=>{
   const blocked=Array.isArray(data.unscheduled)?data.unscheduled:[];
   const blockedHtml=(!feasible && blocked.length)
     ? `<div class="mt-2"><strong>${IS_AR?'المقررات التي تعذّرت جدولتها':'Courses that could not be scheduled'}:</strong></div>`
-      + blocked.map(u=>{
-          const code=escapeHtml(u.course_code||'');
-          const reason=escapeHtml(u.reason||(IS_AR?'سبب غير محدد':'no reason given'));
-          const detail=Array.isArray(u.details)&&u.details.length
-            ? ` <span class="fs-11 text-t4">(${u.details.map(d=>escapeHtml(
-                d.section ? `${d.section}: ${(d.reason_codes||[]).join(', ')}`
-                          : Object.entries(d).map(([k,v])=>`${k}=${v}`).join(' ')
-              )).join('; ')})</span>`
-            : '';
-          return `<div class="mt-1">• <strong>${code}</strong>: ${reason}${detail}</div>`;
-        }).join('')
+      + `<div class="opt-diag">${safeHtml`${unscheduledByReasonHtml(blocked)}`}</div>`
     : '';
 
   const summaryEl=q('builderSummary');
@@ -1091,7 +1172,7 @@ q('runBuilder').onclick=async()=>{
     vs.innerHTML='';
     const mk=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;vs.appendChild(o);};
     mk('baseline', IS_AR ? 'الأساس' : 'Baseline');
-    options.forEach(o=>mk(String(o.name||''), IS_AR ? `خيار المُنشئ ${o.name||''}` : `Builder ${o.name||''}`));
+    options.forEach(o=>mk(String(o.name||''), IS_AR ? `الخيار ${o.name||''}` : `Option ${o.name||''}`));
     mk('overlay', IS_AR ? 'تراكب (الأساس + المحدد)' : 'Overlay (Baseline + Selected)');
     if([...vs.options].some(o=>o.value===prev)) vs.value=prev;
   }
@@ -1118,8 +1199,12 @@ q('runBuilder').onclick=async()=>{
 
     cards.querySelectorAll('[data-opt]').forEach(el=>{
       const sel=el.getAttribute('data-opt')===String(name||'');
-      el.style.borderColor=sel?'var(--teal)':'';
-      el.style.boxShadow=sel?'0 0 0 2px var(--brand-glow)':'';
+      el.classList.toggle('is-selected', sel);
+      const pick=el.querySelector('.opt-select');
+      pick.setAttribute('aria-pressed', sel?'true':'false');
+      pick.innerHTML=sel
+        ? `<span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span>${IS_AR?'محدد':'Selected'}`
+        : (IS_AR?'اختيار':'Select');
     });
 
     const vs=q('visualSource');
@@ -1140,11 +1225,12 @@ q('runBuilder').onclick=async()=>{
     const col=document.createElement('div');
     col.className='col-md-4';
     col.innerHTML=`
-      <div class="planner-panel u-cursor-pointer" data-opt="${opt.name}" style="margin-bottom:0; padding:12px 14px">
-        <div class="fw-semibold" style="font-size:13px; color:var(--navy)">${IS_AR?'الخيار':'Option'} ${opt.name}</div>
-        <div class="fs-12" style="margin-top:4px">${IS_AR?'تمت الجدولة':'Scheduled'} <strong class="text-teal">${opt.scheduled||0}</strong>/${opt.target||0}</div>
+      <div class="planner-panel option-card" data-opt="${escapeHtml(opt.name)}">
+        <div class="fw-semibold opt-name">${IS_AR?'الخيار':'Option'} ${escapeHtml(opt.name)}</div>
+        <div class="opt-method">${escapeHtml(methodName(opt))}</div>
+        <div class="fs-12 opt-count">${IS_AR?'تمت الجدولة':'Scheduled'} <strong class="text-teal">${opt.scheduled||0}</strong>/${opt.target||0}</div>
         <div class="fs-11 text-t4">${IS_AR?'غير مجدول':'Unscheduled'} ${(opt.unscheduled||[]).length||0}</div>
-        <button class="pl-btn pl-btn-teal w-100 justify-content-center mt-2">${IS_AR?'اختيار':'Select'}</button>
+        <button type="button" class="pl-btn pl-btn-teal w-100 justify-content-center mt-2 opt-select" aria-pressed="false">${IS_AR?'اختيار':'Select'}</button>
       </div>`;
     col.querySelector('button').onclick=()=>chooseOption(opt.name);
     cards.appendChild(col);
@@ -1155,26 +1241,21 @@ q('runBuilder').onclick=async()=>{
   options.forEach(opt=>{
     const div=document.createElement('div');
     div.className='border rounded p-2 mb-2';
-    const method = String(opt.method||opt.name||'').charAt(0).toUpperCase();
-    const rationale = method==='A'
-      ? (IS_AR ? 'تعظيم عدد المقررات المجدولة' : 'Maximise scheduled courses')
-      : (method==='B'
-        ? (IS_AR ? 'ضغط بالبت ماسك (أيام/فجوات)' : 'Bitmask compactness (days/gaps)')
-        : (IS_AR ? 'بحث DFS بالبت ماسك مع ترتيب معجمي (أيام/فجوات/كسر تعادل)' : 'Bitmask DFS lexicographic (days/gaps/tiebreakers)'));
+    div.dataset.diag=String(opt.name||'');
 
     div.innerHTML=`
-      <div><strong>${IS_AR?'الخيار':'Option'} ${opt.name}</strong> - ${IS_AR?'تمت الجدولة':'Scheduled'} ${opt.scheduled}/${opt.target}</div>
-      <div class="small text-secondary">${rationale}</div>
+      <div><strong>${IS_AR?'الخيار':'Option'} ${escapeHtml(opt.name)}</strong> - ${IS_AR?'تمت الجدولة':'Scheduled'} ${escapeHtml(opt.scheduled)}/${escapeHtml(opt.target)}</div>
+      <div class="small text-secondary">${escapeHtml(methodName(opt))}</div>
       <div class="mt-1">
-        ${(opt.mappings||[]).map(m=>`<div>• ${courseKey(m)} → ${m.section}</div>`).join('') || `<span class="text-secondary">${T.noMappings}</span>`}
+        ${(opt.mappings||[]).map(m=>`<div>• ${escapeHtml(courseKey(m))} → ${escapeHtml(m.section)}</div>`).join('') || `<span class="text-secondary">${T.noMappings}</span>`}
       </div>
-      <div class="mt-1 text-danger">
-        ${(opt.unscheduled||[]).map(u=>`<div>• ${u.course_code}: ${u.reason}</div>`).join('')}
+      <div class="mt-1 opt-diag">
+        ${safeHtml`${unscheduledByReasonHtml(opt.unscheduled)}`}
       </div>`;
     wrap.appendChild(div);
   });
 
-  q('swapSuggestions').innerHTML=(data.swap_suggestions||[]).map(s=>`<div>• ${s.course_code}: ${s.from_section} → ${s.to_section} (${s.reason})</div>`).join('') || `<span class="text-secondary">${T.noSwaps}</span>`;
+  q('swapSuggestions').innerHTML=(data.swap_suggestions||[]).map(s=>`<div>• ${escapeHtml(s.course_code)}: ${escapeHtml(s.from_section)} → ${escapeHtml(s.to_section)} (${escapeHtml(s.reason)})</div>`).join('') || `<span class="text-secondary">${T.noSwaps}</span>`;
 
   renderVisualTimetable(q('visualSource').value || 'baseline');
 };
@@ -1297,18 +1378,17 @@ q('fetchBtn').onclick=async()=>{
   currentRecommendations=data.recommendations||[];
   const rt=q('recTable'); rt.innerHTML='';
   currentRecommendations.forEach(rec=>{
-    const tag=rec.status==='Eligible'?'success':'danger';
     const tr=document.createElement('tr');
     tr.innerHTML=`
       <td>
-        <div><strong>${rec.course_code}</strong></div>
-        <div class="small text-secondary">${rec.course_name||''}</div>
+        <div><strong>${escapeHtml(rec.course_code)}</strong></div>
+        <div class="small text-secondary">${escapeHtml(rec.course_name||'')}</div>
       </td>
       <td>
-        <span class="badge text-bg-${tag}">${rec.status}</span>
-        ${rec.missing_prerequisites?.length?`<div class="small text-danger">${IS_AR?'ناقص:':'Missing:'} ${rec.missing_prerequisites.join(', ')}</div>`:''}
+        <span class="rec-status" data-tone="${rec.status==='Eligible'?'ok':'blocked'}">${escapeHtml(recLabel(REC_STATUS_AR,rec.status))}</span>
+        ${rec.missing_prerequisites?.length?`<div class="small text-danger">${IS_AR?'ناقص:':'Missing:'} ${rec.missing_prerequisites.map(m=>`<bdi dir="ltr">${escapeHtml(m)}</bdi>`).join(', ')}</div>`:''}
       </td>
-      <td>${rec.priority}</td>
+      <td>${escapeHtml(recLabel(REC_PRIORITY_AR,rec.priority))}</td>
       <td><button class="pl-btn pl-btn-teal" ${rec.status!=='Eligible'?'disabled':''}><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>${IS_AR?'إضافة':'Add'}</button></td>`;
 
     tr.querySelector('button').onclick=()=>{

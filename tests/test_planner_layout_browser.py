@@ -896,11 +896,12 @@ class PlannerLayoutBrowserTests(StaticLiveServerTestCase):
                     continue
                 name = f"{section['course_key']} {section['section']}"
                 shown = seen.replace(chr(10), " | ")
-                # Every repeat of a range counts: a half fix that isolates only the
-                # first of four identical ranges must not pass.
+                # The days that share a time are listed once beside it (slice 4,
+                # tests/test_planner_lists_browser.py), so each distinct range is
+                # read once.
                 ranges = [(m["start_time"], m["end_time"]) for m in section["meetings"]]
                 for start, end in sorted(set(ranges)):
-                    expected = ranges.count((start, end))
+                    expected = 1
                     right = seen.count(f"{start}-{end}")
                     swapped = seen.count(f"{end}-{start}") if start != end else 0
                     if swapped:

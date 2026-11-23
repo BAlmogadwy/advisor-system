@@ -135,6 +135,8 @@ NEUTRAL_TEMPLATE_SITES = {
     # row's Edit, Times and Deactivate/Activate (built by the page script).
     ("core/templates/core/instructor_management.html", "imRefresh"),
     ("core/templates/core/instructor_management.html", "data-dialog-close"),
+    # The planner shortlist's icon-only Remove, one per row.
+    ("static/js/page-planner.js", "data-sl-remove"),
     ("static/js/page-instructor-management.js", "data-im-edit"),
     ("static/js/page-instructor-management.js", "data-im-rules"),
     ("static/js/page-instructor-management.js", "data-im-active"),
@@ -199,7 +201,7 @@ def _identify(path: pathlib.Path, tag: str) -> tuple[str, str]:
         r"(data-dialog-close)",
         r'class="[^"]*\b(tw-readiness-go)\b',
         r'data-focus-key="([^"]+)"',
-        r"(data-im-(?:edit|active|rules))=",
+        r"(data-im-(?:edit|active|rules)|data-sl-remove)",
     ):
         found = re.search(probe, tag)
         if found:

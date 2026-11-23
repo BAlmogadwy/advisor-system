@@ -8128,10 +8128,12 @@ details > summary::-webkit-details-marker   { display: none; }
 .pl-text-xs { font-size: var(--text-xs); }
 .pl-summary-label { color: var(--t3); font-size: var(--text-sm); font-weight: 600; cursor: pointer; }
 .pl-diag-heading { margin-bottom: 6px; color: var(--navy); font-size: var(--text-sm); font-weight: 600; }
-.pl-legend-dot-black { background: var(--ink); }
-.pl-legend-dot-red { background: var(--danger); }
-.pl-legend-dot-green { background: var(--teal); }
-.pl-legend-dot-purple { background: var(--royal); }
+/* the four availability states of the plan palette: each dot is the colour of its
+   .pl-offer chip's text (black = none, red = full, green = open, purple = prereq) */
+.pl-legend-dot-black { background: var(--t3); }
+.pl-legend-dot-red { background: var(--sev-critical); }
+.pl-legend-dot-green { background: var(--text-brand); }
+.pl-legend-dot-purple { background: var(--sev-info); }
 
 /* Planner — mobile */
 @media (max-width: 768px) {
@@ -8316,6 +8318,95 @@ details > summary::-webkit-details-marker   { display: none; }
   transition:    border-color 0.2s;
 }
 .avail-search input:focus { border-color: var(--teal); }
+
+/* ── Planner lists and results ────────────────────────────────────────────
+   Status chips (text clears 4.5:1 on its own tint in both themes), the
+   shortlist rows, grouped meeting lines, option cards and the reason lines.
+   Nothing here is clickable unless it is a button; the palette's availability
+   chip is a status, not the shared .plan-chip (the split view owns that). */
+.rec-status,
+.pl-offer {
+  display:       inline-block;
+  padding:       1px 8px;
+  border-radius: var(--radius-sm);
+  font-size:     var(--text-micro);
+  font-weight:   700;
+}
+.pl-offer { white-space: nowrap; }
+.rec-status[data-tone="ok"]      { background: var(--sev-ok-bg);       color: var(--text-brand); }
+.rec-status[data-tone="blocked"] { background: var(--sev-critical-bg); color: var(--sev-critical); }
+.pl-offer[data-state="open"]     { background: var(--sev-ok-bg);       color: var(--text-brand); }
+.pl-offer[data-state="full"]     { background: var(--sev-critical-bg); color: var(--sev-critical); }
+.pl-offer[data-state="prereq"]   { background: var(--sev-info-bg);    color: var(--sev-info); }
+.pl-offer[data-state="none"]     { background: var(--pl-overlay-2);    color: var(--t3); }
+/* a row that can be added keeps its mouse-convenience click (its Add button is
+   the keyboard route) */
+#planPalette tr.is-addable { cursor: pointer; }
+
+.avail-course-credits[data-tone="high"] { background: var(--teal-dim);      color: var(--text-brand); }
+.avail-course-credits[data-tone="mid"]  { background: var(--sev-warning-bg); color: var(--sev-warning-ink); }
+.avail-course-credits[data-tone="low"]  { background: var(--pl-overlay-2);  color: var(--t3); }
+
+/* Shortlist: one rule-separated row per course */
+.sl-row {
+  display:       flex;
+  flex-wrap:     wrap;
+  align-items:   center;
+  gap:           4px 12px;
+  padding:       6px 0;
+  border-bottom: var(--border-subtle);
+}
+.sl-row:last-child { border-bottom: 0; }
+.sl-main { flex: 1 1 220px; min-width: 0; }
+.sl-pin  { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sl-must { display: inline-flex; align-items: center; gap: 6px; }
+.sl-must .form-check-input { float: none; margin: 0; }
+.sl-must .form-check-label { margin: 0; }
+.sl-pin-badge {
+  display:       inline-flex;
+  align-items:   center;
+  gap:           3px;
+  padding:       1px 7px;
+  border:        0;
+  border-radius: var(--radius-xs);
+  background:    var(--teal-dim);
+  color:         var(--text-brand);
+  cursor:        pointer;
+}
+.sl-pin-x { font-size: var(--text-micro); opacity: 0.7; }
+
+/* A section's meetings: one line per distinct time */
+.sec-time-line { display: block; }
+
+/* Option cards: only the Select button is clickable */
+.option-card {
+  margin-bottom: 0;
+  padding:       12px 14px;
+  border:        2px solid transparent;
+}
+.option-card.is-selected {
+  border-color: var(--teal);
+  box-shadow:   0 0 0 2px var(--brand-glow);
+}
+.opt-name   { color: var(--navy); font-size: var(--text-sm); }
+.opt-method { margin-top: 2px; color: var(--t3); font-size: var(--text-xs); }
+.opt-count  { margin-top: 4px; }
+.option-card.is-selected .opt-select {
+  background: var(--btn-primary-bg);
+  color:      var(--btn-primary-ink);
+  cursor:     default;
+}
+.opt-select .i { width: 13px; height: 13px; }
+
+/* Why courses were not scheduled: neutral ink, one line per reason */
+.opt-reason {
+  display:     flex;
+  align-items: flex-start;
+  gap:         6px;
+  margin-top:  4px;
+  color:       var(--t2);
+}
+.opt-reason .i { width: 14px; height: 14px; margin-top: 2px; color: var(--sev-warning); }
 
 /* Dark-mode overrides — planner */
 html[data-theme="dark"] {
