@@ -78,6 +78,7 @@ from core.services.timetable_same_course import (
     is_back_to_back_gap,
     same_day_gap_penalty,
 )
+from core.services.timetable_work_budget import deterministic_limit, record_cpsat_stop
 
 logger = logging.getLogger(__name__)
 
@@ -1051,8 +1052,12 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = seed_for(f"classic:cpsat-board:{_board_seed_scope(board)}")
+    det_limit = deterministic_limit(solver, time_limit_seconds)
 
     status = solver.solve(model)
+    record_cpsat_stop(
+        "cpsat_board", status, solver, wall_limit=time_limit_seconds, det_limit=det_limit
+    )
 
     status_map = {
         cp_model.OPTIMAL: "optimal",
@@ -1644,8 +1649,12 @@ def solve_board_with_hints(
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = seed_for(f"classic:cpsat-hinted:{_board_seed_scope(board)}")
+    det_limit = deterministic_limit(solver, time_limit_seconds)
 
     status = solver.solve(model)
+    record_cpsat_stop(
+        "cpsat_hinted", status, solver, wall_limit=time_limit_seconds, det_limit=det_limit
+    )
     status_map = {
         cp_model.OPTIMAL: "optimal",
         cp_model.FEASIBLE: "feasible",

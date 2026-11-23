@@ -65,6 +65,7 @@ from core.services.timetable_stage_telemetry import (
     record_stage_iterations,
     record_stage_ms,
 )
+from core.services.timetable_work_budget import deterministic_limit, record_cpsat_stop
 from core.services.timetable_workspace import _time_mask, _to_minutes
 
 logger = logging.getLogger(__name__)
@@ -647,6 +648,7 @@ def polish_scenario_with_cpsat(
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = seed_for("classic:cpsat-polish")
+    det_limit = deterministic_limit(solver, time_limit_seconds)
 
     # PR6 commit 5 — stage-boundary timing. Guardrail: iterations==1 means
     # the polisher was actually invoked (solver.solve() reached), not
@@ -655,6 +657,9 @@ def polish_scenario_with_cpsat(
     _telemetry_on = stage_telemetry is not None and is_stage_telemetry_enabled()
     _cpsat_t0 = time.perf_counter() if _telemetry_on else 0.0
     status = solver.solve(model)
+    record_cpsat_stop(
+        "cpsat_polish", status, solver, wall_limit=time_limit_seconds, det_limit=det_limit
+    )
     if _telemetry_on:
         record_stage_ms(stage_telemetry, "cpsat", int((time.perf_counter() - _cpsat_t0) * 1000))
         record_stage_iterations(stage_telemetry, "cpsat", 1)

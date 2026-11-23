@@ -50,6 +50,7 @@ from core.services.timetable_room_repair import (
     try_repair_rooms_locally,
 )
 from core.services.timetable_run_seed import random_for
+from core.services.timetable_work_budget import WorkBudget
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,6 @@ def diagnostic_driven_local_search(
     pick the best). For large scenarios: first-improvement (accept the
     first improving move immediately) — 5-10x faster.
     """
-    import time as _time
 
     current_best = best_candidate
     current_score = best_candidate.lexicographic_score
@@ -266,7 +266,17 @@ def diagnostic_driven_local_search(
     time_budget_seconds = max(
         0.0, float(getattr(settings, "TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS", 180.0))
     )
-    deadline = _time.monotonic() + time_budget_seconds
+    # Stops on a count of evaluated candidates (TIMETABLE_LOCAL_SEARCH_MAX_WORK), so the board a
+    # seeded run ends on does not depend on how fast the machine ran; the wall-clock budget above
+    # stays as the hard ceiling and is reported when it is what ended the search. One evaluation
+    # costs about the square of the section count, so the unit is that cost: the same cap is
+    # worth the same seconds on a small board and on a large one.
+    budget = WorkBudget(
+        "search",
+        max_work=getattr(settings, "TIMETABLE_LOCAL_SEARCH_MAX_WORK", 0),
+        ceiling_seconds=time_budget_seconds,
+    )
+    evaluation_cost = max(1, len(sections_by_id)) ** 2
     # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
     day_spread_on = is_section_day_spread_enabled()
 
@@ -279,9 +289,9 @@ def diagnostic_driven_local_search(
 
     for iteration in range(max_iterations):
         # Time budget check
-        if _time.monotonic() >= deadline:
+        if budget.exhausted():
             logger.info(
-                "Time budget exhausted at iteration %d, stopping",
+                "Search budget exhausted at iteration %d, stopping",
                 iteration,
             )
             break
@@ -354,8 +364,8 @@ def diagnostic_driven_local_search(
             # Check inside the neighbourhood as a single scan can contain
             # thousands of evaluations. Each completed trial has been rolled
             # back; an already discovered winner is still committed below.
-            if _time.monotonic() >= deadline:
-                logger.info("Time budget exhausted during move scan at iteration %d", iteration)
+            if budget.exhausted():
+                logger.info("Search budget exhausted during move scan at iteration %d", iteration)
                 break
             if move_index >= len(all_moves):
                 if best_move_result is not None:
@@ -463,6 +473,7 @@ def diagnostic_driven_local_search(
                 course_tiers=course_tiers,
             )
             moves_tried += 1
+            budget.spend(evaluation_cost)
 
             if evaluation_is_better(
                 test_result,
@@ -521,4 +532,5 @@ def diagnostic_driven_local_search(
         total_improvements,
         min(iteration + 1, max_iterations) if "iteration" in dir() else 0,
     )
+    budget.finish()
     return current_best

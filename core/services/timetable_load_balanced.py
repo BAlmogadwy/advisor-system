@@ -20,9 +20,9 @@ Algorithm:
 from __future__ import annotations
 
 import random
-import time
 from collections import defaultdict
 
+from django.conf import settings
 from django.db import transaction
 
 from core.models import (
@@ -85,6 +85,7 @@ from core.services.timetable_same_course import (
     make_meeting_window,
     same_course_section_spread_penalty,
 )
+from core.services.timetable_work_budget import WorkBudget
 
 
 def _to_min(t: str) -> int:
@@ -400,12 +401,18 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     current_score = score_before
     iterations = 0
     improvements = 0
-    start_time = time.time()
     temperature = 300.0
     # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
     day_spread_on = is_section_day_spread_enabled()
 
-    while time.time() - start_time < max_seconds:
+    # Stops on a count of iterations (TIMETABLE_SA_MAX_ITERATIONS), the seconds being the ceiling.
+    budget = WorkBudget(
+        "load_balance",
+        max_work=getattr(settings, "TIMETABLE_SA_MAX_ITERATIONS", 0),
+        ceiling_seconds=max_seconds,
+    )
+    while not budget.exhausted():
+        budget.spend()
         iterations += 1
         temperature *= 0.9995
 
@@ -453,6 +460,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         else:
             _undo_move(schedule, sec_idx, m_idx, old)
 
+    budget.finish()
     # Compute final daily loads
     schedule.update(best_schedule)
     loads_after = _daily_load(schedule, sections, online_codes, overlap_matrix)

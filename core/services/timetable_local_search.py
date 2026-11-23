@@ -34,6 +34,7 @@ import random
 import time
 from collections import defaultdict
 
+from django.conf import settings
 from django.db import transaction
 
 from core.models import (
@@ -98,6 +99,7 @@ from core.services.timetable_stage_telemetry import (
     record_stage_iterations,
     record_stage_ms,
 )
+from core.services.timetable_work_budget import WorkBudget
 
 
 def _to_min(t: str) -> int:
@@ -928,7 +930,6 @@ def optimize_board(
 
     iterations = 0
     improvements = 0
-    start_time = time.time()
     # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
     day_spread_on = is_section_day_spread_enabled()
 
@@ -939,7 +940,15 @@ def optimize_board(
     _telemetry_on = is_stage_telemetry_enabled()
     _sa_t0 = time.perf_counter() if _telemetry_on else 0.0
 
-    while time.time() - start_time < max_seconds:
+    # SA stops on a count of iterations (TIMETABLE_SA_MAX_ITERATIONS) so the board does not
+    # depend on how many fit in max_seconds; the seconds stay as the ceiling and are reported.
+    budget = WorkBudget(
+        "sa",
+        max_work=getattr(settings, "TIMETABLE_SA_MAX_ITERATIONS", 0),
+        ceiling_seconds=max_seconds,
+    )
+    while not budget.exhausted():
+        budget.spend()
         iterations += 1
         temperature *= cooling_rate
 
@@ -992,6 +1001,7 @@ def optimize_board(
             # Rejected — undo
             _undo_move(schedule, sec_idx, m_idx, old_opt)
 
+    budget.finish()
     # PR6 commit 4 — close the SA stage fence. sa.iterations is the
     # count of SA attempts (not accepted moves), per ChatGPT ruling.
     _stage_telemetry = empty_stage_telemetry()

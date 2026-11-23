@@ -15,6 +15,8 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
+from django.conf import settings
+
 from core.services.instructor_availability import EMPTY_AVAILABILITY, InstructorAvailability
 from core.services.timetable_assignment_models import (
     CanonicalPattern,
@@ -53,6 +55,7 @@ from core.services.timetable_pr4_instructor import (
 )
 from core.services.timetable_room_repair import PatternNotInCatalog, apply_move_to_grid
 from core.services.timetable_student_assignment import is_tiered_score
+from core.services.timetable_work_budget import WALL_CEILING, WORK_LIMIT, WorkBudget
 
 RoomEvaluator = Callable[[list[SectionState]], dict[str, Any]]
 
@@ -173,7 +176,28 @@ def recover_secondary_quality(
     regular_gap_only = is_gap_regular_students_only_enabled()
     # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
     day_spread_on = is_section_day_spread_enabled()
-    deadline = started + max(0.0, time_limit_seconds)
+    # The search stops on a count of evaluated candidates (student evaluations plus room solves,
+    # TIMETABLE_SECONDARY_RECOVERY_MAX_WORK) so a seeded run ends on the same board whatever the
+    # machine's speed; ``time_limit_seconds`` stays as the hard ceiling and is reported when it
+    # is what ended the search.
+    budget = WorkBudget(
+        "recovery",
+        max_work=getattr(settings, "TIMETABLE_SECONDARY_RECOVERY_MAX_WORK", 0),
+        ceiling_seconds=max(0.0, time_limit_seconds),
+    )
+
+    def out_of_budget() -> bool:
+        budget.work = evaluations + room_evaluations
+        if budget.exhausted():
+            return True
+        if evaluations >= max_evaluations:  # the call's own cap is a work limit too
+            budget.reason = WORK_LIMIT
+            return True
+        return False
+
+    def budget_stop_reason() -> str:
+        return "time_limit" if budget.reason == WALL_CEILING else "evaluation_limit"
+
     sections = deepcopy(sections_by_id)
     current = current_eval
     room_current = room_evaluator(list(sections.values()))
@@ -194,8 +218,8 @@ def recover_secondary_quality(
     while True:
         soft_before = soft_unresolved_count(current)
         rooms_before = int(room_current["unassigned_count"])
-        if time.monotonic() >= deadline or evaluations >= max_evaluations:
-            stop_reason = "time_limit" if time.monotonic() >= deadline else "evaluation_limit"
+        if out_of_budget():
+            stop_reason = budget_stop_reason()
             break
         if phase == "recovery" and (
             recovery_iterations >= max_iterations or (soft_before == 0 and rooms_before == 0)
@@ -265,8 +289,8 @@ def recover_secondary_quality(
         best: tuple | None = None
         seen: set[TimetableMove] = set()
         for move in sorted(moves, key=move_priority):
-            if time.monotonic() >= deadline or evaluations >= max_evaluations:
-                stop_reason = "time_limit" if time.monotonic() >= deadline else "evaluation_limit"
+            if out_of_budget():
+                stop_reason = budget_stop_reason()
                 break
             if move in seen:
                 continue
@@ -387,6 +411,8 @@ def recover_secondary_quality(
             }
         )
 
+    budget.work = evaluations + room_evaluations
+    budget.finish()
     report = {
         "applied": bool(accepted),
         "accepted_moves": accepted,

@@ -66,6 +66,7 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_compaction_enabled,
     is_instructor_day_trade_active,
 )
+from core.services.timetable_work_budget import WALL_CEILING, record_search_stop
 
 logger = logging.getLogger(__name__)
 
@@ -559,8 +560,22 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     t0 = time.monotonic()
     budget = cfg["time_budget"]
 
+    ceiling_noted = False
+
     def _over_budget() -> bool:
-        return budget > 0 and (time.monotonic() - t0) > budget
+        nonlocal ceiling_noted
+        over = budget > 0 and (time.monotonic() - t0) > budget
+        if over and not ceiling_noted:  # the board depends on how fast the machine ran
+            ceiling_noted = True
+            record_search_stop(
+                "compaction",
+                WALL_CEILING,
+                work=moves_evaluated,
+                work_limit=None,
+                seconds=time.monotonic() - t0,
+                ceiling_seconds=budget,
+            )
+        return over
 
     def _assess(best):
         """Evaluate the board AS CURRENTLY APPLIED; return ``(it, res, im, sig, rank)``

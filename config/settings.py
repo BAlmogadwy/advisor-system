@@ -812,6 +812,34 @@ TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME = float(
     os.getenv("TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME", "1.0")
 )
 
+# Repeatable searches: the same stored board, flags and seed give the same final board because the
+# searches stop on WORK (a count), not on the clock. The wall-clock limits
+# (TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS, TIMETABLE_SECONDARY_RECOVERY_SECONDS, the room
+# solver's own limit) stay as the hard ceiling for a machine too slow to do the work in time;
+# a run reports every search a ceiling ended (``result["repeatability"]``). 0 = no work cap, the
+# clock alone decides, as before. The caps were sized on the development machine, with seven
+# benchmark runs sharing it, to about the work the clock allowed: a typical run ends on its cap
+# in 60-85 % of its ceiling and is repeatable there; on a much slower machine (Render) the
+# ceiling ends it first and the run says so.
+# Local search: evaluated candidates x (sections squared), the cost of one evaluation.
+TIMETABLE_LOCAL_SEARCH_MAX_WORK = int(os.getenv("TIMETABLE_LOCAL_SEARCH_MAX_WORK", "45000000"))
+# Secondary recovery: student evaluations plus room solves.
+TIMETABLE_SECONDARY_RECOVERY_MAX_WORK = int(
+    os.getenv("TIMETABLE_SECONDARY_RECOVERY_MAX_WORK", "1500")
+)
+# Simulated annealing and the load-balancer's iterations per board (candidate generation; each
+# board is a handful of sections, so the cap is reached long before the ceiling).
+TIMETABLE_SA_MAX_ITERATIONS = int(os.getenv("TIMETABLE_SA_MAX_ITERATIONS", "4000"))
+# CP-SAT placement solves: deterministic-time limit per second of the wall limit (one worker, as
+# production runs; with several workers the solver is not repeatable whatever the limit).
+TIMETABLE_CPSAT_DETERMINISTIC_PER_SECOND = float(
+    os.getenv("TIMETABLE_CPSAT_DETERMINISTIC_PER_SECOND", "1.0")
+)
+# A bounded room solve's deterministic-time limit, per second of its nominal wall limit.
+TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND = float(
+    os.getenv("TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND", "0.07")
+)
+
 # TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED: gates a soft objective that minimises
 # idle time gaps in each instructor's daily schedule. When True, the canonical
 # candidate evaluator appends a lowest-priority term (instructor idle minutes,

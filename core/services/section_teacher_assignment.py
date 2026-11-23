@@ -97,6 +97,7 @@ from core.services.timetable_instructor_availability import (
     rules_enabled,
     section_online_exempt,
 )
+from core.services.timetable_work_budget import WALL_CEILING, record_search_stop
 
 logger = logging.getLogger(__name__)
 
@@ -1944,6 +1945,15 @@ def solve_layout_aware(
     elif fallbacks:
         report["engine"] = "mixed"
     report["wall_s"] = round(time.monotonic() - started, 4)
+    if report["wall_capped"]:  # the wall clock, not the solver's work limit, ended a solve
+        record_search_stop(
+            "teacher_assignment",
+            WALL_CEILING,
+            work=0,
+            work_limit=None,
+            seconds=report["wall_s"],
+            ceiling_seconds=budget,
+        )
     return _assemble(slots, picks, cur, bounds=bounds, kept=frozenset(kept_map), report=report)
 
 
