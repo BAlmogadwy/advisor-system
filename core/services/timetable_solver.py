@@ -164,8 +164,9 @@ def _add_day_run_penalties(model, sections, sec_options, assign, penalties) -> N
 #: 2026-11-23: every uncapped ``solve_board`` of the strategy (models of 63,000 to 100,000
 #: elements, limits of 1.5 s in the V2 sweep and 5 s in the winner's re-placement) answered
 #: UNKNOWN having searched nothing, so a workstation with no cap paid 40-70 s of every Generate
-#: to land on the compact board production gets in 0.2 s a board. Only ``solve_scenario``'s
-#: caller in the "optimal" strategy passes it.
+#: to land on the compact board production gets in 0.2 s a board. The V2 flow asks for it
+#: (``cap_placement_model``); a standalone "optimal" run does not get it, since a small board over
+#: the ceiling does solve on a workstation (tests/test_instructor_availability_engine_build.py).
 OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS = 40_000
 
 

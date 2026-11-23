@@ -3413,8 +3413,12 @@ def auto_place_scenario(
     strategy: str = DEFAULT_STRATEGY,
     baseline_placements: dict | None = None,
     candidate_gen_budget: float | None = None,
+    cap_placement_model: bool = False,
 ) -> dict:
-    """Place each board in a replayable strategy stream when a run seed is bound."""
+    """Place each board in a replayable strategy stream when a run seed is bound.
+
+    ``cap_placement_model``: the "optimal" strategy does not build a CP-SAT placement model
+    past ``OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS`` (the V2 flow asks for it; see there)."""
     # Candidate evaluation and winner re-placement must enter the same logical
     # strategy stream, independently of which portfolio stages ran before them.
     context = (
@@ -3430,6 +3434,7 @@ def auto_place_scenario(
             strategy=strategy,
             baseline_placements=baseline_placements,
             candidate_gen_budget=candidate_gen_budget,
+            cap_placement_model=cap_placement_model,
         )
 
 
@@ -3438,6 +3443,7 @@ def _auto_place_scenario(
     strategy: str = DEFAULT_STRATEGY,
     baseline_placements: dict | None = None,
     candidate_gen_budget: float | None = None,
+    cap_placement_model: bool = False,
 ) -> dict:
     """Auto-place sections on every board in a scenario.
 
@@ -3506,13 +3512,16 @@ def _auto_place_scenario(
         )
 
         logger = logging.getLogger(__name__)
-        # The "optimal" strategy does not build a placement model past production's size
-        # cap, in the V2 sweep (candidate_gen_budget set) and in the winner's re-placement
-        # alike: every such model answered UNKNOWN (see OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS).
+        # With cap_placement_model (the V2 sweep and the re-placement of its winner) the
+        # strategy does not build a placement model past production's size cap: every such
+        # model answered UNKNOWN (see OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS). Without it
+        # (a standalone run) nothing changes.
         result = solve_scenario(
             scenario_id,
             time_limit_seconds=_cap(5.0),
-            max_model_elements=OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS,
+            max_model_elements=OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS
+            if cap_placement_model
+            else None,
         )
         boards_result = result.get("boards", {})
 

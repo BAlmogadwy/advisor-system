@@ -1145,7 +1145,10 @@ def _generate_candidates_for_scenario(
         try:
             with aligning_shared_section_days(align_shared_days):
                 auto_place_scenario(
-                    scenario_id, strategy=strategy, candidate_gen_budget=_cand_budget
+                    scenario_id,
+                    strategy=strategy,
+                    candidate_gen_budget=_cand_budget,
+                    cap_placement_model=True,
                 )
         except Exception:
             logger.exception("Strategy %s failed, skipping", strategy)
@@ -2091,6 +2094,7 @@ def _optimise_scenario_timetable_v2(
             scenario_id,
             strategy=winning_strategy,
             baseline_placements=baseline_placements,
+            cap_placement_model=True,
         )
     # PR3 commit 4: capture the scenario-level greedy trace. Per commit-4
     # ruling J3 we preserve this cold-start trace through the remaining V2
