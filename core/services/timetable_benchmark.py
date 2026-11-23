@@ -109,21 +109,19 @@ def effective_settings() -> dict[str, Any]:
 
 def effective_flags() -> dict[str, bool]:
     """What the engine will actually read, through the project's own helpers."""
-    from core.services.timetable_flags import (
-        is_instructor_availability_enabled,
-        is_one_teacher_active,
-        is_tiered_objective_enabled,
-    )
+    from core.services.timetable_flags import is_one_teacher_active, is_tiered_objective_enabled
     from core.services.timetable_optimisation_policy import (
         is_day_off_policy_active,
         is_instructor_priority_enabled,
     )
 
+    # The teaching-time rules flag is deliberately not read here: only the flags module and the
+    # engine's own helper may ask for it (tests/test_instructor_availability_engine.py). Its
+    # TIMETABLE_* setting is in ``effective_settings()``, which every JSON result records.
     return {
         "one_teacher_per_section": is_one_teacher_active(),
         "day_off_policy": is_day_off_policy_active(),
         "instructor_priority": is_instructor_priority_enabled(),
-        "instructor_availability": is_instructor_availability_enabled(),
         "tiered_objective": is_tiered_objective_enabled(),
     }
 
