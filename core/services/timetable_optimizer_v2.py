@@ -1109,6 +1109,8 @@ def _reset_unlocked_placements(scenario_id: int) -> None:
 def _generate_candidates_for_scenario(
     scenario_id: int,
     strategies: list[str] | None = None,
+    *,
+    align_shared_days: bool = False,
 ) -> list[dict]:
     """Generate multiple timetable candidates using different strategies.
 
@@ -1116,7 +1118,7 @@ def _generate_candidates_for_scenario(
     different strategy, then reading back the resulting SectionPlacement
     rows and converting them to SectionState lists.
     """
-    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_autoplace import aligning_shared_section_days, auto_place_scenario
 
     if strategies is None:
         strategies = list(ALL_STRATEGIES)
@@ -1141,7 +1143,10 @@ def _generate_candidates_for_scenario(
             "Generating candidate %d/%d with strategy=%s", idx + 1, len(strategies), strategy
         )
         try:
-            auto_place_scenario(scenario_id, strategy=strategy, candidate_gen_budget=_cand_budget)
+            with aligning_shared_section_days(align_shared_days):
+                auto_place_scenario(
+                    scenario_id, strategy=strategy, candidate_gen_budget=_cand_budget
+                )
         except Exception:
             logger.exception("Strategy %s failed, skipping", strategy)
             continue
@@ -1626,7 +1631,11 @@ def _optimise_scenario_timetable_v2(
         # One teacher per section: after the ownership check, a time-blind map
         # every candidate is built and ranked under (G1).
         teachers.rebuild()
-    candidates = _generate_candidates_for_scenario(scenario_id, strategies)
+    candidates = _generate_candidates_for_scenario(
+        scenario_id,
+        strategies,
+        align_shared_days=teachers is not None and is_day_off_policy_active(),
+    )
     if not candidates:
         return {
             "error": "No candidates generated",
@@ -2021,6 +2030,36 @@ def _optimise_scenario_timetable_v2(
     else:
         cpsat_decision_trace = {}
 
+    # ── Step 4d: teachers still on five days (day-off policy) ──
+    # One bounded pass on the winning board: a pair of a teacher's own sections moving
+    # together to patterns the chain search does not list can bring him to four days. Only
+    # with the policy active (``day_off``), only for the one-teacher map's teachers, and a
+    # no-op (nothing evaluated, nothing reported) when nobody is on five days.
+    if day_off is not None and teachers is not None and sections_by_id and section_instructor_ids:
+        if checkpoint:
+            checkpoint()
+        from core.services.timetable_five_day_repair import repair_five_day_teachers
+
+        repaired, five_day_report = repair_five_day_teachers(
+            sections_by_id=sections_by_id,
+            pattern_catalog=pattern_catalog,
+            student_profiles=student_profiles,
+            course_rigidity=course_rigidity,
+            section_instructor_ids=section_instructor_ids,
+            locked_section_ids=locked_section_ids,
+            course_tiers=course_tiers,
+            availability=availability,
+            checkpoint=checkpoint,
+        )
+        if repaired is not None:
+            result["five_day_repair"] = five_day_report
+            if any(t["kept"] for t in five_day_report["teachers"]):
+                result["score_before_five_day_repair"] = list(result["final_score"])
+                result["final_score"] = list(repaired.lexicographic_score)
+                result.update(hotspot_result_fields(repaired))
+                result["quality_score"] = repaired.quality_score
+                result["unresolved_students"] = len(repaired.unresolved_student_ids)
+
     # ── Step 5: Persist to DB ──
     if checkpoint:
         checkpoint()
@@ -2035,7 +2074,10 @@ def _optimise_scenario_timetable_v2(
     # sections instead of saving the evaluated winner's improvements.
     winning_strategy = best.candidate_id.rsplit("_", 1)[0]
     _reset_unlocked_placements(scenario_id)
-    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_autoplace import (
+        aligning_shared_section_days,
+        auto_place_scenario,
+    )
 
     # One teacher per section: the skeleton is rebuilt under the map it was
     # generated with, so it is the same skeleton (G3). The placer (and the SA
@@ -2043,6 +2085,7 @@ def _optimise_scenario_timetable_v2(
     with (
         teachers.building() if teachers is not None else nullcontext(),
         day_off_scope(None) if day_off is not None else nullcontext(),
+        aligning_shared_section_days(teachers is not None and is_day_off_policy_active()),
     ):
         scenario_place_result = auto_place_scenario(
             scenario_id,

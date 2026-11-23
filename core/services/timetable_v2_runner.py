@@ -223,7 +223,10 @@ def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict
 
 def day_off_audit(before: dict, after: dict) -> dict:
     """Generate's R1 report (owner default: reported, never blocking): who has
-    no day off on the final board but had one on the saved board."""
+    no day off on the final board but had one on the saved board, and who has none
+    at all (``five_day_teachers``): Generate's saved board is empty, so the first
+    list is every five-day teacher with ``days_before`` 0, and the second is the
+    plain answer."""
     from core.services.timetable_optimisation_policy import MAX_WORKING_DAYS
 
     before_days = {str(i): d for i, d in (before.get("working_days_by_instructor") or {}).items()}
@@ -237,6 +240,13 @@ def day_off_audit(before: dict, after: dict) -> dict:
         ],
         "five_day_before": sum(1 for d in before_days.values() if d > MAX_WORKING_DAYS),
         "five_day_after": sum(1 for d in after_days.values() if d > MAX_WORKING_DAYS),
+        # Who is still on five days on the final board, whatever the saved board was (Generate's
+        # saved board is empty, so ``fifth_day_added`` lists every one of them with 0 days before).
+        "five_day_teachers": [
+            {"instructor_id": i, "days": days}
+            for i, days in sorted(after_days.items())
+            if days > MAX_WORKING_DAYS
+        ],
     }
 
 

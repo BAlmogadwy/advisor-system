@@ -176,9 +176,21 @@ with a breach ratchet (a breach can only shrink), moves add R2 per move, and
 a change of who teaches what (one teacher per section) is admitted only with no
 worse coverage, no new violation, no instructor's days rising and a no-worse
 instructor key. The runner blocks any final breach of R1–R4 (a mandatory
-repair's included); Generate only reports a 5th day added against the saved
-board (`day_off_policy.audit`). The constants 5, 4 and 60 are rulings in
-`timetable_optimisation_policy`, not settings. Off: the strict veto, unchanged.
+repair's included); Generate never blocks on a 5th day but now works against it
+(owner, 2026-11-23). Two measures, both only with the policy active and teachers
+in force: (1) the greedy placer keeps a section that sits on two boards on its
+teacher's four days (`aligning_shared_section_days`; it fires for the board placed
+second, counts online sections' meetings as teaching days, and is a soft cost
+that never outranks a clash, an overlap or a room); (2) one bounded pass
+(`timetable_five_day_repair`, run before the board is stored) moves one or two of
+a five-day teacher's own sections to bring him to four, kept only when the hard
+student positions are no worse and no other teacher's days rise
+(`result["five_day_repair"]`; at most 300 evaluations, counted not timed; a section
+shared by two boards has no alternative pattern, so only the placer can help it).
+Whoever is still on five days is listed in `day_off_policy.audit.five_day_teachers`
+(`fifth_day_added` compares with the saved board, which is empty for Generate).
+Boards without teachers and runs with the policy off are unchanged. The constants 5, 4 and
+60 are rulings in `timetable_optimisation_policy`, not settings. Off: the strict veto, unchanged.
 
 ---
 

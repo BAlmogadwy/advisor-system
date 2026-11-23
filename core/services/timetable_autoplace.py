@@ -65,8 +65,9 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Callable
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from itertools import combinations, product
 
 from django.db.models import Q
@@ -786,6 +787,54 @@ def _day_gap_min(meetings: list[tuple[int, int]]) -> int:
         return 0
     ordered = sorted(meetings)
     return sum(max(0, ordered[i + 1][0] - ordered[i][1]) for i in range(len(ordered) - 1))
+
+
+# Opt-in per placer call: Generate's candidate generation and the re-placement of its winner
+# switch it on; every other caller (the required-section retry, manual auto-place, the comparison
+# engines) places exactly as before.
+_align_shared_section_days: ContextVar[bool] = ContextVar(
+    "align_shared_section_days", default=False
+)
+
+#: Soft-cost units (the placer's student-gap scale) one teaching day beyond the day-off policy's
+#: four costs a shared section's teacher: low enough that no overlap, clash or room term is ever
+#: outweighed (those sit in higher score positions), high enough to beat density and gap terms.
+FIFTH_DAY_WEIGHT = 300
+
+
+@contextmanager
+def aligning_shared_section_days(on: bool = True) -> Iterator[None]:
+    """Within the block, a section already placed on another board of the scenario is placed so
+    that its teacher keeps at most the day-off policy's four working days where an option allows
+    it (while the day-off policy is active). Not inherited by a worker thread."""
+    token = _align_shared_section_days.set(bool(on))
+    try:
+        yield
+    finally:
+        _align_shared_section_days.reset(token)
+
+
+def _option_fifth_day_cost(
+    option: list[dict],
+    instructor_ids,
+    schedule: dict[object, set[tuple[str, str, int, int]]],
+    max_days: int,
+) -> int:
+    """Teaching days ``option`` would give the teachers ``instructor_ids`` beyond ``max_days``.
+
+    A teacher who works ``max_days`` days or fewer so far and would work more with the option
+    costs the days over; one who already works more has nothing left to lose and costs nothing.
+    ``schedule`` is the placer's ``instructor_schedule_full``
+    (teacher -> ``{(section, DAY, start, end)}``).
+    """
+    option_days = {m["day"].upper() for m in option}
+    cost = 0
+    for iid in instructor_ids:
+        worked = {day for _section, day, _start, _end in schedule.get(iid, ())}
+        if len(worked) > max_days:
+            continue
+        cost += max(0, len(worked | option_days) - max_days)
+    return cost
 
 
 def _option_instructor_gap_delta(
@@ -1698,6 +1747,9 @@ def auto_place_board(
     # placed (``PlacerGuard``). None with the flag off, so nothing changes.
     teacher_guard = None
     teacher_guard_ranked_last: list[dict] = []
+    # Day-off policy (Generate only, see ``aligning_shared_section_days``): the most working
+    # days a shared section's teacher keeps. 0 = the preference is off for this board.
+    fifth_day_max = 0
     # Teaching-time rules (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): read once per
     # board, EMPTY (falsy) unless a teacher this scenario can charge has a rule.
     availability = EMPTY_AVAILABILITY
@@ -1712,6 +1764,13 @@ def auto_place_board(
             availability = availability_for(scenario.id, universe=_one_teacher_map.universe)
             _av_assignment = _one_teacher_map
             teacher_guard = PlacerGuard(_one_teacher_map, availability)
+            from core.services.timetable_optimisation_policy import (
+                MAX_WORKING_DAYS,
+                is_day_off_policy_active,
+            )
+
+            if _align_shared_section_days.get() and is_day_off_policy_active():
+                fifth_day_max = MAX_WORKING_DAYS
         else:
             # NB: build_section_instructor_ids reads scenario.gender/.programs, so
             # it must receive the scenario OBJECT — passing scenario.id (an int)
@@ -2262,6 +2321,18 @@ def auto_place_board(
             # section of this section's teacher no free time — or, for a section
             # still to be decided, one none of its eligible teachers could take —
             # ranks after every option that does not.
+            # A section that sits on two boards is the one the placer can keep on its teacher's
+            # days: its teacher already works the other board's times. Only such a section.
+            fifth_day_teachers: tuple = ()
+            if fifth_day_max and not is_online:
+                _own = f"{code}|{sec_label}"
+                _teachers = tuple(section_instructors.get(_own, ()))
+                if any(
+                    entry[0] == _own
+                    for t in _teachers
+                    for entry in instructor_schedule_full.get(t, ())
+                ):
+                    fifth_day_teachers = _teachers
             guard_check = (
                 teacher_guard.check(
                     f"{code}|{sec_label}",
@@ -2499,6 +2570,14 @@ def auto_place_board(
                 # (flag-gated; the ENG intensive policy fixes its own days).
                 if day_spread_on and not meeting_policy and _option_is_day_run(option):
                     guard_rank += DAY_RUN_GUARD_RANK
+                fifth_day_penalty = (
+                    FIFTH_DAY_WEIGHT
+                    * _option_fifth_day_cost(
+                        option, fifth_day_teachers, instructor_schedule_full, fifth_day_max
+                    )
+                    if fifth_day_teachers
+                    else 0
+                )
                 score = (
                     raw_score[0] + guard_rank + av_rank,
                     raw_score[1],
@@ -2509,7 +2588,8 @@ def auto_place_board(
                     + room_penalty
                     + density_penalty
                     + instructor_gap_penalty * gap_weight
-                    + day_spread_penalty,
+                    + day_spread_penalty
+                    + fifth_day_penalty,
                     raw_score[3],
                     raw_score[4],
                 )
