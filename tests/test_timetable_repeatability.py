@@ -554,3 +554,66 @@ def test_za_a_chain_search_whose_generator_stopped_on_the_deadline_reports_the_c
             chain_time_limit_seconds=2.0,
         )
     assert [(s["stage"], s["reason"]) for s in stops] == [("chain", wb.WALL_CEILING)]
+
+
+def _first_solve_wall_limit(settings, monkeypatch, *, det_per_second: float) -> float:
+    """The wall limit the first room solve gets when the model build takes 0.3 s on the clock."""
+    from ortools.sat.python import cp_model
+
+    from core.services import timetable_exact_rooming as rooming
+    from tests.test_cpsat_resources import _ROOM_CAPS, _SAME_SLOT
+
+    settings.TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = 0
+    settings.TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND = det_per_second
+    clock = _Clock(0.1)
+    monkeypatch.setattr("time.monotonic", clock)
+    real_greedy = rooming._greedy_room_assignment
+
+    def slow_build(*args, **kwargs):
+        clock.now += 0.3  # the model build
+        return real_greedy(*args, **kwargs)
+
+    monkeypatch.setattr(rooming, "_greedy_room_assignment", slow_build)
+    seen = []
+    real = cp_model.CpSolver.solve
+
+    def spy(self, model, *args, **kwargs):
+        seen.append(self.parameters.max_time_in_seconds)
+        return real(self, model, *args, **kwargs)
+
+    monkeypatch.setattr(cp_model.CpSolver, "solve", spy)
+    rooming._solve_relaxed(_SAME_SLOT, _ROOM_CAPS, time_limit_seconds=0.5, strict_budget=True)
+    return seen[0]
+
+
+def test_zb_with_the_deterministic_limit_on_the_wall_limit_is_counted_from_the_end_of_the_build(
+    settings, monkeypatch
+):
+    assert _first_solve_wall_limit(settings, monkeypatch, det_per_second=0.07) == pytest.approx(
+        0.4, abs=1e-6
+    )
+
+
+def test_zc_with_the_deterministic_limit_off_the_room_solve_is_exactly_as_it_was(
+    settings, monkeypatch
+):
+    # counted from the start of the call, the build eating 0.3 s of it: 0.5 - 0.1 - 0.3
+    assert _first_solve_wall_limit(settings, monkeypatch, det_per_second=0) == pytest.approx(
+        0.1, abs=1e-6
+    )
+
+
+def test_zd_the_placement_and_polish_solves_read_their_own_settings():
+    import inspect
+
+    from core.services import timetable_cpsat_polisher, timetable_solver
+
+    assert (
+        inspect.getsource(timetable_solver).count(
+            "TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND"
+        )
+        == 2
+    )
+    assert "TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND" in inspect.getsource(
+        timetable_cpsat_polisher
+    )
