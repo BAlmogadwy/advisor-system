@@ -68,9 +68,10 @@ SCREENS = {
     "dashboard: high priority": ("/#highpriority", "#highpriority > .filter-bar"),
     "dashboard: advisor admin": ("/#advisoradmin", "#advisoradmin .advisor-block .field-row"),
 }
-# A phone folds the planner's session settings behind their toggle: on first
-# load there is no bar to see.
-FOLDED = {("planner", 390)}
+# (screen, width) pairs whose bar is folded behind a toggle on first load, so
+# there is no bar to see. None now: the planner's bar (student, year, semester,
+# Fetch) is on screen on a phone; only its settings row folds.
+FOLDED: set[tuple[str, int]] = set()
 
 # What is wrong with the bar at `sel`, as a list of short findings.
 FIT = r"""(sel) => {
