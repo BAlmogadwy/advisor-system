@@ -48,6 +48,17 @@ const escapeHtml=(value)=>String(value??'').replace(/[&<>"]/g,(char)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'
 }[char]));
 
+/* A time range as ONE left-to-right unit. Beside Arabic letters the bidi
+   algorithm turns the digits into "Arabic numbers" and swaps the two times
+   around the hyphen (10:15-11:55 paints as 11:55-10:15), so the range is
+   isolated. In a list it must stay on one line (nowrap); in a narrow week-grid
+   block `breakAfterHyphen` gives it ONE place to wrap, after the hyphen. */
+function timeRangeHtml(start, end, breakAfterHyphen){
+  return breakAfterHyphen
+    ? safeHtml`<bdi dir="ltr">${start}-<wbr>${end}</bdi>`
+    : safeHtml`<bdi dir="ltr" class="sec-range">${start}-${end}</bdi>`;
+}
+
 function setBanner(kind, text){
   const b=q('statusBanner');
   const map={info:'info',success:'ok',danger:'err',warning:'warn',secondary:'neutral'};
@@ -261,7 +272,7 @@ function renderBaselineWeeklyCompact(baseline){
     pick: (cur,inc)=>inc, // last write wins
     bg: m=>colorForCourse(m.label),
     accent: m=>colorForCourseBorder(m.label),
-    cellHtml: m=>`<span class="wg-cid">${m.label}</span><span class="wg-meta">${m.start}-${m.end}</span>`,
+    cellHtml: m=>safeHtml`<span class="wg-cid">${m.label}</span><span class="wg-meta">${timeRangeHtml(m.start,m.end,true)}</span>`,
   });
   host.innerHTML=grid+unmappedHtml;
 }
@@ -340,9 +351,18 @@ function renderVisualTimetable(source='baseline'){
     bg: m=>(m.conflict?conflictBg:colorForCourse(m.label)),
     accent: m=>(m.conflict?'#ef4444':colorForCourseBorder(m.label)),
     cellClass: m=>(m.conflict?'wg-clash':(m.kind==='planned'?'wg-planned':'')),
-    cellHtml: m=>`<span class="wg-cid">${m.label}</span><span class="wg-meta">${m.start}-${m.end}</span>`,
+    cellHtml: m=>safeHtml`<span class="wg-cid">${m.label}</span><span class="wg-meta">${timeRangeHtml(m.start,m.end,true)}</span>`,
   });
 }
+
+/* The sidebar's theme toggle only sets data-theme on <html>. The grid blocks
+   carry inline colours chosen at render time, so a switch left them in the old
+   theme (light text on a light block, 1.15:1). Redraw just the two grids. */
+new MutationObserver(()=>{
+  if(!currentCtx?.student_id) return;
+  renderBaselineWeeklyCompact(currentBaseline);
+  renderVisualTimetable(q('visualSource').value || 'baseline');
+}).observe(document.documentElement,{attributes:true, attributeFilter:['data-theme']});
 
 q('mode').addEventListener('change',()=>{
   invalidateBuilderResults();
@@ -736,6 +756,16 @@ async function renderAvailableSections(){
         const timeStr=(s.meetings||[]).map(m=>
           `${UI.dayShort[normalizeDay(m.day)]||normalizeDay(m.day)} ${m.start_time||''}-${m.end_time||''}`
         ).join(', ')||(IS_AR?'غير محدد':'TBA');
+        /* the HTML twin of timeStr for the visible cell; timeStr stays plain text
+           for the aria-label */
+        const meetingsHtml=(s.meetings||[]).map(m=>
+          safeHtml`${UI.dayShort[normalizeDay(m.day)]||normalizeDay(m.day)} ${timeRangeHtml(m.start_time||'',m.end_time||'')}`
+        );
+        /* the safeHtml wrapper where timeHtml is written below keeps that sink
+           out of the html-sinks allow-list */
+        const timeHtml=meetingsHtml.length
+          ? safeHtml`${meetingsHtml.flatMap((h,i)=>i?[', ',h]:[h])}`
+          : (IS_AR?'غير محدد':'TBA');
 
         const capacityText=capacity.known
           ? `${capacity.registered}/${capacity.maximum}`
@@ -756,7 +786,7 @@ async function renderAvailableSections(){
           <button type="button" class="avail-sec-row ${colorClass}" data-tsid="${s.term_section_id}" aria-label="${secAria}">
             <span class="sec-dot ${dotClass}" aria-hidden="true"></span>
             <span class="sec-id">${s.section||'?'}</span>
-            <span class="sec-time">${timeStr}</span>
+            <span class="sec-time">${safeHtml`${timeHtml}`}</span>
             <span class="sec-program">${programs}</span>
             <span class="sec-capacity">${capacityText}</span>
             <span class="sec-status">${statusLabel}</span>

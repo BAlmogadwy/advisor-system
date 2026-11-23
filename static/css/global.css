@@ -7661,6 +7661,34 @@ html[data-theme="dark"] .sp-adv-wrap {
 html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 /* status markers: planned = dashed accent; conflict = red outline + corner dot */
 .wg-blocks .wg-filled.wg-planned { border-inline-start-style: dashed; }
+/* The planner's two week grids: a code and its time wrap instead of being cut.
+   An ellipsis removed the START of a code in an RTL line and the end of one in
+   English; a phone's ~60px columns cut both. Scoped here because the base rules
+   above also draw the student timetable. */
+#baselineWeekly .wg-blocks .wg-filled .wg-cid,
+#visualGrid .wg-blocks .wg-filled .wg-cid,
+#baselineWeekly .wg-blocks .wg-filled .wg-meta,
+#visualGrid .wg-blocks .wg-filled .wg-meta {
+  white-space:      normal;
+  overflow:         visible;
+  text-overflow:    clip;
+  overflow-wrap:    anywhere;
+}
+/* A code and a time are Latin data, so in the Arabic UI they keep the Latin steps
+   (the Arabic ones are for Arabic letters): at the Arabic size a six-letter code
+   no longer fitted a phone's ~60px column and broke mid-word. The day headings
+   above the blocks keep the Arabic scale. */
+html[dir="rtl"] #baselineWeekly .wg-blocks .wg-filled,
+html[dir="rtl"] #visualGrid .wg-blocks .wg-filled {
+  --text-micro:     max(11px, 0.6875rem);
+  --text-xs:        max(12px, 0.75rem);
+}
+/* On a phone the day columns are ~60px: less padding keeps a code on two lines
+   so a 75-minute block does not run out of height. */
+@media (max-width: 576px) {
+  #baselineWeekly .wg-blocks .wg-filled,
+  #visualGrid .wg-blocks .wg-filled { padding: 1px 2px; }
+}
 .wg-blocks .wg-filled.wg-clash {
   outline:          2px solid var(--pl-conflict-cell);
   outline-offset:   -2px;
@@ -7899,12 +7927,15 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 /* Planner panels */
 .planner-grid {
   display:               grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, ...): a bare 1fr track cannot be narrower than its widest item,
+     so ONE wide table widened every panel past a phone's screen */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap:                   10px;
 }
+.planner-grid > * { min-width: 0; }
 .pg-full { grid-column: 1 / -1; }
 @media (max-width: 992px) {
-  .planner-grid { grid-template-columns: 1fr; }
+  .planner-grid { grid-template-columns: minmax(0, 1fr); }
   .pg-full      { grid-column: auto; }
 }
 .pane-head {
@@ -8007,6 +8038,11 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
   font-size:   var(--text-xs);
 }
 .pl-checks label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+/* The programme filter sits in the Available panel's heading row: where the row
+   is too narrow it drops under the title instead of running past the screen,
+   and its label may wrap. */
+#availableCard .pane-head { flex-wrap: wrap; }
+#availableCard .pane-head .pl-checks label { white-space: normal; }
 .pl-checks input[type="checkbox"] { accent-color: var(--btn-primary-bg); width: 16px; height: 16px; }
 
 /* Empty state (planner-specific) */
@@ -8059,6 +8095,25 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
   font-size:      var(--text-sm);
 }
 .planner-panel .table tbody tr:last-child td { border-bottom: none; }
+/* The full-plan tables are wide by nature (one column per term): on a phone they
+   scroll inside their own frame instead of pushing the whole page sideways. */
+#planPalette { overflow-x: auto; }
+/* The screen-reader copy of a grid is a table, and a table ignores width:1px, so
+   its content width stuck out past the panel (scrollable, though invisible). */
+.planner-panel table.sr-only { table-layout: fixed; }
+/* Suggested to add: all four columns, including Add, must fit a half panel as
+   narrow as a phone (two columns from 993px, one from a phone down), so headings,
+   the badge and the long course name wrap at every width (harmless where there is
+   room) and only the tighter padding is limited to the widths where a half panel
+   is that narrow (the sidebar takes 252px, so two columns stay narrow to ~1280px). */
+#recCard .table thead th { white-space: normal; }
+#recCard .table .badge { white-space: normal; }
+#recCard .table tbody td:first-child { overflow-wrap: anywhere; }
+@media (max-width: 1280px) {
+  #recCard .table thead th,
+  #recCard .table tbody td { padding-inline: 4px; }
+  #recCard .table .pl-btn { padding-inline: var(--space-2); }
+}
 
 /* Details chevron */
 details[open] > summary .i                  { transform: rotate(90deg); }
@@ -8121,10 +8176,11 @@ details > summary::-webkit-details-marker   { display: none; }
 /* Available courses & sections grid */
 .avail-grid {
   display:               grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, ...) so a wide row cannot push the second column out of the panel */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap:                   10px;
 }
-@media (max-width: 768px) { .avail-grid { grid-template-columns: 1fr; } }
+@media (max-width: 768px) { .avail-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .avail-course-card {
   padding:       12px 14px;
@@ -8154,8 +8210,11 @@ details > summary::-webkit-details-marker   { display: none; }
 
 .avail-sec-row {
   display:        flex;
+  /* a row with many meetings and programmes wraps onto a second line rather
+     than outgrowing its half of the panel */
+  flex-wrap:      wrap;
   align-items:    center;
-  gap:            8px;
+  gap:            4px 8px;
   width:          100%;
   margin-bottom:  4px;
   padding:        6px 8px;
@@ -8216,8 +8275,13 @@ details > summary::-webkit-details-marker   { display: none; }
 
 .sec-id { min-width: 40px; font-weight: 700; }
 .sec-time { color: var(--t3); font-size: var(--text-xs); }
-.sec-program { color: var(--t3); font-size: var(--text-micro); white-space: nowrap; }
+/* one meeting's HH:MM-HH:MM never splits across lines; the list wraps between meetings */
+.sec-time .sec-range { white-space: nowrap; }
+/* the programme list wraps (seven programmes were ~400px on one line) */
+.sec-program { color: var(--t3); font-size: var(--text-micro); overflow-wrap: anywhere; }
 .sec-capacity { margin-inline-start: auto; font-size: var(--text-xs); font-weight: 600; }
+/* a wrapped row shares its free space once: the status chip stays next to the capacity */
+.sec-capacity + .sec-status { margin-inline-start: 0; }
 
 .avail-summary-bar {
   display:         flex;
