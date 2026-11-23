@@ -159,13 +159,14 @@ def _add_day_run_penalties(model, sections, sec_options, assign, penalties) -> N
             penalties.append(run * DAY_RUN_PENALTY)
 
 
-#: The size past which the candidate sweep does not build a placement model: production's own
+#: The size past which the "optimal" strategy does not build a placement model: production's own
 #: ``TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS`` (render.yaml; a test holds the two equal). Measured
-#: 2026-11-23: all 35 uncapped solves of the sweep's "optimal" candidate (models of 63,000 to
-#: 100,000 elements) answered UNKNOWN inside 1.5 s having searched nothing, so a workstation with
-#: no cap paid 20-70 s of every Generate to land on the compact board production gets in 0.2 s a
-#: board. Only the sweep passes it (``solve_scenario(max_model_elements=...)``).
-CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS = 40_000
+#: 2026-11-23: every uncapped ``solve_board`` of the strategy (models of 63,000 to 100,000
+#: elements, limits of 1.5 s in the V2 sweep and 5 s in the winner's re-placement) answered
+#: UNKNOWN having searched nothing, so a workstation with no cap paid 40-70 s of every Generate
+#: to land on the compact board production gets in 0.2 s a board. Only ``solve_scenario``'s
+#: caller in the "optimal" strategy passes it.
+OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS = 40_000
 
 
 def _within_model_budget(**extra):
@@ -663,7 +664,7 @@ def solve_board(
     """Find optimal placement using CP-SAT solver.
 
     ``max_model_elements`` tightens the configured model-size cap for this solve (see
-    ``CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS``); a model past it is answered as a solve that
+    ``OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS``); a model past it is answered as a solve that
     ran out of time, nothing placed.
     """
     try:

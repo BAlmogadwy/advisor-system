@@ -1,7 +1,7 @@
-"""The candidate sweep's "optimal" placement solve is not built past a size ceiling.
+"""The "optimal" strategy's placement solve is not built past a size ceiling.
 
 Measured on 2026-11-23 (saved scenarios 662-669, no model-size cap, one worker): every one of
-the 35 ``solve_board`` calls of a Generate's "optimal" candidate answered UNKNOWN with nothing
+the ``solve_board`` calls of a Generate's "optimal" candidate and re-placement answered UNKNOWN with nothing
 placed (the board then falls back to the compact placement, so the candidate is the compact
 board). A 1.5 s limit is no limit for these models: they hold 63,000-100,000 variables and
 constraints, building one takes 1.5-16 s of Python, and the solver then spends the whole limit
@@ -11,7 +11,7 @@ nothing. Production already refuses these models (``TIMETABLE_CPSAT_MAX_MODEL_EL
 and its Generate boards equal the uncapped runs' boards, digest for digest; a workstation has
 no cap and paid 20-70 s of every Generate for the same answer.
 
-So the sweep passes the production ceiling to its own solves. A model past it is not built,
+So the "optimal" strategy passes the production ceiling to its solves. A model past it is not built,
 exactly as production's cap does it: the answer is "timeout", nothing placed.
 """
 
@@ -39,11 +39,11 @@ def flags(settings):
 
 def test_the_ceiling_is_the_production_cap() -> None:
     from core.services.timetable_benchmark import production_flags
-    from core.services.timetable_solver import CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS
+    from core.services.timetable_solver import OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS
 
     assert (
         production_flags()["TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS"]
-        == CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS
+        == OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS
     )
 
 
@@ -83,13 +83,11 @@ def test_solve_board_refuses_a_model_past_its_ceiling_and_solves_it_without(flag
     assert solved["placed"] > 0
 
 
-@pytest.mark.parametrize(
-    ("candidate_budget", "expected"),
-    [(1.5, "ceiling"), (None, None)],
-)
-def test_only_the_sweep_gives_its_optimal_solve_the_ceiling(
-    flags, monkeypatch, candidate_budget, expected
+@pytest.mark.parametrize("candidate_budget", [1.5, None])
+def test_every_optimal_run_gives_its_solve_the_ceiling(
+    flags, monkeypatch, candidate_budget
 ) -> None:
+    """In the V2 sweep (a candidate budget) and in the winner's re-placement (none) alike."""
     from core.services import timetable_solver
     from core.services.timetable_autoplace import auto_place_scenario
 
@@ -103,8 +101,4 @@ def test_only_the_sweep_gives_its_optimal_solve_the_ceiling(
     scenario = build_scenario(planned={X_KEY: 1, TWIN_KEY: 1}, small_grid=True)
     auto_place_scenario(scenario.id, strategy="optimal", candidate_gen_budget=candidate_budget)
 
-    assert len(seen) == 1
-    want = (
-        timetable_solver.CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS if expected == "ceiling" else None
-    )
-    assert seen[0] == {"max_model_elements": want}
+    assert seen == [{"max_model_elements": timetable_solver.OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS}]

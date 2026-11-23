@@ -3501,22 +3501,18 @@ def _auto_place_scenario(
         import logging
 
         from core.services.timetable_solver import (
-            CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS,
+            OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS,
             solve_scenario,
         )
 
         logger = logging.getLogger(__name__)
-        # The V2 sweep's candidate (candidate_gen_budget set) does not build a model past
-        # production's size cap: every such model answered UNKNOWN (see
-        # CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS). A standalone "optimal" run is unchanged.
+        # The "optimal" strategy does not build a placement model past production's size
+        # cap, in the V2 sweep (candidate_gen_budget set) and in the winner's re-placement
+        # alike: every such model answered UNKNOWN (see OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS).
         result = solve_scenario(
             scenario_id,
             time_limit_seconds=_cap(5.0),
-            max_model_elements=(
-                CANDIDATE_PLACEMENT_MAX_MODEL_ELEMENTS
-                if candidate_gen_budget and candidate_gen_budget > 0
-                else None
-            ),
+            max_model_elements=OPTIMAL_PLACEMENT_MAX_MODEL_ELEMENTS,
         )
         boards_result = result.get("boards", {})
 
