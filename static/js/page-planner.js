@@ -372,7 +372,7 @@ function renderBaselineWeeklyCompact(baseline){
   });
   const unmapped=Object.values(unmappedByCode);
   const unmappedHtml=unmapped.length
-    ? `<div class="planner-banner planner-banner-warn mt-2" style="font-size:12px">
+    ? `<div class="planner-banner planner-banner-warn mt-2 fs-12">
         <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
         ${IS_AR
           ? `${unmapped.length} مقرر مسجّل بدون مواعيد في الجدول:`
@@ -678,7 +678,8 @@ async function renderPlanPalette(studentId){
       if(Number(t.term||0) <= 2) details.open=true;
 
       const summary=document.createElement('summary');
-      summary.innerHTML=`<strong>${IS_AR?'الفصل':'Term'} ${t.term}</strong> <span class="small text-secondary">(${rows.length} ${IS_AR?'مقرر':'courses'})</span>`;
+      summary.className='pl-term-summary';
+      summary.innerHTML=`<strong>${IS_AR?'الفصل':'Term'} ${t.term}</strong> <span class="small text-secondary">(${rows.length} ${IS_AR?'مقرر':'courses'})</span><span class="ux-disclosure-chevron" aria-hidden="true"></span>`;
       details.appendChild(summary);
 
       const table=document.createElement('table');
@@ -724,18 +725,20 @@ async function renderPlanPalette(studentId){
         if(canAdd) tr.className='is-addable';
         tr.innerHTML=`
           <td>
-            <input type="checkbox" class="form-check-input me-2 planPick"
-              data-code="${code}"
-              data-credits="${Number(c.credit_hours||0)}"
-              data-score="${Math.round(Number(c.importance_score||0)*20)}"
-              aria-label="${IS_AR?'اختيار':'Select'} ${code}"
-              ${canAdd?'':'disabled'}>
-            <strong>${code}</strong> <span class="text-secondary">(${c.credit_hours||0}${IS_AR?' ساعة':'cr'})</span>
+            <label class="pl-pick">
+              <input type="checkbox" class="form-check-input planPick"
+                data-code="${code}"
+                data-credits="${Number(c.credit_hours||0)}"
+                data-score="${Math.round(Number(c.importance_score||0)*20)}"
+                aria-label="${IS_AR?'اختيار':'Select'} ${code}"
+                ${canAdd?'':'disabled'}>
+              <span><strong>${code}</strong> <span class="text-secondary">(${c.credit_hours||0}${IS_AR?' ساعة':'cr'})</span></span>
+            </label>
           </td>
           <td>${planStatusLabel(c.status)}</td>
           <td>${Number(c.importance_score||0).toFixed(2)}</td>
           <td><span class="pl-offer" data-state="${safeHtml`${offer}`}">${label}</span></td>
-          <td><button class="pl-btn pl-btn-teal" ${canAdd?'':'disabled'}><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>${IS_AR?'إضافة':'Add'}</button></td>`;
+          <td><button class="btn btn-sm btn-neutral" data-pl-action="add-plan" ${canAdd?'':'disabled'}><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>${IS_AR?'إضافة':'Add'}</button></td>`;
 
         const addCourse=()=>{
           if(!canAdd) return;
@@ -750,7 +753,7 @@ async function renderPlanPalette(studentId){
         };
 
         tr.querySelector('button').onclick=(e)=>{ e.stopPropagation(); addCourse(); };
-        tr.onclick=(e)=>{ if(e.target.closest('input,button')) return; addCourse(); };
+        tr.onclick=(e)=>{ if(e.target.closest('input,button,label')) return; addCourse(); };
         tb.appendChild(tr);
       });
 
@@ -802,7 +805,7 @@ async function renderAvailableSections(){
     });
 
     if(!eligible.length){
-      grid.innerHTML=`<div class="pl-empty" style="grid-column:1/-1"><div class="pl-empty-title">${IS_AR?'لا توجد مقررات مؤهلة':'No eligible courses found'}</div></div>`;
+      grid.innerHTML=`<div class="pl-empty pl-empty-wide"><div class="pl-empty-title">${IS_AR?'لا توجد مقررات مؤهلة':'No eligible courses found'}</div></div>`;
       if(summary) summary.innerHTML='';
       return;
     }
@@ -853,7 +856,7 @@ async function renderAvailableSections(){
       .sort((a,b)=>b.importance-a.importance);
 
     if(!coursesWithSections.length){
-      grid.innerHTML=`<div class="pl-empty" style="grid-column:1/-1"><div class="pl-empty-title">${IS_AR?'لا توجد شعب متاحة هذا الفصل':'No sections available this term'}</div></div>`;
+      grid.innerHTML=`<div class="pl-empty pl-empty-wide"><div class="pl-empty-title">${IS_AR?'لا توجد شعب متاحة هذا الفصل':'No sections available this term'}</div></div>`;
       if(summary) summary.innerHTML='';
       return;
     }
@@ -928,7 +931,7 @@ async function renderAvailableSections(){
             <div class="avail-course-code">${course.code}</div>
             <div class="avail-course-name">${course.name}</div>
           </div>
-          <span class="avail-course-credits" style="margin-inline-end:4px">${course.credits} ${IS_AR?'ساعة':'cr'}</span>
+          <span class="avail-course-credits pl-credits-gap">${course.credits} ${IS_AR?'ساعة':'cr'}</span>
           <span class="avail-course-credits" data-tone="${course.importance>=3?'high':course.importance>=1?'mid':'low'}">⚡${course.importance.toFixed(1)}</span>
         </button>
         ${secHtml}`;
@@ -993,7 +996,7 @@ async function renderAvailableSections(){
         <span class="avail-summary-item"><span class="sec-dot sec-dot-rose"></span> ${counts.pink} ${IS_AR?'تعارض':'conflict'}</span>
         <span class="avail-summary-item"><span class="sec-dot sec-dot-red"></span> ${counts.red} ${IS_AR?'ممتلئ+تعارض':'full+conflict'}</span>
         <span class="avail-summary-item"><span class="sec-dot sec-dot-gray"></span> ${counts.gray} ${IS_AR?'ممتلئ':'full'}</span>
-        <span class="fw-semibold" style="margin-inline-start:auto">${total} ${IS_AR?'شعبة':'sections'}</span>`;
+        <span class="fw-semibold pl-push-end">${total} ${IS_AR?'شعبة':'sections'}</span>`;
     }
   }catch(e){
     grid.innerHTML=`<span class="text-danger">${IS_AR?'فشل تحميل الشعب المتاحة':'Failed to load available sections'}</span>`;
@@ -1046,23 +1049,21 @@ q('applyOption').onclick=async()=>{
      what is about to be written. */
   const courseList=(opt.mappings||[])
     .map(m=>`${m.course_code||''} ${m.section||''}`.trim()).filter(Boolean);
-  const proceed = window.confirm(
-    (IS_AR
-      ? `سيتم استبدال جدول الطالب المخطط بالخيار ${name}:
-
-`
-      : `This replaces the student's planned timetable with option ${name}:
-
-`)
-    + courseList.join(String.fromCharCode(10))
-    + (IS_AR
-      ? `
-
-سيتم حذف أي مقررات مخططة سابقًا غير موجودة في هذا الخيار. متابعة؟`
-      : `
-
-Any previously planned courses not in this option will be removed. Continue?`)
-  );
+  const listHtml=`<ul>${courseList.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
+  const proceed = await dlg.confirm({
+    title: IS_AR ? `تطبيق الخيار ${name}؟` : `Apply option ${name}?`,
+    body: (IS_AR
+        ? `<p>${escapeHtml(`سيتم استبدال جدول الطالب المخطط بالخيار ${name}:`)}</p>`
+        : `<p>${escapeHtml(`This replaces the student's planned timetable with option ${name}:`)}</p>`)
+      + listHtml
+      + (IS_AR
+        ? `<p>${escapeHtml('سيتم حذف أي مقررات مخططة سابقًا غير موجودة في هذا الخيار. متابعة؟')}</p>`
+        : `<p>${escapeHtml('Any previously planned courses not in this option will be removed. Continue?')}</p>`),
+    kind: 'warning',
+    confirmText: IS_AR ? 'تطبيق' : 'Apply',
+    cancelText: IS_AR ? 'إلغاء' : 'Cancel',
+    initialFocus: 'cancel'
+  });
   if(!proceed) return;
 
   let r, data;
@@ -1269,7 +1270,7 @@ q('runBuilder').onclick=async()=>{
         <div class="opt-method">${escapeHtml(methodName(opt))}</div>
         <div class="fs-12 opt-count">${IS_AR?'تمت الجدولة':'Scheduled'} <strong class="text-teal">${opt.scheduled||0}</strong>/${opt.target||0}</div>
         <div class="fs-11 text-t4">${IS_AR?'غير مجدول':'Unscheduled'} ${(opt.unscheduled||[]).length||0}</div>
-        <button type="button" class="pl-btn pl-btn-teal w-100 justify-content-center mt-2 opt-select" aria-pressed="false">${IS_AR?'اختيار':'Select'}</button>
+        <button type="button" class="btn btn-sm btn-neutral w-100 mt-2 opt-select" data-pl-action="select-option" aria-pressed="false">${IS_AR?'اختيار':'Select'}</button>
       </div>`;
     col.querySelector('button').onclick=()=>chooseOption(opt.name);
     cards.appendChild(col);
@@ -1438,7 +1439,7 @@ q('fetchBtn').onclick=async()=>{
         ${rec.missing_prerequisites?.length?`<div class="small text-danger">${IS_AR?'ناقص:':'Missing:'} ${rec.missing_prerequisites.map(m=>`<bdi dir="ltr">${escapeHtml(m)}</bdi>`).join(', ')}</div>`:''}
       </td>
       <td>${escapeHtml(recLabel(REC_PRIORITY_AR,rec.priority))}</td>
-      <td><button class="pl-btn pl-btn-teal" ${rec.status!=='Eligible'?'disabled':''}><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>${IS_AR?'إضافة':'Add'}</button></td>`;
+      <td><button class="btn btn-sm btn-neutral" data-pl-action="add-suggested" ${rec.status!=='Eligible'?'disabled':''}><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>${IS_AR?'إضافة':'Add'}</button></td>`;
 
     tr.querySelector('button').onclick=()=>{
       if(shortlist.find(x=>x.course_code===rec.course_code)) return;
@@ -1461,7 +1462,7 @@ setStep('1');
 q('availSearch')?.addEventListener('input',function(){
   const val=this.value.trim().toUpperCase();
   document.querySelectorAll('.avail-course-card').forEach(card=>{
-    card.style.display=card.dataset.code.includes(val)?'':'none';
+    card.classList.toggle('d-none', !card.dataset.code.includes(val));
   });
 });
 

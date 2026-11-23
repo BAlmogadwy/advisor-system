@@ -77,6 +77,14 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/advisor_inbox_case.html", "add_note"),
     ("core/templates/core/db_admin.html", "elecRefreshBtn"),
     ("core/templates/core/instructor_management.html", "imModalCancel"),
+    # The staff planner: the step buttons, Reset, Add selected, and the three it builds.
+    ("core/templates/core/planner.html", "prevStep"),
+    ("core/templates/core/planner.html", "nextStep"),
+    ("core/templates/core/planner.html", "resetShortlist"),
+    ("core/templates/core/planner.html", "addSelectedPlan"),
+    ("static/js/page-planner.js", "add-suggested"),
+    ("static/js/page-planner.js", "add-plan"),
+    ("static/js/page-planner.js", "select-option"),
     ("core/templates/core/section_planning.html", "spDeptFilterClear"),
     ("core/templates/core/student_advisor.html", "saHistoryToggle"),
     ("core/templates/core/student_graduation.html", "link:student_advisor"),
@@ -202,6 +210,7 @@ def _identify(path: pathlib.Path, tag: str) -> tuple[str, str]:
         r'class="[^"]*\b(tw-readiness-go)\b',
         r'data-focus-key="([^"]+)"',
         r"(data-im-(?:edit|active|rules)|data-sl-remove)",
+        r'data-pl-action="([^"]+)"',
     ):
         found = re.search(probe, tag)
         if found:
