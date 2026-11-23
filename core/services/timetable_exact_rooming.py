@@ -414,17 +414,16 @@ def _solve_relaxed(
 
     # A bounded solve stops on deterministic solver work first (TIMETABLE_ROOM_SOLVE_
     # DETERMINISTIC_PER_SECOND of its nominal limit), so the assignment it returns does not
-    # depend on machine speed; the wall deadline stays as the ceiling, at twice the nominal limit
-    # because the model build comes out of it, and is reported when it ends a solve.
+    # depend on machine speed; the wall deadline stays as the ceiling and is reported when it
+    # ends a solve. With the deterministic limit on, the nominal limit is counted from the end of
+    # the model build (the build used to eat part of it), so a slow machine can spend at most the
+    # nominal limit plus its own build time; with it off nothing here changes.
     det_per_second = (
         float(getattr(settings, "TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND", 0) or 0)
         if strict_budget
         else 0.0
     )
-    ceiling_factor = 2.0 if det_per_second > 0 else 1.0
-    deadline = (
-        monotonic() + max(0.0, time_limit_seconds) * ceiling_factor if strict_budget else None
-    )
+    deadline = monotonic() + max(0.0, time_limit_seconds) if strict_budget else None
 
     # demand_id keys every variable dict below; a duplicate would silently drop a
     # meeting from the objectives and from H9 exclusivity. Enforce, never assume.
@@ -547,6 +546,8 @@ def _solve_relaxed(
 
     det_budget = max(0.0, time_limit_seconds) * det_per_second
     det_spent = 0.0
+    if strict_budget and det_budget > 0:
+        deadline = monotonic() + max(0.0, time_limit_seconds)  # the build is done: count from here
     last_assignment: dict[str, str] = {}
     for expr in phases:
         # Recovery evaluates many candidates. Its opt-in budget has no one-second
@@ -574,7 +575,7 @@ def _solve_relaxed(
                 "room_solve",
                 status,
                 solver,
-                wall_limit=time_limit_seconds * ceiling_factor,
+                wall_limit=solver.parameters.max_time_in_seconds,
                 det_limit=det_budget - (det_spent - solver.deterministic_time)
                 if det_budget
                 else None,

@@ -152,6 +152,18 @@ def digest_of(value: object) -> str:
     return hashlib.sha256(repr(value).encode("utf-8")).hexdigest()[:12]
 
 
+def _stable(value: object) -> object:
+    """A value with every set and mapping put in sorted order, so equal maps digest equally
+    whatever the hash order of their members."""
+    if isinstance(value, dict):
+        return tuple(sorted((repr(k), _stable(v)) for k, v in value.items()))
+    if isinstance(value, set | frozenset):
+        return tuple(sorted(repr(_stable(v)) for v in value))
+    if isinstance(value, list | tuple):
+        return tuple(_stable(v) for v in value)
+    return repr(value)
+
+
 def _times(slots: frozenset[tuple]) -> frozenset[tuple]:
     return frozenset(slot[:4] for slot in slots)
 
@@ -421,7 +433,7 @@ class StageRecorder:
         if probe == "cpsat":
             return None if out is None else digest_of(tuple(out["eval"].lexicographic_score))
         if probe == "returns":
-            return None if out is None else digest_of(repr(out))
+            return None if out is None else digest_of(_stable(out))
         return None
 
     def _changed(self, probe: str, before: Any, out: Any) -> bool | None:

@@ -55,7 +55,10 @@ def record_search_stop(
     """Note how one search ended; kept only while a run is capturing (see above).
 
     A stage that runs many small searches (one room solve per candidate) is one row per
-    (stage, reason) with a ``count``, so a run's record stays a handful of lines.
+    (stage, reason) with a ``count``, so a run's record stays a handful of lines. A run's
+    attempts share the record (Optimise Current's second try runs inside the same capture), so a
+    row does not say which attempt it came from; a ceiling in either makes the run not
+    repeatable.
     """
     stops = _stops.get()
     row = None

@@ -220,7 +220,7 @@ def test_k_a_recovery_the_ceiling_ended_says_time_limit_and_is_reported(settings
 # ── the room solver ────────────────────────────────────────────────────────
 
 
-def test_l_a_bounded_room_solve_carries_a_deterministic_limit_and_a_wider_wall_ceiling(
+def test_l_a_bounded_room_solve_carries_a_deterministic_limit_and_counts_its_wall_limit_from_the_build(
     settings, monkeypatch
 ):
     from ortools.sat.python import cp_model
@@ -242,7 +242,7 @@ def test_l_a_bounded_room_solve_carries_a_deterministic_limit_and_a_wider_wall_c
         _solve_relaxed(_SAME_SLOT, _ROOM_CAPS, time_limit_seconds=0.5, strict_budget=True)
     assert seen[0][0] == pytest.approx(0.035)  # 0.07 per second x the nominal 0.5 s
     assert all(0 < d <= 0.035 for d, _wall in seen)  # what is left of it, phase after phase
-    assert all(0.5 < wall <= 1.0 for _d, wall in seen)  # the ceiling is twice the nominal limit
+    assert all(0 < wall <= 0.5 for _d, wall in seen)  # never wider than the nominal limit
     assert {s["stage"] for s in stops} == {"room_solve"}
 
 
@@ -495,3 +495,62 @@ def test_v_the_recovery_calls_own_evaluation_cap_is_a_work_limit_not_a_completio
         )
     assert result["report"]["stop_reason"] == "evaluation_limit"
     assert [s["reason"] for s in stops if s["stage"] == "recovery"] == [wb.WORK_LIMIT]
+
+
+def test_z_a_room_solve_records_the_wall_limit_the_solver_really_had(settings, monkeypatch):
+    """The model build eats clock before the first solve; the recorded limit is what was left."""
+    from ortools.sat.python import cp_model
+
+    from core.services.timetable_exact_rooming import _solve_relaxed
+    from tests.test_cpsat_resources import _ROOM_CAPS, _SAME_SLOT
+
+    settings.TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = 0
+    settings.TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND = 0.07
+    monkeypatch.setattr("time.monotonic", _Clock(0.1))
+    seen = []
+    real = cp_model.CpSolver.solve
+
+    def spy(self, model, *args, **kwargs):
+        seen.append(self.parameters.max_time_in_seconds)
+        return real(self, model, *args, **kwargs)
+
+    monkeypatch.setattr(cp_model.CpSolver, "solve", spy)
+    with capture_search_stops() as stops:
+        _solve_relaxed(_SAME_SLOT, _ROOM_CAPS, time_limit_seconds=0.5, strict_budget=True)
+    assert seen[0] == pytest.approx(0.4, abs=1e-6)  # counted from the end of the build
+    assert stops[0]["ceiling_seconds"] == pytest.approx(seen[0], abs=5e-4)
+
+
+def test_za_a_chain_search_whose_generator_stopped_on_the_deadline_reports_the_ceiling(
+    settings, monkeypatch
+):
+    from core.services import timetable_local_search_chains as chains
+    from tests.test_timetable_search_regressions import _instructor_chain_board
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    settings.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = True
+    sections, catalog, instructors = _instructor_chain_board()
+    profiles = {"a": _profile("a", ["A"]), "b": _profile("b", ["B"])}
+    baseline = evaluate_generated_timetable_candidate(
+        "baseline", list(sections.values()), profiles, {}, section_instructor_ids=instructors
+    )
+    clock = _Clock(0.0)
+    monkeypatch.setattr(chains, "time", SimpleNamespace(perf_counter=clock))
+
+    def generator_that_runs_out_of_time(*args, **kwargs):
+        clock.now = 100.0  # the deadline passes while it generates, and it returns nothing
+        return []
+
+    monkeypatch.setattr(chains, "generate_chain_2_moves", generator_that_runs_out_of_time)
+    with capture_search_stops() as stops:
+        chains.chain_local_search(
+            baseline,
+            dict(sections),
+            catalog,
+            profiles,
+            {},
+            section_instructor_ids=instructors,
+            max_iterations=3,
+            chain_time_limit_seconds=2.0,
+        )
+    assert [(s["stage"], s["reason"]) for s in stops] == [("chain", wb.WALL_CEILING)]

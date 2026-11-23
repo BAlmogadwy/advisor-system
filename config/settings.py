@@ -857,9 +857,11 @@ TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND = float(
 TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND = float(
     os.getenv("TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND", "0")
 )
-# A bounded room solve's deterministic-time limit, per second of its nominal wall limit: measured
-# 0.13-0.19 deterministic seconds per wall second on 98 solves, 0.07 x the 0.15 s limit stops a
-# solve at about the work it did on the clock (its wall ceiling is twice the nominal limit).
+# A bounded room solve's deterministic-time limit, per second of its nominal wall limit. Solves
+# that the 0.15 s clock ended had spent 0.009-0.0105 deterministic seconds (mean over ~250 solves;
+# the model build had used about half of the 0.15 s), and 0.07 x 0.15 s = 0.0105 stops a solve at
+# that work. With it on, the nominal wall limit counts from the end of the model build; set to 0
+# the solve is exactly what it was.
 TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND = float(
     os.getenv("TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND", "0.07")
 )

@@ -434,6 +434,8 @@ def chain_local_search(
 
         if not chains:
             logger.info("Chain search: no chain moves available at iteration %d", iteration)
+            if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
+                ceiling_hit = True  # the generator returned early on the deadline
             break
 
         rng = random_for(f"classic:current:chains:{iteration}")
