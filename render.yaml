@@ -98,6 +98,19 @@ services:
       # 575k-element board model peaked at 800 MB and OOM-killed this instance.
       - key: TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS
         value: "40000"
+      # The chain search stops after 10 minutes here (owner 2026-11-23). It has no
+      # limit by default: that default is behind an 8.7-hour runaway job
+      # (docs/SCHEDULER-BLUEPRINT.md, N12), and on one hand-made board the chain
+      # ran for 23 minutes of a 27-minute Optimise Current on a much faster
+      # machine. This service runs one planner job at a time, so a long search
+      # holds up every other job, and a deploy or restart in the middle loses
+      # the run. The limit is per chain search: Generate makes one, Optimise
+      # Current up to two (its second try), so up to 20 minutes in one run. The
+      # stop is safe: the chain only keeps a strictly better, fully re-evaluated
+      # board. A board whose chain search needs longer may end with more
+      # unresolved students than an unlimited run. "0" restores no limit.
+      - key: TIMETABLE_CHAIN_TIME_LIMIT_SECONDS
+        value: "600"
       # Each section is charged to exactly one of its linked teachers (owner
       # rulings 2026-10-19), not to every linked teacher at once. "false"
       # restores the old charging; nothing stored has to change either way.

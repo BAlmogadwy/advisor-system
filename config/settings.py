@@ -1192,6 +1192,11 @@ TIMETABLE_ENFORCE_LOCKS = os.getenv("TIMETABLE_ENFORCE_LOCKS", "true").lower() i
 # only ever advances current_best to a strictly-improving, fully re-evaluated
 # board, so an early stop returns the best-so-far, never a worse board than the
 # chain started from. (0 / negative / unset ⇒ no deadline.)
+#
+# Production sets 600 in render.yaml (owner 2026-11-23, pinned by
+# scripts/validate_render_blueprint.py): the web service runs one planner job
+# at a time, so an unbounded chain there holds up every other job and is lost
+# on a deploy or restart. The limit is per chain call. The default here stays 0.
 TIMETABLE_CHAIN_TIME_LIMIT_SECONDS = float(os.getenv("TIMETABLE_CHAIN_TIME_LIMIT_SECONDS", "0"))
 
 # ── Timetable CP-SAT memory and CPU ─────────────────────────────

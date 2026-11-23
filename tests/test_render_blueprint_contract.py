@@ -40,6 +40,35 @@ def test_checked_in_render_blueprint_matches_production_contract(blueprint: Blue
     assert validate_blueprint(blueprint, project_root=PROJECT_ROOT) == []
 
 
+CHAIN_LIMIT = "TIMETABLE_CHAIN_TIME_LIMIT_SECONDS"
+
+
+def _web_env(document: Blueprint) -> list[dict[str, Any]]:
+    return _service(document, "advisor-system")["envVars"]
+
+
+def test_contract_bounds_the_chain_search_online(blueprint: Blueprint) -> None:
+    """Online the chain search has a time limit (owner 2026-11-23). Without one a single long
+    search holds the only planner slot and is lost on a deploy or restart. The contract refuses
+    a blueprint that removes the limit, drops the key, or changes the value without a reviewed
+    contract change. The code default stays "no limit", so only this service is bounded."""
+    assert {"key": CHAIN_LIMIT, "value": "600"} in _web_env(blueprint)
+    settings_source = (PROJECT_ROOT / "config" / "settings.py").read_text(encoding="utf-8")
+    assert f'{CHAIN_LIMIT} = float(os.getenv("{CHAIN_LIMIT}", "0"))' in settings_source
+
+    for value in ("0", "1200"):
+        changed = deepcopy(blueprint)
+        next(e for e in _web_env(changed) if e["key"] == CHAIN_LIMIT)["value"] = value
+        errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
+        assert any(CHAIN_LIMIT in error for error in errors), (value, errors)
+
+    dropped = deepcopy(blueprint)
+    env = _web_env(dropped)
+    env[:] = [e for e in env if e["key"] != CHAIN_LIMIT]
+    errors = validate_blueprint(dropped, project_root=PROJECT_ROOT)
+    assert any(CHAIN_LIMIT in error for error in errors), errors
+
+
 def test_contract_rejects_a_second_or_unknown_service(blueprint: Blueprint) -> None:
     changed = deepcopy(blueprint)
     changed["services"].append(

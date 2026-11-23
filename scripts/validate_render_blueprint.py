@@ -123,6 +123,9 @@ WEB_FIXED_ENV_VALUES = {
     "TIMETABLE_CPSAT_WORKERS": "1",
     # Timetable CP-SAT models stop growing here; 800 MB models OOM-killed it.
     "TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS": "40000",
+    # The chain search is bounded here (owner 2026-11-23): unbounded, one long
+    # search holds the only planner slot and is lost on a deploy or restart.
+    "TIMETABLE_CHAIN_TIME_LIMIT_SECONDS": "600",
     # Render's load balancers already compress responses; app gzip stays off on
     # the 0.5-CPU host until the host gate in docs/stage3/B5.md says otherwise.
     "TIMETABLE_WORKSPACE_JSON_GZIP": "false",
