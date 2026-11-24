@@ -650,6 +650,27 @@ class PlannerBoardShellBrowserTests(StaticLiveServerTestCase):
         self.assertEqual(self._text(page, "#plbRulesChanged"), "1 rule changed")
         self.assertIn("CS301", self._rows(page, "could"))
 
+    def test_a_reload_overtaken_by_a_failed_fetch_still_puts_the_old_rule_back(self) -> None:
+        fake = Fake()
+        page = self._open(fake)
+        # The eligibility reload is slow ...
+        fake.hold_ids = {STUDENT_ID}
+        self._rules(page, elig="relaxed")
+        expect(page.locator("#plbStatus")).to_have_text("Loading student…")
+        # ... and a newer fetch overtakes it, then fails.
+        fake.context_answer = lambda body: (404, {"error": {"code": "STUDENT_NOT_FOUND"}})
+        self._fetch(page, "4999999")
+        expect(page.locator("#plbStatus")).to_have_text("No student found with that ID.")
+        expect(page.locator("#plbRules1")).to_contain_text("Strict eligibility")
+        # The overtaken reload then answers: it is too late to change anything.
+        _body, route = fake.pending.pop()
+        route.fulfill(json=context_for(STUDENT_ID, eligibility_mode="relaxed"))
+        page.wait_for_timeout(400)
+        page.evaluate("new Promise(r => requestAnimationFrame(() => r(true)))")
+        self.assertIn("Strict eligibility", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
+        self.assertEqual(self._text(page, "#plbRulesChanged"), "")
+
     def test_closing_the_rules_dialog_puts_focus_back_on_edit_rules(self) -> None:
         page = self._open(Fake())
         for close in ("Escape", "#plbRulesCancel", "#plbRulesApply"):

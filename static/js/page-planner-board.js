@@ -153,6 +153,7 @@
     catalog: null,     // Map normalised course code -> [section]; null = unknown
     shortlist: [],
     rules: { ...DEFAULT_RULES },
+    shownElig: null,   // the eligibility the suggestions on screen were loaded with
     defaults: { ...DEFAULT_RULES },
     focus: null,       // {kind, code}: where focus goes after the next redraw
   };
@@ -320,23 +321,14 @@
     };
     closeRulesDialog();
     renderRules();
-    const settle = () => {
-      renderCourses();
-      if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
-        loadCatalog(state.gen);
-      }
-    };
-    if (state.ctx && state.rules.eligibility !== before.eligibility) {
-      // The suggestions depend on eligibility: reload them, as the current page does. If the
-      // reload fails the page still shows the old suggestions, so the old rule is put back;
-      // the other rules changed in the same dialog are kept and applied.
-      loadStudent({
-        reuse: true,
-        onFail: () => { state.rules.eligibility = before.eligibility; renderRules(); settle(); },
-      });
-      return;
+    // The other rules apply at once, whatever happens to the reload below.
+    renderCourses();
+    if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
+      loadCatalog(state.gen);
     }
-    settle();
+    // The suggestions depend on eligibility: reload them, as the current page does. If no reload
+    // lands, loadStudent puts back the eligibility the page was loaded with.
+    if (state.ctx && state.rules.eligibility !== before.eligibility) loadStudent({ reuse: true });
   }
 
   /* ── Student ───────────────────────────────────────────────────────────── */
@@ -884,7 +876,12 @@
     const failed = (line) => {
       $('plbRoot').removeAttribute('aria-busy');
       setStatus('error', line);
-      if (options && typeof options.onFail === 'function') options.onFail();
+      // The page still shows what the last accepted reply brought, so the rule goes back to
+      // match it. This also covers a rules reload that a newer, failing fetch overtook.
+      if (state.ctx && state.shownElig && state.rules.eligibility !== state.shownElig) {
+        state.rules.eligibility = state.shownElig;
+        renderRules();
+      }
     };
     $('plbRoot').setAttribute('aria-busy', 'true');
     setStatus('loading', T.loading);
@@ -917,6 +914,7 @@
     if (data.eligibility_mode === 'strict' || data.eligibility_mode === 'relaxed') {
       state.rules.eligibility = data.eligibility_mode;
     }
+    state.shownElig = state.rules.eligibility;
     // Max credits starts at the student's cap, and is kept while the same student is reloaded
     // (an eligibility change reloads the student and must not undo the number just chosen).
     const cap = finitePositive(data.student.credit_cap);
