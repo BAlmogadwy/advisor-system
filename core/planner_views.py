@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+from hashlib import sha256
 
 from django.contrib.auth.decorators import login_required
+from django.core import signing
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import throttle
@@ -53,6 +56,8 @@ logger = logging.getLogger(__name__)
 #: this is a malformed or hostile caller, not an adviser planning a term.
 MAX_SHORTLIST_COURSES = 40
 ELIGIBILITY_MODES = {"strict", "relaxed"}
+_PROJECTION_TOKEN_SALT = "core.planner.graduation-projection.v1"
+_PROJECTION_TOKEN_MAX_AGE = 30 * 60
 
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
@@ -149,6 +154,13 @@ def _eligibility_mode(
             status=400,
         )
     return mode, None
+
+
+def _kept_timetable_digest(rows: list[dict[str, object]]) -> str:
+    # Include section identity, source and the occupied times used by the build.
+    fields = ("term_section_id", "course_key", "source", "day", "start_time", "end_time")
+    canonical_rows = sorted(tuple(str(row.get(field) or "") for field in fields) for row in rows)
+    return sha256(json.dumps(canonical_rows).encode()).hexdigest()
 
 
 @login_required(login_url="login")
@@ -1012,6 +1024,97 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             "program_sections_only": program_sections_only,
             "allow_full_sections": allow_full_sections,
         }
+        if result.get("options") and student_id_for_baseline is not None:
+            # A later request can use only the exact sections this build returned.
+            # Without a student there is nothing to forecast, so no token is issued.
+            result["graduation_projection_token"] = signing.dumps(
+                {
+                    "actor": str(request.user.pk),
+                    "student_id": student_id_for_baseline,
+                    "year": year,
+                    "term": term,
+                    "kept_timetable": (
+                        _kept_timetable_digest(effective_baseline) if keep_registered else None
+                    ),
+                    "options": [
+                        {
+                            "name": option["name"],
+                            "mappings": [
+                                {
+                                    "term_section_id": mapping.get("term_section_id"),
+                                    "course_key": mapping.get("course_key")
+                                    or mapping.get("course_code"),
+                                }
+                                for mapping in option["mappings"]
+                            ],
+                        }
+                        for option in result["options"]
+                    ],
+                },
+                salt=_PROJECTION_TOKEN_SALT,
+                compress=True,
+            )
         return _ok(result)
     except Exception as exc:
+        return _internal_error(exc)
+
+
+@login_required(login_url="login")
+@require_POST
+@never_cache
+@throttle(max_calls=10, window_seconds=60)
+def planner_graduation_projection_view(request: HttpRequest) -> JsonResponse:
+    """Evaluate the signed build against the student's current academic evidence."""
+    deny = _require_staff(request)
+    if deny:
+        return deny
+
+    payload, payload_err = _safe_json(request)
+    if payload_err:
+        return payload_err
+    token = payload.get("token")
+    if not isinstance(token, str) or not token or len(token) > 16_384:
+        return _err("A build token is required", code="PROJECTION_TOKEN_INVALID")
+    try:
+        build = signing.loads(token, salt=_PROJECTION_TOKEN_SALT, max_age=_PROJECTION_TOKEN_MAX_AGE)
+    except signing.SignatureExpired:
+        return _err("Build the timetable again", code="PROJECTION_BUILD_EXPIRED", status=409)
+    except signing.BadSignature:
+        return _err("Invalid build token", code="PROJECTION_TOKEN_INVALID")
+
+    if build["actor"] != str(request.user.pk):
+        return _err(
+            "Build token is outside your scope", code="PROJECTION_SCOPE_MISMATCH", status=403
+        )
+    student_id = build["student_id"]
+    scope_deny = require_student_scope(request, student_id)
+    if scope_deny:
+        return scope_deny
+
+    from core.services.planner_graduation import compare_planner_graduation
+
+    year, term = build["year"], build["term"]
+    try:
+        kept = None
+        if build["kept_timetable"] is not None:
+            kept = get_student_term_baseline(
+                str(student_id), year, term, snapshot=Snapshot.EFFECTIVE
+            )
+            if _kept_timetable_digest(kept) != build["kept_timetable"]:
+                return _err(
+                    "The retained timetable has changed. Build it again.",
+                    code="PROJECTION_BUILD_STALE",
+                    status=409,
+                )
+        return _ok(
+            compare_planner_graduation(
+                student_id=student_id,
+                year=int(year),
+                term=int(term),
+                options=build["options"],
+                retained_baseline=kept,
+            )
+        )
+    except Exception as exc:
+        logger.exception("Planner graduation projection failed")
         return _internal_error(exc)

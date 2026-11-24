@@ -227,6 +227,7 @@ let currentCtx={student_id:'',academic_year:'',term:'',eligibility_mode:'strict'
 let currentBaseline=[];
 let lastBuilderOptions=[];
 let builderGeneration=0;
+let graduationProjection=null;
 /* Same guard as builderGeneration, for the student fetch. Without it a slow
    response for student A could land after a fast one for student B and
    overwrite the whole page — summary, baseline, recommendations, shortlist —
@@ -362,9 +363,215 @@ function sectionCapacity(section){
   return {known:true, full:remaining===0, maximum, registered, remaining};
 }
 
+const PROJECTION_TEXT={
+  loading: IS_AR ? 'جارٍ حساب الإكمال المتوقع…' : 'Calculating projected completion…',
+  unavailable: IS_AR ? 'التوقع غير متاح' : 'Projection unavailable',
+  stale: IS_AR ? 'أعد بناء الخيارات لتحديث التوقع.' : 'Build the options again to refresh the projection.',
+  unresolved: IS_AR ? 'تعذّر تحديد فصل الإكمال' : 'Completion term unresolved',
+  noRegistration: IS_AR ? 'لا يوجد تسجيل رسمي لهذا الفصل' : 'No registrar registration for this term',
+  equal: IS_AR ? 'نفس فصل التسجيل الحالي' : 'Same completion term',
+  estimated: IS_AR ? 'الإكمال المتوقع' : 'Projected completion',
+  scope: IS_AR ? 'يشمل عدد الفصول فصل التخطيط.' : 'Term counts include the planning term.',
+  retainedExpected: IS_AR ? 'يتضمن الخيار المقررات المحتفَظ بها من الخطة المتوقعة.' : 'This option includes retained courses from the expected plan.',
+  retainedWorking: IS_AR ? 'يتضمن الخيار المقررات المحتفَظ بها من الجدول قيد العمل.' : 'This option includes retained courses from the working timetable.',
+};
+const projectionNumber=new Intl.NumberFormat(IS_AR?'ar-SA':'en');
+
+function isolateProjectionText(value){
+  return IS_AR ? `\u2068${value}\u2069` : String(value);
+}
+
+function projectionTerm(academicYear, term){
+  if(!academicYear || !term) return '';
+  const termLabel=Number.isFinite(Number(term)) ? projectionNumber.format(term) : term;
+  return IS_AR ? `الفصل ${termLabel}، ${isolateProjectionText(academicYear)}` : `Term ${termLabel}, ${academicYear}`;
+}
+
+function projectionTiming(delta){
+  if(!Number.isInteger(delta)) return '';
+  if(delta===0) return PROJECTION_TEXT.equal;
+  const count=projectionNumber.format(Math.abs(delta));
+  if(IS_AR){
+    let label=`بـ${count} ${Math.abs(delta)<=10?'فصول':'فصلًا'}`;
+    if(Math.abs(delta)===1) label='بفصل واحد';
+    if(Math.abs(delta)===2) label='بفصلين';
+    return delta<0 ? `أبكر ${label}` : `أبعد ${label}`;
+  }
+  return `${count} ${Math.abs(delta)===1?'term':'terms'} ${delta<0?'sooner':'later'}`;
+}
+
+function projectionTermCount(count){
+  if(!Number.isInteger(count)) return '';
+  const number=projectionNumber.format(count);
+  if(!IS_AR) return `${number} ${count===1?'term':'terms'}`;
+  if(count===1) return 'فصل واحد';
+  if(count===2) return 'فصلان';
+  return `${number} ${count>=3 && count<=10?'فصول':'فصلًا'}`;
+}
+
+function projectionValue(row, state){
+  if(state==='loading') return PROJECTION_TEXT.loading;
+  if(state==='stale') return PROJECTION_TEXT.stale;
+  if(!row || row.status==='unavailable') return PROJECTION_TEXT.unavailable;
+  if(row.status==='unresolved') return PROJECTION_TEXT.unresolved;
+  const count=projectionTermCount(row.terms_including_planning_term);
+  const projected=projectionTerm(row.completion_academic_year, row.completion_term);
+  return [count, projected, projectionTiming(row.delta_terms)].filter(Boolean).join(' · ') || PROJECTION_TEXT.unavailable;
+}
+
+function projectionReason(reason){
+  const course=reason.course_code ? isolateProjectionText(reason.course_code) : '';
+  const related=reason.related_course_code ? isolateProjectionText(reason.related_course_code) : '';
+  const before=projectionTerm(reason.before?.academic_year, reason.before?.term);
+  const after=projectionTerm(reason.after?.academic_year, reason.after?.term);
+  switch(reason.code){
+    case 'same_course_set':
+      return IS_AR?'يتضمن الخيار المقررات نفسها في التسجيل الحالي.':'This option includes the same courses as current registration.';
+    case 'course_moved_earlier':
+    case 'course_moved_later':
+      return IS_AR?`انتقل ${course} من ${before} إلى ${after}.`:`${course} moves from ${before} to ${after}.`;
+    case 'prerequisite_moved_earlier':
+      return IS_AR
+        ? `انتقل المتطلب السابق ${course} من ${before} إلى ${after}، وانتقل المقرر ${related} أيضًا إلى فصل أبكر.`
+        : `Prerequisite ${course} moves from ${before} to ${after}. Its dependent course ${related} also moves earlier.`;
+    case 'prerequisite_moved_later':
+      return IS_AR
+        ? `انتقل المتطلب السابق ${course} من ${before} إلى ${after}، وانتقل المقرر ${related} أيضًا إلى فصل لاحق.`
+        : `Prerequisite ${course} moves from ${before} to ${after}. Its dependent course ${related} also moves later.`;
+    case 'requirement_resolved':
+      return IS_AR?`أمكن إدراج ${course} في التوقع.`:`${course} can now be placed in the projection.`;
+    case 'requirement_unresolved':
+      return IS_AR?`تعذّر إدراج ${course} في التوقع.`:`${course} could not be placed in the projection.`;
+    case 'course_added':
+      return IS_AR?`يتضمن هذا الخيار ${course} في فصل التخطيط.`:`This option includes ${course} in the planning term.`;
+    case 'course_removed':
+      return IS_AR?`يخلو هذا الخيار من ${course} في فصل التخطيط.`:`This option omits ${course} from the planning term.`;
+    case 'academic_plan_unavailable':
+      return IS_AR?'الخطة الدراسية غير متاحة.':'The academic plan is unavailable.';
+    case 'no_registered_timetable':
+      return IS_AR?'يلزم وجود جدول مسجّل رسميًا لمقارنة موعد التخرّج.':'A registrar timetable is needed to compare graduation dates.';
+    case 'unsupported_planning_term':
+      return IS_AR?'يشمل توقع التخرّج الفصلين الدراسيين الأول والثاني فقط.':'Graduation forecasts are available for regular terms 1 and 2.';
+    case 'unmet_course_prerequisites': {
+      const missing=(reason.missing_prerequisites||[]).map(isolateProjectionText).join(IS_AR?'، ':', ');
+      return IS_AR?`لم تكتمل متطلبات ${course} قبل فصل التخطيط: ${missing}.`:`${course} requires ${missing} before the planning term.`;
+    }
+    case 'section_metadata_unavailable':
+      return IS_AR?'بيانات إحدى الشعب غير كافية لحساب التوقع.':'Section data is incomplete for this projection.';
+    default:
+      return '';
+  }
+}
+
+function projectionBlockedRequirement(requirement){
+  const code=isolateProjectionText(requirement.code);
+  const prerequisites=(requirement.missing_course_prerequisites||[]).map(isolateProjectionText);
+  const gates=[];
+  if(prerequisites.length){
+    gates.push(IS_AR?`المتطلبات السابقة المتبقية ${prerequisites.join('، ')}`:`missing prerequisites ${prerequisites.join(', ')}`);
+  }
+  if(requirement.credit_hour_gate?.remaining>0){
+    const hours=projectionNumber.format(requirement.credit_hour_gate.remaining);
+    gates.push(IS_AR?`الساعات الإضافية المطلوبة ${hours}`:`${hours} more credits required`);
+  }
+  if(requirement.project_sequence_gate){
+    gates.push(IS_AR?'قيد تسلسل مقررات المشروع':'project sequence requirement');
+  }
+  return gates.length ? `${code} · ${gates.join(IS_AR?'، ':', ')}` : (IS_AR?`تعذّر إدراج ${code} في التوقع.`:`${code} could not be placed in the projection.`);
+}
+
+function renderGraduationProjection(){
+  const panel=q('graduationProjection');
+  if(!panel) return;
+  panel.hidden=!graduationProjection;
+  let details=q('graduationProjectionDetails');
+  if(!graduationProjection){details?.remove();return;}
+  const {state, baseline, options, retainedKind, futureCreditLimit}=graduationProjection;
+  const name=q('selectedOption').value;
+  const selected=options?.[name];
+  q('graduationProjectionSelectedLabel').textContent=name
+    ? (IS_AR?`الخيار المحدد ${name}`:`Selected option ${name}`)
+    : (IS_AR?'الخيار المحدد':'Selected option');
+  q('graduationProjectionBaseline').textContent=baseline?.reason_code==='no_registered_timetable'
+    ? PROJECTION_TEXT.noRegistration
+    : projectionValue(baseline, state);
+  q('graduationProjectionSelected').textContent=name
+    ? projectionValue(selected, state)
+    : T.noOptionSelected;
+  const assumptions=q('graduationProjectionAssumptions');
+  assumptions.hidden=state!=='ready';
+  const futureCredits=projectionNumber.format(futureCreditLimit);
+  assumptions.textContent=PROJECTION_TEXT.scope+' '+(IS_AR
+    ? `يفترض التوقع اجتياز المقررات وتسجيل ما يصل إلى ${futureCredits} ساعة معتمدة في كل فصل لاحق.`
+    : `The forecast assumes courses are passed and allows up to ${futureCredits} credits per future term.`);
+  const retainedNote=q('graduationProjectionRetained');
+  const retainedText={
+    expected_plan:PROJECTION_TEXT.retainedExpected,
+    working_timetable:PROJECTION_TEXT.retainedWorking,
+  }[retainedKind];
+  retainedNote.hidden=!retainedText;
+  retainedNote.textContent=retainedText||'';
+  document.querySelectorAll('[data-option-projection]').forEach(el=>{
+    el.textContent=`${PROJECTION_TEXT.estimated} · ${projectionValue(options?.[el.dataset.optionProjection], state)}`;
+  });
+  const blocking=selected?.unresolved_requirements||[];
+  const detailedCodes=new Set(blocking.map(row=>row.code));
+  const explanation=(selected?.reasons||[])
+    .filter(reason=>reason.code!=='requirement_unresolved'||!detailedCodes.has(reason.course_code))
+    .map(projectionReason).filter(Boolean);
+  explanation.push(...blocking.map(projectionBlockedRequirement));
+  if(!explanation.length){details?.remove();return;}
+  if(!details){
+    panel.appendChild(q('graduationProjectionDetailsTemplate').content.cloneNode(true));
+    details=q('graduationProjectionDetails');
+  }
+  const reasons=details.querySelector('ul');
+  reasons.replaceChildren();
+  explanation.forEach(text=>{
+    const row=document.createElement('li');
+    row.textContent=text;
+    reasons.appendChild(row);
+  });
+}
+
+async function fetchGraduationProjection(token, runGeneration){
+  graduationProjection={state:token?'loading':'unavailable'};
+  renderGraduationProjection();
+  if(!token) return;
+  try{
+    const response=await fetch('/ops/planner/graduation-projection/',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+      body:JSON.stringify({token})
+    });
+    if(runGeneration!==builderGeneration) return;
+    if(response.status===409){
+      graduationProjection={state:'stale'};
+    }else{
+      const data=response.ok ? await response.json() : null;
+      if(runGeneration!==builderGeneration) return;
+      graduationProjection=data?.ok && data.baseline && data.options
+        ? {
+            state:'ready',
+            baseline:data.baseline,
+            options:data.options,
+            retainedKind:data.retained_baseline_kind,
+            futureCreditLimit:data.future_max_credits_per_term ?? 18,
+          }
+        : {state:'unavailable'};
+    }
+  }catch{
+    if(runGeneration!==builderGeneration) return;
+    graduationProjection={state:'unavailable'};
+  }
+  renderGraduationProjection();
+}
+
 function invalidateBuilderResults(){
   builderGeneration += 1;
   lastBuilderOptions=[];
+  graduationProjection=null;
+  renderGraduationProjection();
   const selected=q('selectedOption');
   if(selected) selected.value='';
   const cards=q('optionCards');
@@ -1115,6 +1322,8 @@ q('applyOption').onclick=async()=>{
 
   const ids=(opt.mappings||[]).map(m=>m.term_section_id).filter(Boolean);
   if(!ids.length){ setBanner('warning', T.noMappableInOption(name)); return; }
+  const {student_id, academic_year, term}=currentCtx;
+  const contextGeneration=fetchGeneration;
 
   /* This is the ONLY operation on the page that writes, and it is a REPLACE:
      any planner section saved earlier that is not in this option is deleted.
@@ -1138,7 +1347,7 @@ q('applyOption').onclick=async()=>{
     cancelText: IS_AR ? 'إلغاء' : 'Cancel',
     initialFocus: 'cancel'
   });
-  if(!proceed) return;
+  if(!proceed || contextGeneration!==fetchGeneration) return;
 
   let r, data;
   try{
@@ -1146,9 +1355,9 @@ q('applyOption').onclick=async()=>{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
       body:JSON.stringify({
-        student_id:currentCtx.student_id,
-        academic_year:currentCtx.academic_year,
-        term:currentCtx.term,
+        student_id,
+        academic_year,
+        term,
         term_section_ids:ids,
         confirm_replace:true
       })
@@ -1164,7 +1373,7 @@ q('applyOption').onclick=async()=>{
   /* Report what the write actually did, including what it took away. */
   const removed=Array.isArray(data.removed)?data.removed:[];
   const clashes=Array.isArray(data.clashes_with_registered)?data.clashes_with_registered:[];
-  setBanner('success', T.appliedOption(name, data.inserted||0));
+  const applied={name, count:data.inserted||0};
   if(removed.length){
     notify.warning(
       IS_AR ? `أُزيلت ${removed.length} مقرر مخطط سابقًا` : `Removed ${removed.length} previously planned course(s)`,
@@ -1177,11 +1386,12 @@ q('applyOption').onclick=async()=>{
       clashes.map(x=>`${x.course_code} ${x.section} @ ${x.slot} vs ${x.clashes_with}`).join('; ')
     );
   }
-  setStep('build');
-  q('fetchBtn').click();
-  /* After the click: the re-fetch it starts empties this line first (it
-     invalidates the build results), so the applied option is written after. */
-  setLastBuildAt(T.appliedOptionShort(name), false);
+  const sameSelection=Number(q('studentId').value)===Number(student_id)
+    && q('year').value.trim()===academic_year && q('term').value.trim()===term;
+  const refreshed=contextGeneration===fetchGeneration && sameSelection && await fetchStudentContext(applied);
+  if(!refreshed){
+    notify.success(T.appliedOption(applied.name, applied.count));
+  }
 };
 
 /* The Build button while a request is in flight: disabled, busy, and says so.
@@ -1356,6 +1566,7 @@ async function runBuilderRequest(runGeneration){
     }
 
     renderVisualTimetable(chosenSource);
+    renderGraduationProjection();
   }
 
   options.forEach(opt=>{
@@ -1367,6 +1578,7 @@ async function runBuilderRequest(runGeneration){
         <div class="opt-method">${escapeHtml(methodName(opt))}</div>
         <div class="fs-12 opt-count">${IS_AR?'تمت الجدولة':'Scheduled'} <strong class="text-teal">${opt.scheduled||0}</strong>/${opt.target||0}</div>
         <div class="fs-11 text-t4">${IS_AR?'غير مجدول':'Unscheduled'} ${(opt.unscheduled||[]).length||0}</div>
+        <div class="opt-projection" data-option-projection="${escapeHtml(opt.name)}"></div>
         <button type="button" class="btn btn-sm btn-neutral w-100 mt-2 opt-select" data-pl-action="select-option" aria-pressed="false">${IS_AR?'اختيار':'Select'}</button>
       </div>`;
     col.querySelector('button').onclick=()=>chooseOption(opt.name);
@@ -1383,6 +1595,7 @@ async function runBuilderRequest(runGeneration){
     div.innerHTML=`
       <div><strong>${IS_AR?'الخيار':'Option'} ${escapeHtml(opt.name)}</strong> - ${IS_AR?'تمت الجدولة':'Scheduled'} ${escapeHtml(opt.scheduled)}/${escapeHtml(opt.target)}</div>
       <div class="small text-secondary">${escapeHtml(methodName(opt))}</div>
+      <div class="opt-projection" data-option-projection="${escapeHtml(opt.name)}"></div>
       <div class="mt-1">
         ${(opt.mappings||[]).map(m=>`<div>• ${escapeHtml(courseKey(m))} → ${escapeHtml(m.section)}</div>`).join('') || `<span class="text-secondary">${T.noMappings}</span>`}
       </div>
@@ -1395,6 +1608,10 @@ async function runBuilderRequest(runGeneration){
   q('swapSuggestions').innerHTML=(data.swap_suggestions||[]).map(s=>`<div>• ${escapeHtml(s.course_code)}: ${escapeHtml(s.from_section)} → ${escapeHtml(s.to_section)} (${escapeHtml(s.reason)})</div>`).join('') || `<span class="text-secondary">${T.noSwaps}</span>`;
 
   renderVisualTimetable(q('visualSource').value || 'baseline');
+  if(options.length){
+    const token=typeof data.graduation_projection_token==='string' ? data.graduation_projection_token : '';
+    void fetchGraduationProjection(token, runGeneration);
+  }
 }
 
 /* The panels while a student is being fetched: stale content is inactive. */
@@ -1404,7 +1621,7 @@ function setFetchBusy(on){
   if(on) grid.setAttribute('aria-busy','true'); else grid.removeAttribute('aria-busy');
 }
 
-q('fetchBtn').onclick=async()=>{
+async function fetchStudentContext(applied){
   invalidateBuilderResults();
   const runFetch = ++fetchGeneration;
   setFetchBusy(true);
@@ -1527,9 +1744,6 @@ q('fetchBtn').onclick=async()=>{
     qualityEl.textContent=T.qualityPartial(fallbackRows);
   }
 
-  setBanner('success', IS_AR ? 'تم تحميل بيانات الطالب بنجاح.' : 'Student context loaded successfully.');
-  setStep('courses');
-
   renderVisualTimetable(q('visualSource').value || 'baseline');
 
   currentRecommendations=data.recommendations||[];
@@ -1558,9 +1772,20 @@ q('fetchBtn').onclick=async()=>{
 
   shortlist=currentRecommendations.filter(x=>x.status==='Eligible').map(x=>({...x,must_take:false}));
   renderShortlist();
+  if(applied){
+    setBanner('success', T.appliedOption(applied.name, applied.count));
+    setLastBuildAt(T.appliedOptionShort(applied.name), false);
+    setStep('build');
+  }else{
+    setBanner('success', IS_AR ? 'تم تحميل بيانات الطالب بنجاح.' : 'Student context loaded successfully.');
+    setStep('courses');
+  }
   renderPlanPalette(currentCtx.student_id);
   renderAvailableSections();
-};
+  return true;
+}
+
+q('fetchBtn').onclick=()=>fetchStudentContext();
 
 enforceBuilderProcessLayout();
 setStep('courses', {scroll:false});
@@ -1581,8 +1806,8 @@ q('availSearch')?.addEventListener('input',function(){
 (function initFromUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const student = params.get('student') || params.get('student_id') || params.get('sid');
-  const year    = params.get('year') || params.get('academic_year') || 'defaultYear';
-  const term    = params.get('term') || 'defaultTerm';
+  const year    = params.get('year') || params.get('academic_year');
+  const term    = params.get('term');
 
   if (!student) return; // no deep-link, normal load
 
@@ -1591,8 +1816,8 @@ q('availSearch')?.addEventListener('input',function(){
   const termInput = q('term');
 
   if (sidInput)  sidInput.value  = student;
-  if (yearInput && !yearInput.value) yearInput.value = year;
-  if (termInput && !termInput.value) termInput.value = term;
+  if (yearInput && year) yearInput.value = year;
+  if (termInput && term) termInput.value = term;
 
   /* Update page-header chip immediately so it shows the student ID
      even before the fetch completes */
