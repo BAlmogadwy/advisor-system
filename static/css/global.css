@@ -5328,8 +5328,12 @@ pre, .pre-output {
                 z-index 0s;
   }
 
+  /* 320px, and never closer than 56px to the far edge, so the backdrop beside
+     it stays a target a thumb can close it with (Material's modal drawer). At
+     272px, 16px labels such as "Recommendation Debug" and the longer Arabic ones
+     wrapped onto a second line, and so did the Arabic product name. */
   .sidebar.sidebar-open {
-    width:      272px;
+    width:      min(320px, calc(100vw - 56px));
     padding:    0;
     overflow-y: auto;
     box-shadow: 4px 0 32px rgba(0, 0, 0, 0.15);
@@ -5625,6 +5629,100 @@ pre, .pre-output {
   html[dir="rtl"] .sidebar.sidebar-open {
     box-shadow: -4px 0 32px rgba(0, 0, 0, 0.15);
   }
+}
+
+/* ── The phone drawer: a touch surface ─────────────────────────
+   On a phone the sidebar is a drawer, and it kept the compaction the ≤1200px
+   and ≤992px blocks above make for the 210px and 195px rails: 31.5px rows,
+   24px group headings in 11px capitals (smaller than the items under them), a
+   30px mark beside a 12.35px product name, 28-32px buttons and an 11.3px
+   language select, which iOS zooms into when it takes focus. 34 of its 35
+   controls were under the 44px the touch ladder gives every other control on
+   a phone. Here the drawer starts from the full rail's look and takes the
+   touch ladder: 44px rows (--control-h), the touch tier's 16px text, and group
+   headings in the body face at 600, as large as their items.
+   Not on the MRI page (owner: unchanged), which hides the sidebar: the
+   zero-specificity :where() keeps every computed style there as it was. Split
+   view draws no sidebar at all.
+   The sidebar is outside the global box-sizing reset, so each touch row is a
+   border box here: its 44px is the target, not the text inside its padding. */
+@media (max-width: 768px) {
+  /* The visible height, not 100vh: a phone's 100vh is the height with its
+     browser toolbar hidden, so with the toolbar showing the footer's controls
+     sat partly under it. A browser without dvh keeps the 100vh above. */
+  :where(body:not(.twm-root)) .sidebar { height: 100dvh; }
+
+  :where(body:not(.twm-root)) .sidebar :is(.nav-find-btn, .nav-lbl, .nav-a, .s-usr, .s-usr-logout, .theme-toggle) {
+    box-sizing: border-box;
+  }
+
+  :where(body:not(.twm-root)) .sidebar .logo-area    { padding: 16px 18px; gap: 12px; }
+  :where(body:not(.twm-root)) .sidebar .logo-mark    { width: 40px; height: 40px; border-radius: 11px; }
+  :where(body:not(.twm-root)) .sidebar .logo-mark .i { width: 22px; height: 22px; }
+  /* the phone's page title is this size too (.page-header-module) */
+  :where(body:not(.twm-root)) .sidebar .logo-title   { font-size: var(--text-lg); }
+
+  :where(body:not(.twm-root)) .sidebar .nav-find { padding: 12px 12px 4px; }
+  :where(body:not(.twm-root)) .sidebar .nav-find-btn {
+    min-height:     var(--control-h);
+    padding-block:  0;
+    padding-inline: 12px;
+    gap:            10px;
+    font-size:      var(--field-fs);
+  }
+  :where(body:not(.twm-root)) .sidebar .nav-find-i { width: 20px; height: 20px; }
+
+  :where(body:not(.twm-root)) .sidebar .nav-sec { padding: 8px 12px 16px; }
+  :where(body:not(.twm-root)) .sidebar .nav-lbl {
+    min-height:         var(--control-h);
+    margin-block-start: 10px;
+    padding:            0 12px;
+    font-family:        var(--font-body);
+    font-weight:        600;
+    letter-spacing:     normal;
+    text-transform:     none;
+    color:              var(--t1);
+  }
+  :where(body:not(.twm-root)) .sidebar .nav-grp:first-child > .nav-lbl { margin-block-start: 0; }
+  :where(body:not(.twm-root)) .sidebar .nav-lbl-t    { font-size: var(--text-md); }
+  :where(body:not(.twm-root)) .sidebar .nav-lbl-chev { width: 18px; height: 18px; }
+  :where(body:not(.twm-root)) .sidebar .nav-a {
+    min-height: var(--control-h);
+    padding:    8px 12px;
+    gap:        12px;
+    margin:     2px 0;
+    font-size:  var(--text-md);
+  }
+  :where(body:not(.twm-root)) .sidebar .nav-a .i { width: 20px; height: 20px; }
+
+  :where(body:not(.twm-root)) .sidebar .s-foot { padding: 12px 14px 14px; }
+  :where(body:not(.twm-root)) .sidebar .s-usr  { min-height: var(--control-h); gap: 12px; }
+  :where(body:not(.twm-root)) .sidebar .avatar { width: 36px; height: 36px; border-radius: 10px; }
+  :where(body:not(.twm-root)) .sidebar .u-nm   { font-size: var(--text-base); }
+  /* Arabic: the full rail's one step up (12 to 13px), as at 1201px and above */
+  html[dir="rtl"] :where(body:not(.twm-root)) .sidebar .u-rl,
+  html[dir="rtl"] :where(body:not(.twm-root)) .sidebar .logo-sub { font-size: var(--text-sm); }
+  :where(body:not(.twm-root)) .sidebar .s-usr-logout,
+  :where(body:not(.twm-root)) .sidebar .theme-toggle { width: var(--control-h); height: var(--control-h); }
+  :where(body:not(.twm-root)) .sidebar .s-usr-logout .i { width: 18px; height: 18px; }
+  /* a field: the touch tier's 16px text, so focusing it does not zoom the page */
+  :where(body:not(.twm-root)) .sidebar .s-lang .form-select {
+    min-height:    var(--control-h);
+    padding-block: 0 !important;
+    font-size:     var(--field-fs) !important;
+  }
+}
+/* A short screen, such as a phone on its side: between the fixed header,
+   search row and footer, 375px left the list two rows. There the whole drawer
+   scrolls as one, as a modal drawer does (it opens at its top: the script that
+   centres the current page scrolls the list alone). */
+@media (max-width: 768px) and (max-height: 540px) {
+  :where(body:not(.twm-root)) .sidebar .nav-sec { flex: none; overflow: visible; }
+}
+/* A mouse on a narrow window: a group heading answers the pointer the way the
+   desktop's headings do. Not on touch, where a hover state outlives the tap. */
+@media (max-width: 768px) and (hover: hover) {
+  :where(body:not(.twm-root)) .sidebar .nav-lbl:hover { background: var(--surface); }
 }
 
 /* ============================================================

@@ -810,6 +810,94 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             again.evaluate("localStorage.getItem('sidebar-nav-collapsed')"), '["advising"]'
         )
 
+    def test_the_phone_drawer_is_a_touch_surface(self) -> None:
+        """On a phone the drawer kept the 195px rail's compaction: 31.5px rows,
+        24px group headings in 11px capitals under 13px items, a 12.35px product
+        name, 28-32px buttons and an 11.3px language select, which iOS zooms
+        into when it takes focus — 34 of its 35 controls under 44px. Now every
+        control in it is a 44px target (the touch ladder's --control-h), its
+        rows, search row and select carry the touch tier's 16px text, a group
+        heading is set as a heading and is no smaller than its items, and the
+        drawer is 320px wide, which keeps those 16px labels on one line (that
+        last part is measured with the real fonts; these tests load none).
+        On a short screen the list scrolls with the whole drawer instead of in
+        the two rows a fixed header and footer would leave it."""
+        probe = """() => {
+          const sb = document.getElementById('appSidebar');
+          const nav = sb.querySelector('.nav-sec');
+          const style = (el) => getComputedStyle(el);
+          const size = (selector) => parseFloat(style(sb.querySelector(selector)).fontSize);
+          /* a type token as the sidebar resolves it (Arabic restates them there) */
+          const token = (name) => { const s = document.createElement('span');
+            s.style.fontSize = `var(${name})`; sb.append(s);
+            const px = parseFloat(style(s).fontSize); s.remove(); return px; };
+          const height = (selector) => sb.querySelector(selector).getBoundingClientRect().height;
+          const drawn = [...sb.querySelectorAll('a[href], button, select')]
+            .filter((el) => el.getClientRects().length && style(el).visibility !== 'hidden');
+          const small = drawn
+            .map((el) => { const r = el.getBoundingClientRect();
+              return [el.id || el.className, +r.width.toFixed(2), +r.height.toFixed(2)]; })
+            .filter(([, w, h]) => w < 44 - 0.01 || h < 44 - 0.01);
+          const heading = style(sb.querySelector('.nav-lbl'));
+          const rtl = document.documentElement.dir === 'rtl';
+          return {
+            width: sb.getBoundingClientRect().width, controls: drawn.length, small,
+            rows: [height('.nav-lbl'), height('.nav-a')],
+            link: size('.nav-a'), heading: size('.nav-lbl-t'),
+            headingSet: [heading.fontWeight, heading.textTransform],
+            search: size('#navFind'), select: size('#sidebar-lang-select'), title: size('.logo-title'),
+            name: [size('.u-nm'), token('--text-base')],
+            secondary: [size('.u-rl'), size('.logo-sub'), token(rtl ? '--text-sm' : '--text-2xs')],
+            sideways: Math.max(sb.scrollWidth - sb.clientWidth, nav.scrollWidth - nav.clientWidth),
+            scrolls: [nav.scrollHeight - nav.clientHeight, sb.scrollHeight - sb.clientHeight],
+          };
+        }"""
+        for language in ("en", "ar"):
+            with self.subTest(language=language):
+                page = self._open(
+                    self._context(language=language, width=390, height=844), language=language
+                )
+                page.locator(".sidebar-toggle").click()
+                expect(page.locator("#appSidebar")).to_be_visible()
+                seen = page.evaluate(probe)
+                self.assertEqual(seen["width"], 320, seen)
+                self.assertGreaterEqual(seen["controls"], 30, seen)
+                self.assertEqual(seen["small"], [], seen)
+                self.assertEqual(seen["rows"], [44, 44], seen)
+                self.assertEqual(
+                    (seen["link"], seen["search"], seen["select"], seen["title"]),
+                    (16, 16, 16, 18),
+                    seen,
+                )
+                self.assertGreaterEqual(seen["heading"], seen["link"], seen)
+                self.assertEqual(seen["headingSet"], ["600", "none"], seen)
+                name, base = seen["name"]
+                self.assertEqual(name, base, seen)
+                # English keeps the rail's micro step; Arabic takes the full
+                # rail's one step up, as at 1201px and above.
+                role, university, step = seen["secondary"]
+                self.assertEqual((role, university), (step, step), seen)
+                self.assertLessEqual(seen["sideways"], 1, seen)
+                # A tall phone: the list scrolls inside a drawer that fits.
+                self.assertGreater(seen["scrolls"][0], 0, seen)
+                self.assertLessEqual(seen["scrolls"][1], 1, seen)
+
+                # A narrower phone keeps 56px of backdrop beside the drawer to
+                # close it with: 360 - 56 = 304.
+                page.set_viewport_size({"width": 360, "height": 740})
+                narrow = page.evaluate(probe)
+                self.assertEqual(narrow["width"], 304, narrow)
+                self.assertEqual(narrow["small"], [], narrow)
+                self.assertLessEqual(narrow["sideways"], 1, narrow)
+
+                # A phone on its side: the whole drawer scrolls, the list not
+                # on its own.
+                page.set_viewport_size({"width": 667, "height": 375})
+                short = page.evaluate(probe)
+                self.assertLessEqual(short["scrolls"][0], 1, short)
+                self.assertGreater(short["scrolls"][1], 0, short)
+                page.context.close()
+
     # ── The scroll affordance that was already there ───────────────
     def test_the_list_still_fades_at_whichever_edge_has_more_to_scroll(self) -> None:
         """`.nav-sec` carries a scroll-driven mask that fades the edge the list
