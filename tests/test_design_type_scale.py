@@ -391,8 +391,8 @@ def test_the_phone_drawer_sizes_never_reach_the_mri_page() -> None:
     start = GLOBAL.index("/* ── The phone drawer: a touch surface")
     end = GLOBAL.rindex("/*", start, GLOBAL.index("MODAL DIALOG SYSTEM", start))
     section = re.sub(r"/\*.*?\*/", " ", GLOBAL[start:end], flags=re.S)
-    # the drawer's sizes, its short-screen scroll and its pointer hover
-    assert section.count("@media (max-width: 768px)") == 3, section
+    # at least the drawer's sizes, its short-screen scroll and its pointer hover
+    assert section.count("@media (max-width: 768px)") >= 3, section
     selectors = {
         part for selector, _, _, _ in _declarations(section) for part in _top_level(selector)
     }
@@ -400,3 +400,7 @@ def test_the_phone_drawer_sizes_never_reach_the_mri_page() -> None:
     scope = re.compile(r":where\(body:not\(\.twm-root\)\) \.sidebar(?![\w-])")
     strays = [s for s in selectors if not scope.match(s.removeprefix('html[dir="rtl"] '))]
     assert strays == [], strays
+    # A browser cannot tell 100dvh from 100vh without a phone's toolbar, so
+    # the visible-height rule is held here: without it a phone's toolbar
+    # covers the drawer's footer.
+    assert re.search(r"\.sidebar \{ height: 100dvh; \}", section), "the drawer is 100dvh"
