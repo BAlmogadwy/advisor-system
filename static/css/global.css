@@ -8578,6 +8578,28 @@ details > summary::-webkit-details-marker   { display: none; }
 .opt-name   { color: var(--navy); font-size: var(--text-sm); }
 .opt-method { margin-top: 2px; color: var(--t3); font-size: var(--text-xs); }
 .opt-count  { margin-top: 4px; }
+.pl-projection {
+  margin-block-end: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.pl-projection-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-7);
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+}
+.pl-projection-values > div { flex: 1 1 14rem; min-width: 0; }
+.pl-projection-values dt { color: var(--t3); font-weight: 600; }
+.pl-projection-values dd { margin: 0; color: var(--t1); font-weight: 600; }
+.pl-projection-note { margin: var(--space-3) 0 0; color: var(--t2); font-size: var(--text-xs); }
+.pl-projection details { margin-block-start: var(--space-3); }
+.pl-projection summary { width: fit-content; color: var(--text-brand); font-size: var(--text-xs); cursor: pointer; }
+.pl-projection ul { margin: 0; padding-inline-start: var(--space-6); color: var(--t2); font-size: var(--text-xs); }
+.pl-projection li + li { margin-block-start: var(--space-2); }
+.opt-projection { margin-block-start: var(--space-2); color: var(--t2); font-size: var(--text-xs); }
 /* The chosen card is marked by its ring, its check and this outlined button:
    the page's only filled green buttons are Fetch and Build. */
 .option-card.is-selected .opt-select {

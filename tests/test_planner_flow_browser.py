@@ -426,6 +426,24 @@ class PlannerFlowBrowserTests(StaticLiveServerTestCase):
                 page.context.close()
         self._assert_no_findings(problems)
 
+    def test_student_deep_link_fetches_explicit_term_or_defaults(self) -> None:
+        page = self._open("en", *DESKTOP, fetch=False)
+        self.addCleanup(page.context.close)
+        default_year = page.input_value("#year")
+        default_term = page.input_value("#term")
+        url = f"{self.live_server_url}/planner/?student={STUDENT_ID}"
+        for suffix, year, term in (
+            ("", default_year, default_term),
+            ("&year=1447&term=2", "1447", "2"),
+        ):
+            with self.subTest(suffix=suffix):
+                with page.expect_request("**/ops/planner/context/") as request:
+                    page.goto(url + suffix)
+                self.assertEqual(page.input_value("#year"), year)
+                self.assertEqual(page.input_value("#term"), term)
+                self.assertEqual(request.value.post_data_json["academic_year"], year)
+                self.assertEqual(request.value.post_data_json["term"], term)
+
     # ── 4 ────────────────────────────────────────────────────────────────────
     def test_4_show_everything(self) -> None:
         problems: dict[str, list[str]] = {}

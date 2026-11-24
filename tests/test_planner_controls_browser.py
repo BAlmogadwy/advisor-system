@@ -49,6 +49,7 @@ DIALOG_TEXT = {
         "outro": "Any previously planned courses not in this option will be removed. Continue?",
         "confirm": "Apply",
         "cancel": "Cancel",
+        "saved": "Applied Option A1. Saved 1 mappings.",
     },
     "ar": {
         "title": "تطبيق الخيار A1؟",
@@ -56,6 +57,7 @@ DIALOG_TEXT = {
         "outro": "سيتم حذف أي مقررات مخططة سابقًا غير موجودة في هذا الخيار. متابعة؟",
         "confirm": "تطبيق",
         "cancel": "إلغاء",
+        "saved": "تم تطبيق الخيار A1. تم حفظ 1 عملية ربط.",
     },
 }
 
@@ -323,11 +325,18 @@ class PlannerControlsBrowserTests(StaticLiveServerTestCase):
                 self.assertEqual(saves, [], "Escape or the backdrop saved")
                 # Confirm sends exactly one request
                 box = self._open_apply_dialog(page)
-                box.locator(".btn-confirm").click()
-                page.wait_for_timeout(600)
+                with page.expect_response(
+                    lambda response: response.url.endswith("/ops/planner/context/")
+                ) as refresh:
+                    box.locator(".btn-confirm").click()
+                self.assertTrue(refresh.value.ok)
+                page.wait_for_function("() => !document.getElementById('fetchBtn').disabled")
                 self.assertEqual(len(saves), 1, "Confirm must send exactly one request")
                 self.assertIs(saves[0]["confirm_replace"], True)
                 self.assertEqual(saves[0]["term_section_ids"], [2])
+                playwright_api.expect(page.locator("#statusBanner")).to_have_text(words["saved"])
+                self.assertTrue(page.is_visible("#builderCard"))
+                self.assertTrue(page.is_visible("#statusBanner"))
                 self.assertEqual(self.browser_boxes, [], "a browser dialog opened")
                 page.context.close()
 

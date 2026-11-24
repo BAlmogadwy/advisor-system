@@ -127,6 +127,7 @@ from .planner_job_views import (
 from .planner_views import (
     planner_build_view,
     planner_context_view,
+    planner_graduation_projection_view,
     planner_page,
     planner_save_student_sections_view,
     planner_sections_catalog_view,
@@ -716,6 +717,11 @@ urlpatterns = [
         name="planner_sections_catalog",
     ),
     path("ops/planner/build/", planner_build_view, name="planner_build"),
+    path(
+        "ops/planner/graduation-projection/",
+        planner_graduation_projection_view,
+        name="planner_graduation_projection",
+    ),
     path("section-planning/", section_plan_page, name="section_plan_page"),
     path(
         "instructor-management/",
