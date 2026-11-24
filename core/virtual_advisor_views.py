@@ -8,6 +8,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
+from core.services import virtual_advisor_copy as copy
 from core.services.academic_settings import load_defaults
 from core.services.advisor_principal import AdvisorPrincipal, IdentityError
 from core.services.audit import log_audit_event
@@ -16,6 +17,42 @@ from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_STUDENT, get_user_scope
 from core.services.virtual_advisor import answer_virtual_advisor, run_planned_tools
 from core.sidebar_context import get_sidebar_context
+
+
+def _is_arabic(request: HttpRequest) -> bool:
+    return copy.language_of(getattr(request, "LANGUAGE_CODE", "")) == "ar"
+
+
+def _localised(request: HttpRequest, response: JsonResponse) -> JsonResponse:
+    """In Arabic mode, add ``error_display`` to an error response; English is untouched.
+
+    The English ``error`` is never changed: the Arabic is an extra key the page
+    prefers. A message without an entry keeps showing in English.
+    """
+    if not _is_arabic(request):
+        return response
+    try:
+        payload = json.loads(response.content.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return response
+    if not isinstance(payload, dict) or "error" not in payload or "error_display" in payload:
+        return response
+    display = copy.scope_error_display(str(payload.get("reason_code", ""))) or (
+        copy.view_error_display(str(payload.get("error", "")))
+    )
+    if not display:
+        return response
+    payload["error_display"] = display
+    return JsonResponse(payload, status=response.status_code)
+
+
+def _exception_error(
+    request: HttpRequest, payload: dict[str, Any], status: int, arabic: dict[str, str]
+) -> JsonResponse:
+    """An error envelope for a caught exception, with its Arabic in Arabic mode."""
+    if _is_arabic(request):
+        payload = {**payload, **arabic}
+    return JsonResponse(payload, status=status)
 
 
 def _json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
@@ -58,7 +95,14 @@ def virtual_advisor_page(request: HttpRequest) -> HttpResponse:
 @require_GET
 @throttle(max_calls=30, window_seconds=60)
 def virtual_advisor_health_view(request: HttpRequest) -> JsonResponse:
-    return JsonResponse(check_local_llm_health())
+    health = check_local_llm_health()
+    if _is_arabic(request) and not health.get("ok") and health.get("error"):
+        health.update(
+            copy.llm_error_fields(
+                [str(health.get("error_category") or "")], str(health.get("error") or "")
+            )
+        )
+    return JsonResponse(health)
 
 
 @login_required(login_url="login")
@@ -68,14 +112,14 @@ def virtual_advisor_health_view(request: HttpRequest) -> JsonResponse:
 def virtual_advisor_tool_preview_view(request: HttpRequest) -> JsonResponse:
     payload, err = _json_body(request)
     if err:
-        return err
+        return _localised(request, err)
     assert payload is not None
 
     question = str(payload.get("message", "")).strip()
     if not question:
-        return JsonResponse({"error": "message is required"}, status=400)
+        return _localised(request, JsonResponse({"error": "message is required"}, status=400))
     if len(question) > 4000:
-        return JsonResponse({"error": "message is too long"}, status=400)
+        return _localised(request, JsonResponse({"error": "message is too long"}, status=400))
 
     results = run_planned_tools(question, scope=get_user_scope(request.user))
     return JsonResponse({"ok": True, "tool_results": results})
@@ -93,14 +137,14 @@ def virtual_advisor_tool_preview_view(request: HttpRequest) -> JsonResponse:
 def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
     payload, err = _json_body(request)
     if err:
-        return err
+        return _localised(request, err)
     assert payload is not None
 
     question = str(payload.get("message", "")).strip()
     if not question:
-        return JsonResponse({"error": "message is required"}, status=400)
+        return _localised(request, JsonResponse({"error": "message is required"}, status=400))
     if len(question) > 4000:
-        return JsonResponse({"error": "message is too long"}, status=400)
+        return _localised(request, JsonResponse({"error": "message is too long"}, status=400))
 
     scope = get_user_scope(request.user)
     if str(scope.get("role", "")) == ROLE_STUDENT:
@@ -109,12 +153,14 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
         try:
             principal = AdvisorPrincipal.for_student(request)
         except IdentityError as exc:
-            return JsonResponse({"error": str(exc)}, status=403)
+            return _exception_error(
+                request, {"error": str(exc)}, 403, {"error_display": copy.IDENTITY_REFUSED}
+            )
         student_id = principal.student_id
     else:
         student_id, err = _optional_int(payload.get("student_id"), "student_id")
         if err:
-            return err
+            return _localised(request, err)
         principal = None  # built below, once the subject has been authorised
 
     defaults = load_defaults()
@@ -122,15 +168,15 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
         payload.get("academic_year", defaults["academic_year"]), "academic_year"
     )
     if err:
-        return err
+        return _localised(request, err)
     term, err = _optional_int(payload.get("term", defaults["term"]), "term")
     if err:
-        return err
+        return _localised(request, err)
 
     if student_id is not None:
         scope_err = require_student_scope(request, student_id)
         if scope_err:
-            return scope_err
+            return _localised(request, scope_err)
 
     if principal is None:
         # Built only AFTER the subject was authorised: the principal names whose
@@ -138,11 +184,13 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
         try:
             principal = AdvisorPrincipal.for_staff(request, student_id)
         except IdentityError as exc:
-            return JsonResponse({"error": str(exc)}, status=403)
+            return _exception_error(
+                request, {"error": str(exc)}, 403, {"error_display": copy.IDENTITY_REFUSED}
+            )
 
     model = str(payload.get("model", "")).strip() or None
     if model and len(model) > 220:
-        return JsonResponse({"error": "model is too long"}, status=400)
+        return _localised(request, JsonResponse({"error": "model is too long"}, status=400))
 
     try:
         result = answer_virtual_advisor(
@@ -154,9 +202,22 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
             model=model,
         )
     except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=404)
+        # The only ValueError this path raises on purpose is "Student not found: <id>";
+        # anything else keeps its English (it is a defect, not a message).
+        not_found = str(exc).startswith("Student not found")
+        return _exception_error(
+            request,
+            {"error": str(exc)},
+            404,
+            {"error_display": copy.STUDENT_NOT_FOUND} if not_found else {},
+        )
     except LocalLLMError as exc:
-        return JsonResponse({"error": str(exc), "source": "local_llm"}, status=503)
+        return _exception_error(
+            request,
+            {"error": str(exc), "source": "local_llm"},
+            503,
+            copy.llm_error_fields([cls.__name__ for cls in type(exc).__mro__], str(exc)),
+        )
 
     agent_meta = result.get("agent") if isinstance(result.get("agent"), dict) else {}
     log_audit_event(

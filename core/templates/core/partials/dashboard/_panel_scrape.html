@@ -29,10 +29,10 @@
               <input type="file" id="oracleStudentsFile" accept=".csv,.tsv,.txt,.dat" style="font-size:0.85rem">
             </div>
             <div class="fb-search fb-w-110">
-              <input id="oracleStudentsProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="Program" value="AI">
+              <input id="oracleStudentsProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" value="AI">
             </div>
             <div class="fb-search fb-w-110">
-              <input id="oracleStudentsSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="Section" value="M">
+              <input id="oracleStudentsSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" value="M">
             </div>
             <button id="oracleStudentsBtn" class="btn btn-primary" type="button">
               <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
@@ -61,7 +61,7 @@
       </div>
       <div class="tbl-section mb-14">
         <div class="tbl-header">
-          <div class="tbl-title">Scrape History <span class="tbl-cnt" id="scrapeHistoryCnt">0</span></div>
+          <div class="tbl-title">{% if LANGUAGE_CODE == 'ar' %}سجل العمليات{% else %}Scrape History{% endif %} <span class="tbl-cnt" id="scrapeHistoryCnt">0</span></div>
         </div>
         <div class="overflow-x">
           <table class="tbl-card" id="scrapeHistoryTable">

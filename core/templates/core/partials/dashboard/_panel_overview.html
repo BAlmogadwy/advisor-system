@@ -3,8 +3,10 @@
       `{% if LANGUAGE_CODE == 'ar' %}` idiom; this one -- the panel that opens
       by default -- had none at all, so an Arabic session landed on an English
       screen. The strings below are the panel's own chrome. Values that come
-      from `command_center` (scenario names, statuses, actor names) are data
-      and stay as the database holds them.
+      from `command_center` (scenario names, actor names, audit actions) are
+      data and stay as the database holds them. The audit decision and the
+      scenario status are fixed vocabularies, so each known word is
+      translated and an unknown one prints as stored.
     {% endcomment %}
     <div id="overview" class="panel active" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}مركز قيادة لوحة التحكم{% else %}Dashboard Command Center{% endif %}">
       <section class="dcc-kpis" aria-label="{% if LANGUAGE_CODE == 'ar' %}المؤشرات الرئيسية{% else %}Executive metrics{% endif %}">
@@ -80,7 +82,7 @@
               <span class="dcc-triage-dot">{% if command_center.timetable.unassigned_rooms %}{% if LANGUAGE_CODE == 'ar' %}للمتابعة{% else %}Watch{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}سليم{% else %}Clear{% endif %}{% endif %}</span>
               <span>
                 <strong>{% if LANGUAGE_CODE == 'ar' %}قاعات غير مسندة: {{ command_center.timetable.unassigned_rooms }}{% else %}{{ command_center.timetable.unassigned_rooms }} unassigned rooms{% endif %}</strong>
-                <small>{% if LANGUAGE_CODE == 'ar' %}<bdi>{{ command_center.timetable.name }}</bdi> · الشعب المجدولة: {{ command_center.timetable.placements }}{% else %}{{ command_center.timetable.name }} has {{ command_center.timetable.placements }} placed sections.{% endif %}</small>
+                <small>{% if LANGUAGE_CODE == 'ar' %}<bdi>{% if command_center.timetable.has_scenario %}{{ command_center.timetable.name }}{% else %}لا يوجد سيناريو{% endif %}</bdi> · الشعب المجدولة: {{ command_center.timetable.placements }}{% else %}{{ command_center.timetable.name }} has {{ command_center.timetable.placements }} placed sections.{% endif %}</small>
               </span>
             </a>
           </div>
@@ -119,9 +121,9 @@
             </div>
             <a href="{{ command_center.timetable.mri_url }}" class="dcc-link">MRI</a>
           </div>
-          <div class="dcc-scenario-name">{{ command_center.timetable.name }}</div>
+          <div class="dcc-scenario-name">{% if LANGUAGE_CODE == 'ar' and not command_center.timetable.has_scenario %}لا يوجد سيناريو{% else %}{{ command_center.timetable.name }}{% endif %}</div>
           <div class="dcc-scenario-meta">
-            {{ command_center.timetable.year }}/{{ command_center.timetable.term }} · {{ command_center.timetable.status }}
+            {{ command_center.timetable.year }}/{{ command_center.timetable.term }} · {% if LANGUAGE_CODE == 'ar' %}{% if command_center.timetable.status == "draft" %}مسودة{% elif command_center.timetable.status == "published" %}منشور{% else %}{{ command_center.timetable.status }}{% endif %}{% else %}{{ command_center.timetable.status }}{% endif %}
           </div>
           <div class="dcc-mini-grid">
             <div><strong>{{ command_center.timetable.students }}</strong><span>{% if LANGUAGE_CODE == 'ar' %}طالب{% else %}students{% endif %}</span></div>
@@ -167,7 +169,7 @@
                 <span class="dcc-activity-time">{{ item.ts }}</span>
                 <strong>{{ item.action }}</strong>
                 <span>{{ item.actor }}</span>
-                <em class="dcc-activity-status is-{{ item.status }}">{{ item.status }}</em>
+                <em class="dcc-activity-status is-{{ item.status }}">{% if LANGUAGE_CODE == 'ar' %}{% if item.status == "allow" %}مسموح{% elif item.status == "deny" %}مرفوض{% elif item.status == "success" or item.status == "ok" %}ناجح{% elif item.status == "error" %}خطأ{% elif item.status == "critical" %}حرج{% else %}{{ item.status }}{% endif %}{% else %}{{ item.status }}{% endif %}</em>
               </a>
             {% empty %}
               <div class="dcc-empty">{% if LANGUAGE_CODE == 'ar' %}لا يوجد نشاط في سجل التدقيق بعد.{% else %}No audit activity yet.{% endif %}</div>

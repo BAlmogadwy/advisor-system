@@ -4,7 +4,7 @@
         <div class="fb-search"><input id="preCourse" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
         <div class="fb-actions">
           <button id="loadPre" class="btn btn-primary">
-            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
+            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل{% else %}Load{% endif %}
           </button>
           <a id="preXlsx" class="btn btn-export d-none" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
         </div>
@@ -12,12 +12,12 @@
       <!-- Metrics -->
       <div id="preMetrics" class="page-summary d-none mb-16">
           <span class="ps-item mc-royal"><span class="ps-lbl">Program</span><span class="ps-val" id="preMetricProgram">—</span></span>
-          <span class="ps-item mc-teal"><span class="ps-lbl">Courses</span><span class="ps-val" id="preMetricCourses">0</span></span>
-          <span class="ps-item mc-sky"><span class="ps-lbl">Prereq Links</span><span class="ps-val" id="preMetricLinks">0</span></span>
+          <span class="ps-item mc-teal"><span class="ps-lbl">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</span><span class="ps-val" id="preMetricCourses">0</span></span>
+          <span class="ps-item mc-sky"><span class="ps-lbl">{% if LANGUAGE_CODE == 'ar' %}روابط المتطلبات{% else %}Prereq Links{% endif %}</span><span class="ps-val" id="preMetricLinks">0</span></span>
         </div>
       <!-- Graph full width on top -->
       <div class="cpanel mb-3">
-        <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span>
+        <div class="cp-h"><span class="cp-t">{% if LANGUAGE_CODE == 'ar' %}مخطط الاعتماد بين المقررات{% else %}Dependency Graph{% endif %}</span><span class="cp-live">{% if LANGUAGE_CODE == 'ar' %}مرئي{% else %}VISUAL{% endif %}</span>
           <div class="pg-modes" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}تخطيط الرسم البياني{% else %}Graph layout{% endif %}">
             <button type="button" id="pgModeTerm" class="pg-mode is-on" aria-pressed="true">{% if LANGUAGE_CODE == 'ar' %}حسب الفصل{% else %}By term{% endif %}</button>
             <button type="button" id="pgModeDepth" class="pg-mode" aria-pressed="false">{% if LANGUAGE_CODE == 'ar' %}حسب السلسلة{% else %}By chain{% endif %}</button>
@@ -29,11 +29,11 @@
       </div>
       <!-- Table below -->
       <div class="cpanel">
-        <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b d-none" id="preLinkCount"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
+        <div class="cp-h"><span class="cp-t">{% if LANGUAGE_CODE == 'ar' %}روابط المتطلبات{% else %}Prerequisite Links{% endif %}</span><span class="pill-status pill-b d-none" id="preLinkCount"><span class="pill-dot"></span>{% if LANGUAGE_CODE == 'ar' %}الروابط: <span id="preLinkNum">0</span>{% else %}<span id="preLinkNum">0</span> links{% endif %}</span></div>
         <div class="cp-b cp-scroll" style="padding:0;max-height:420px;overflow-y:auto">
           <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
-            <thead><tr><th scope="col" data-sort="text">Course</th><th class="text-center" scope="col" style="width:32px">→</th><th scope="col" data-sort="text">Requires</th></tr></thead>
-            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
+            <thead><tr><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th><th class="text-center" scope="col" style="width:32px">→</th><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}المتطلب السابق{% else %}Requires{% endif %}</th></tr></thead>
+            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}يُرجى اختيار البرنامج أعلاه، ثم الضغط على <strong>تحميل</strong>{% else %}Choose a program above, then click <strong>Load</strong>{% endif %}</div></div></td></tr></tbody>
           </table>
         </div>
       </div>

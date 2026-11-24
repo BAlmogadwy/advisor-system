@@ -1,60 +1,60 @@
 {% extends "core/base.html" %}
 {% load static %}
 
-{% block title %}Escalated cases{% endblock %}
-{% block page_heading %}Escalated cases{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}الحالات المحالة{% else %}Escalated cases{% endif %}{% endblock %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}الحالات المحالة{% else %}Escalated cases{% endif %}{% endblock %}
 
 {% block page_intro %}
-  <p class="mb-0">Questions the virtual adviser could not safely resolve, plus any a student asked a person to look at. You see only cases assigned to you, cases belonging to students you advise, and cases in departments you cover.</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}أسئلة تعذّر على المرشد الافتراضي حسمها بأمان، إضافة إلى ما طلب الطلاب أن يطّلع عليه شخص مختص. ويقتصر العرض على الحالات المسندة إلى هذا الحساب، وحالات الطلاب الذين يرشدهم، وحالات الأقسام المشمولة بصلاحياته.{% else %}Questions the virtual adviser could not safely resolve, plus any a student asked a person to look at. You see only cases assigned to you, cases belonging to students you advise, and cases in departments you cover.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
 <form class="card p-3 mb-3 ai-filters" method="get">
   <div class="ai-filter">
-    <label for="f-status">Status</label>
+    <label for="f-status">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</label>
     <select id="f-status" name="status">
-      <option value="">Any</option>
+      <option value="">{% if LANGUAGE_CODE == 'ar' %}الكل{% else %}Any{% endif %}</option>
       {% for value, label in statuses %}
         <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="ai-filter">
-    <label for="f-reason">Reason</label>
+    <label for="f-reason">{% if LANGUAGE_CODE == 'ar' %}السبب{% else %}Reason{% endif %}</label>
     <select id="f-reason" name="reason">
-      <option value="">Any</option>
+      <option value="">{% if LANGUAGE_CODE == 'ar' %}الكل{% else %}Any{% endif %}</option>
       {% for value, label in reasons %}
         <option value="{{ value }}" {% if filters.reason == value %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="ai-filter">
-    <label for="f-program">Programme</label>
+    <label for="f-program">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Programme{% endif %}</label>
     <input id="f-program" name="program" value="{{ filters.program }}" maxlength="16" placeholder="CS">
   </div>
   <div class="ai-filter ai-filter-check">
     <label for="f-mine">
       <input type="checkbox" id="f-mine" name="mine" value="1" {% if filters.mine %}checked{% endif %}>
-      Assigned to me
+      {% if LANGUAGE_CODE == 'ar' %}المسندة إليّ{% else %}Assigned to me{% endif %}
     </label>
   </div>
-  <button class="btn btn-primary" type="submit">Filter</button>
+  <button class="btn btn-primary" type="submit">{% if LANGUAGE_CODE == 'ar' %}تصفية{% else %}Filter{% endif %}</button>
 </form>
 
 <div class="card p-0">
   <div class="table-wrap">
     <table class="table ai-cases">
-      <caption class="visually-hidden">Escalated adviser cases</caption>
+      <caption class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}الحالات المحالة إلى المرشدين{% else %}Escalated adviser cases{% endif %}</caption>
       <thead>
         <tr>
-          <th scope="col">Reference</th>
-          <th scope="col">Submitted</th>
-          <th scope="col">Status</th>
-          <th scope="col">Programme</th>
-          <th scope="col">Student</th>
-          <th scope="col">Reason</th>
-          <th scope="col">Question</th>
-          <th scope="col">Assigned</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الرقم المرجعي{% else %}Reference{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}وقت الإرسال{% else %}Submitted{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Programme{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الطالب{% else %}Student{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}السبب{% else %}Reason{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}السؤال{% else %}Question{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}مسندة إلى{% else %}Assigned{% endif %}</th>
         </tr>
       </thead>
       <tbody>
@@ -62,15 +62,15 @@
           <tr>
             <th scope="row"><a href="{% url 'advisor_inbox_case' reference=row.case.reference %}">{{ row.case.reference }}</a></th>
             <td>{{ row.case.created_at|date:"j M Y" }}</td>
-            <td><span class="ai-status ai-status-{{ row.case.status|lower }}">{{ row.case.get_status_display }}</span></td>
+            <td><span class="ai-status ai-status-{{ row.case.status|lower }}">{{ row.status_label }}</span></td>
             <td>{{ row.student.program|default:"—" }}</td>
             <td>{{ row.student.name|default:"—" }}<br><small class="ai-muted">{{ row.case.student_id }}</small></td>
-            <td>{{ row.case.get_reason_code_display }}</td>
+            <td>{{ row.reason_label }}</td>
             <td class="ai-question" dir="auto">{{ row.question|default:"—" }}</td>
             <td>{{ row.case.assigned_adviser_id|default:"—" }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="8" class="ai-empty">No cases match these filters.</td></tr>
+          <tr><td colspan="8" class="ai-empty">{% if LANGUAGE_CODE == 'ar' %}لا توجد حالات تطابق عوامل التصفية هذه.{% else %}No cases match these filters.{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>

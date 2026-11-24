@@ -23,10 +23,12 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import AdvisorEscalation, AdvisorEscalationEvent, Student
+from .services import advisor_inbox_copy as copy
 from .services.advisor_inbox import (
     InboxError,
     adviser_label,
     check_transition,
+    may_transition,
     visible_cases,
 )
 from .services.rbac import get_user_scope
@@ -35,14 +37,42 @@ from .sidebar_context import get_sidebar_context
 MAX_NOTE_CHARS = 4000
 
 
+def _language(request: HttpRequest) -> str:
+    return copy.language_of(getattr(request, "LANGUAGE_CODE", ""))
+
+
 def _body(request: HttpRequest) -> tuple[dict[str, Any], JsonResponse | None]:
+    language = _language(request)
     try:
         payload = json.loads(request.body or b"{}")
     except (ValueError, UnicodeDecodeError):
-        return {}, JsonResponse({"error": "Invalid JSON body."}, status=400)
+        return {}, JsonResponse({"error": copy.message("invalid_json", language)}, status=400)
     if not isinstance(payload, dict):
-        return {}, JsonResponse({"error": "Body must be a JSON object."}, status=400)
+        return {}, JsonResponse({"error": copy.message("not_an_object", language)}, status=400)
     return payload, None
+
+
+def _transition_refusal(
+    case: AdvisorEscalation, to_status: str, exc: InboxError, language: str
+) -> str:
+    """The service's refusal, in the page's language.
+
+    English is the service's own sentence, unchanged. For Arabic the same three
+    conditions `check_transition` tests are named again, in its order, so the
+    sentence matches the refusal it replaces.
+    """
+    if language != "ar":
+        return str(exc)
+    if to_status not in dict(AdvisorEscalation.Status.choices):
+        return copy.message("not_a_status", language, status=to_status)
+    if not may_transition(case, to_status):
+        return copy.message(
+            "bad_transition",
+            language,
+            before=copy.status_label(case.status, language),
+            after=copy.status_label(to_status, language),
+        )
+    return copy.message("reply_before_resolving", language)
 
 
 def _record(
@@ -104,6 +134,7 @@ def inbox_view(request: HttpRequest) -> HttpResponse:
 
     rows = list(cases[:200])
     students = _student_rows(rows)
+    language = _language(request)
     context = {
         **get_sidebar_context(request),
         "cases": [
@@ -111,11 +142,21 @@ def inbox_view(request: HttpRequest) -> HttpResponse:
                 "case": case,
                 "student": students.get(case.student_id, {}),
                 "question": (case.evidence_snapshot or {}).get("question", "")[:140],
+                "status_label": copy.status_label(case.status, language),
+                "reason_label": copy.reason_label(case.reason_code, language),
             }
             for case in rows
         ],
-        "statuses": AdvisorEscalation.Status.choices,
-        "reasons": AdvisorEscalation.Reason.choices,
+        # The codes stay the model's; only the words come from the copy module, and
+        # its English is the model label, so the English page is unchanged.
+        "statuses": [
+            (value, copy.status_label(value, language))
+            for value, _label in AdvisorEscalation.Status.choices
+        ],
+        "reasons": [
+            (value, copy.reason_label(value, language))
+            for value, _label in AdvisorEscalation.Reason.choices
+        ],
         "filters": {"status": status, "reason": reason, "mine": mine, "program": program},
     }
     return render(request, "core/advisor_inbox.html", context)
@@ -133,6 +174,9 @@ def inbox_case_view(request: HttpRequest, reference: str) -> HttpResponse:
 
     evidence = case.evidence_snapshot or {}
     student = Student.objects.filter(student_id=case.student_id).values("name", "program").first()
+    language = _language(request)
+    events = list(case.events.select_related("actor")[:100])
+    next_statuses = sorted(s for s in dict(AdvisorEscalation.Status.choices) if _can(case, s))
     context = {
         **get_sidebar_context(request),
         "case": case,
@@ -141,8 +185,23 @@ def inbox_case_view(request: HttpRequest, reference: str) -> HttpResponse:
         "citations": evidence.get("citations") or [],
         "missing": evidence.get("missing_information") or [],
         "reason_codes": evidence.get("reason_codes") or [],
-        "events": case.events.select_related("actor")[:100],
-        "next_statuses": sorted(s for s in dict(AdvisorEscalation.Status.choices) if _can(case, s)),
+        "events": events,
+        "next_statuses": next_statuses,
+        "status_label": copy.status_label(case.status, language),
+        "reason_label": copy.reason_label(case.reason_code, language),
+        "disposition_label": copy.disposition_label(evidence.get("final_disposition"), language),
+        # Labels beside the codes, so the template keeps every code it carries
+        # (`data-ai-status`) and only the words change with the language.
+        "next_status_labels": [(s, copy.status_label(s, language)) for s in next_statuses],
+        "event_rows": [
+            {
+                "event": event,
+                "kind_label": copy.event_label(event.kind, language),
+                "from_label": copy.status_label(event.from_status, language),
+                "to_label": copy.status_label(event.to_status, language),
+            }
+            for event in events
+        ],
     }
     return render(request, "core/advisor_inbox_case.html", context)
 
@@ -167,6 +226,7 @@ def inbox_case_action_view(request: HttpRequest, reference: str) -> JsonResponse
     if err:
         return err
     action = str(payload.get("action") or "").strip()
+    language = _language(request)
 
     with transaction.atomic():
         case = get_object_or_404(
@@ -179,9 +239,7 @@ def inbox_case_action_view(request: HttpRequest, reference: str) -> JsonResponse
 
         if action == "assign_to_me":
             if not advisor_id:
-                return JsonResponse(
-                    {"error": "No adviser id is linked to your account."}, status=403
-                )
+                return JsonResponse({"error": copy.message("no_adviser_id", language)}, status=403)
             case.assigned_adviser_id = advisor_id
             if case.status == AdvisorEscalation.Status.OPEN:
                 case.status = AdvisorEscalation.Status.ASSIGNED
@@ -197,7 +255,7 @@ def inbox_case_action_view(request: HttpRequest, reference: str) -> JsonResponse
         elif action == "add_note":
             note = str(payload.get("text") or "").strip()[:MAX_NOTE_CHARS]
             if not note:
-                return JsonResponse({"error": "The note is empty."}, status=400)
+                return JsonResponse({"error": copy.message("note_empty", language)}, status=400)
             # Appended, not replaced: a case history that can be overwritten is not
             # a history.
             case.adviser_notes = (case.adviser_notes + "\n\n" + note).strip()
@@ -207,7 +265,7 @@ def inbox_case_action_view(request: HttpRequest, reference: str) -> JsonResponse
         elif action == "record_response":
             reply = str(payload.get("text") or "").strip()[:MAX_NOTE_CHARS]
             if not reply:
-                return JsonResponse({"error": "The reply is empty."}, status=400)
+                return JsonResponse({"error": copy.message("reply_empty", language)}, status=400)
             # A DIFFERENT field from the notes above. The student reads this one.
             case.resolution_message = reply
             case.save(update_fields=["resolution_message", "updated_at"])
@@ -218,7 +276,9 @@ def inbox_case_action_view(request: HttpRequest, reference: str) -> JsonResponse
             try:
                 check_transition(case, to_status)
             except InboxError as exc:
-                return JsonResponse({"error": str(exc)}, status=409)
+                return JsonResponse(
+                    {"error": _transition_refusal(case, to_status, exc, language)}, status=409
+                )
             case.status = to_status
             fields = ["status", "updated_at"]
             if to_status == AdvisorEscalation.Status.RESOLVED:
@@ -235,7 +295,9 @@ def inbox_case_action_view(request: HttpRequest, reference: str) -> JsonResponse
             )
 
         else:
-            return JsonResponse({"error": f"Unknown action: {action}"}, status=400)
+            return JsonResponse(
+                {"error": copy.message("unknown_action", language, action=action)}, status=400
+            )
 
     return JsonResponse(
         {
