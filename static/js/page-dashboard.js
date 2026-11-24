@@ -1882,14 +1882,6 @@ const IS_AR = document.documentElement.lang === 'ar';
   /* ── DB Admin JS → moved to standalone page at /db-admin/ ── */
 
 
-  /* The trace's prerequisite status is PASSED / STUDYING / MISSING (upper case,
-     debug_reporting.py); compare without case so a pill is green for a passed
-     prerequisite, blue while studying, red only when it is missing. */
-  const tracePillClass = (status) => {
-    const v = String(status || '').toUpperCase();
-    return v === 'PASSED' ? 'pill-g' : v === 'STUDYING' ? 'pill-b' : 'pill-r';
-  };
-
   q('dbgRun').onclick = async () => {
     if (!requireFields(['dbgYear','dbgSemester'], 'dbgMeta', T.debugReport)) return;
     const btn = q('dbgRun');
@@ -1958,7 +1950,7 @@ const IS_AR = document.documentElement.lang === 'ar';
         let items = [];
         try { items = JSON.parse(decodeURIComponent(raw)); } catch {}
         body.innerHTML = Array.isArray(items) && items.length
-          ? items.map((it) => `<div class="plan-item"><div class="title">${it.course_code}</div><div class="sub">${T.prereqsLbl}: ${esc((it.prerequisites || []).join(', ') || T.none)}</div><div class="sub">${it.prerequisite_status && it.prerequisite_status.length ? it.prerequisite_status.map((s) => `<span class="pill-status ${tracePillClass(s.status)} fs-10" style="margin:1px"><span class="pill-dot"></span>${s.prerequisite}: ${esc(T.traceStatus(s.status))}</span>`).join(' ') : T.noPrereqStatus}</div></div>`).join('')
+          ? items.map((it) => `<div class="plan-item"><div class="title">${it.course_code}</div><div class="sub">${T.prereqsLbl}: ${esc((it.prerequisites || []).join(', ') || T.none)}</div><div class="sub">${it.prerequisite_status && it.prerequisite_status.length ? it.prerequisite_status.map((s) => `<span class="pill-status ${s.status === 'PASSED' ? 'pill-g' : s.status === 'STUDYING' ? 'pill-b' : 'pill-r'} fs-10" style="margin:1px"><span class="pill-dot"></span>${s.prerequisite}: ${esc(T.traceStatus(s.status))}</span>`).join(' ') : T.noPrereqStatus}</div></div>`).join('')
           : `<div class="empty-note">${T.noTraceDetails}</div>`;
         const modalEl = q('debugTraceModal');
         if (modalEl) openDlgModal(modalEl);

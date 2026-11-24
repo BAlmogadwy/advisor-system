@@ -81,8 +81,6 @@
       "year ?? '—'": 1
     },
     "page-dashboard.js": {
-      "(it.prerequisite_status || []).map((s) => `…`).join(' ') || 'No prerequisite status'": 1,
-      "(it.prerequisites || []).join(', ') || 'None'": 1,
       "(r.missing_other || []).map((x) => `…`).join(', ') || '-'": 1,
       "(r.missing_this_parity || []).map((x) => `…`).join(', ') || '-'": 1,
       "(x.passed || []).slice(0,4).join(', ')": 1,
@@ -150,7 +148,6 @@
       "rowCourse": 1,
       "rowPayload": 1,
       "s.prerequisite": 1,
-      "s.status": 1,
       "sid": 1,
       "statusBadge": 1,
       "statusPill": 1,
