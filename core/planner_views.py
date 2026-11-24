@@ -1024,8 +1024,9 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             "program_sections_only": program_sections_only,
             "allow_full_sections": allow_full_sections,
         }
-        if result.get("options"):
+        if result.get("options") and student_id_for_baseline is not None:
             # A later request can use only the exact sections this build returned.
+            # Without a student there is nothing to forecast, so no token is issued.
             result["graduation_projection_token"] = signing.dumps(
                 {
                     "actor": str(request.user.pk),

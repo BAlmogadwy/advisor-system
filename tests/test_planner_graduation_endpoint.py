@@ -160,13 +160,19 @@ def test_requires_the_building_advisor_and_current_student_scope(
     projection.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "change",
+    [{"start_time": "08:20"}, {"end_time": "09:10"}, {"day": "TUE"}],
+    ids=["start", "end", "day"],
+)
 def test_refuses_to_forecast_from_a_changed_kept_timetable(
-    advisor_client: Client, retained_section: StudentTermSection, projection: Mock
+    advisor_client: Client,
+    retained_section: StudentTermSection,
+    projection: Mock,
+    change: dict[str, str],
 ) -> None:
     token = _build_token(advisor_client)
-    TermSectionMeeting.objects.filter(term_section=retained_section.term_section).update(
-        start_time="08:20"
-    )
+    TermSectionMeeting.objects.filter(term_section=retained_section.term_section).update(**change)
     response = _project(advisor_client, token)
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "PROJECTION_BUILD_STALE"
