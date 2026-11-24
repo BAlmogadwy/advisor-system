@@ -116,6 +116,73 @@
     ruleProg: { true: IS_AR ? 'شُعب البرنامج فقط' : 'This programme only', false: IS_AR ? 'أي برنامج' : 'Any programme' },
     ruleFull: { true: IS_AR ? 'الشُعب الممتلئة مسموحة' : 'Full sections allowed', false: IS_AR ? 'بلا شُعب ممتلئة' : 'No full sections' },
     ruleSwap: { true: IS_AR ? 'اقتراح تبديلات' : 'Suggest swaps', false: IS_AR ? 'بلا تبديلات' : 'No swaps' },
+    // Build, options and apply.
+    buildFirst: IS_AR ? 'ابنِ الخيارات' : 'Build options',
+    rebuild: IS_AR ? 'أعد البناء' : 'Rebuild',
+    building: IS_AR ? 'جارٍ بناء الخيارات… قد يستغرق ذلك حتى 10 ثوانٍ' : 'Building options… this can take up to 10 seconds',
+    planChanged: IS_AR ? 'تغيّرت الخطة. ابنِ الخيارات مرة أخرى لعرضها.' : 'The plan changed. Build again to see options.',
+    buildFailed: IS_AR ? 'تعذّر بناء الخيارات. حاول مرة أخرى.' : 'The build failed. Try again.',
+    tooMany: IS_AR ? 'طلبات بناء كثيرة. حاول بعد لحظات.' : 'Too many builds. Try again in a moment.',
+    sessionExpired: IS_AR ? 'انتهت جلستك. سجّل الدخول مرة أخرى ثم أعد المحاولة.' : 'Your session has expired. Sign in again, then retry.',
+    requestFailed: IS_AR ? 'فشل الطلب' : 'Request failed',
+    noOption: IS_AR ? 'لم يُعثر على خيار يحقق القيود الحالية.' : 'No option could be built under the current constraints.',
+    noFeasible: IS_AR
+      ? 'لا توجد نتيجة صالحة تحقق جميع المقررات الإلزامية والشُعب المثبّتة ضمن القيود الحالية.'
+      : 'No valid result satisfies every must-take course and exact pinned section under the current constraints.',
+    failMust: IS_AR ? 'تعذر إدراج المقرر الإلزامي ضمن القيود الحالية.' : 'The must-take course could not be placed under the current constraints.',
+    failPinned: IS_AR ? 'تعذر استخدام الشعبة المثبّتة بالضبط.' : 'The exact pinned section could not be used.',
+    failCredits: IS_AR ? 'يتعارض حد الساعات مع القيود المطلوبة.' : 'The credit limit conflicts with the required constraints.',
+    notScheduledList: (codes) => [IS_AR ? 'غير مجدولة: ' : 'Not scheduled: ', ...codes.flatMap((c, i) => (i ? [', ', bdi(c)] : [bdi(c)]))],
+    reason: {
+      DID_NOT_FIT: IS_AR ? 'تعذّر إدراجه ضمن حد الساعات، أو أن شُعبه متعارضة' : 'Could not fit within the credit limit, or its sections clash',
+      ALL_SECTIONS_CLASH: IS_AR ? 'كل الشُعب تتعارض مع الخطة المختارة' : 'Every section clashes with the chosen plan',
+      NOT_ON_FILE: IS_AR ? 'لا توجد شعبة مطروحة لهذا الطالب هذا الفصل' : 'No section is offered to this student this term',
+      MEETING_DATA_INCOMPLETE: IS_AR ? 'بيانات لقاءات الشعبة غير مكتملة' : 'Section meeting data is incomplete',
+      SEARCH_BUDGET_EXHAUSTED: IS_AR ? 'انتهى وقت البحث قبل إدراجه' : 'The search ran out of time before placing it',
+      SOLVER_MODEL_INVALID: IS_AR ? 'رفض المُحلّل هذا البناء' : 'The solver rejected this build',
+    },
+    noReason: IS_AR ? 'سبب غير محدد' : 'no reason given',
+    lastBuild: IS_AR ? 'آخر بناء' : 'Last build',
+    moreOptions: (n) => (IS_AR ? `خيارات أخرى (${n})` : `More options (${n})`),
+    moreLabel: IS_AR ? 'خيارات أخرى' : 'More options',
+    optionName: (name) => (IS_AR ? ['الخيار ', bdi(name)] : ['Option ', bdi(name)]),
+    planned: IS_AR ? 'المخطَّط' : 'Planned',
+    plannedBlock: IS_AR ? 'مخطَّط' : 'planned',
+    clashBlock: IS_AR ? 'يتعارض مع مقرر مسجّل' : 'clashes with a registered class',
+    clashNote: (n) => (IS_AR
+      ? `${pluralAr(n, forms('لقاء مخطَّط واحد يتعارض', 'لقاءان مخطَّطان يتعارضان', '{n} لقاءات مخطَّطة تتعارض', '{n} لقاءً مخطَّطًا يتعارض'))} مع لقاء مسجّل.`
+      : `${n} planned ${n === 1 ? 'class overlaps' : 'classes overlap'} a registered class.`),
+    notScheduled: (n) => (IS_AR
+      ? pluralAr(n, forms('مقرر واحد غير مجدول', 'مقرران غير مجدولين', '{n} مقررات غير مجدولة', '{n} مقررًا غير مجدول'))
+      : `${n} not scheduled`),
+    notScheduledHere: IS_AR ? 'غير مجدول في هذا الخيار' : 'not scheduled in this option',
+    review: IS_AR ? 'مراجعة وتطبيق' : 'Review and apply',
+    comparisonOnly: IS_AR
+      ? 'للمقارنة فقط: تتضمن الخيارات شُعب برامج أخرى'
+      : "Comparison only: other programmes' sections are included",
+    nothingToSave: IS_AR ? 'لا شُعب في هذا الخيار للحفظ' : 'This option has no sections to save',
+    safe: IS_AR ? 'لا يُحفظ شيء ولا يُحجز أي مقعد حتى تضغط تطبيق.' : 'Nothing is saved and no seat is held until you apply.',
+    keptRegistered: (n) => (IS_AR
+      ? `المقررات المسجّلة تبقى كما هي (${n}). لا يغيّرها هذا الحفظ.`
+      : `Registered courses stay as they are (${n}). This save does not change them.`),
+    droppedRegistered: IS_AR
+      ? 'تم تجاهل المقررات المسجّلة عند بناء هذا الخيار. لا يغيّرها هذا الحفظ، وقد تتعارض معه الشُعب المحفوظة.'
+      : 'Registered courses were ignored when this option was built. This save does not change them, so the saved sections may clash with them.',
+    replaceWarn: IS_AR
+      ? 'يستبدل هذا جدول الطالب المخطَّط المحفوظ لهذا الفصل. تُزال أي شُعب مخططة محفوظة سابقًا غير موجودة في هذا الخيار.'
+      : "This replaces the student's saved planned sections for this term. Any previously saved planned section that is not in this option is removed.",
+    apply: IS_AR ? 'تطبيق' : 'Apply',
+    cancel: IS_AR ? 'إلغاء' : 'Cancel',
+    saving: IS_AR ? 'جارٍ الحفظ…' : 'Saving…',
+    saved: IS_AR ? 'تم الحفظ' : 'Saved',
+    saveFailed: IS_AR ? 'فشل حفظ الشُعب. لم يُحفظ شيء.' : 'The sections could not be saved. Nothing was saved.',
+    savedNoReload: IS_AR ? 'تم الحفظ، لكن تعذّرت إعادة تحميل الطالب. اضغط جلب.' : 'Saved, but the student could not be reloaded. Press Fetch.',
+    removedPlanned: (n) => (IS_AR
+      ? pluralAr(n, forms('أُزيل مقرر مخطط محفوظ سابقًا', 'أُزيل مقرران مخططان محفوظان سابقًا', 'أُزيلت {n} مقررات مخططة محفوظة سابقًا', 'أُزيل {n} مقررًا مخططًا محفوظًا سابقًا'))
+      : `${n} previously saved planned ${n === 1 ? 'course was' : 'courses were'} removed`),
+    clashSaved: (n) => (IS_AR
+      ? pluralAr(n, forms('يتعارض لقاء واحد مع الجدول المسجّل', 'يتعارض لقاءان مع الجدول المسجّل', 'تتعارض {n} لقاءات مع الجدول المسجّل', 'يتعارض {n} لقاءً مع الجدول المسجّل'))
+      : `${n} ${n === 1 ? 'class clashes' : 'classes clash'} with the registered timetable`),
   };
 
   const DAY_ORDER = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -156,6 +223,14 @@
     shownElig: null,   // the eligibility the suggestions on screen were loaded with
     defaults: { ...DEFAULT_RULES },
     focus: null,       // {kind, code}: where focus goes after the next redraw
+    // The build loop. `build` is null until a reply is accepted, and again whenever the plan or
+    // the rules it was built from change: {options, shortlist, rules, at, ...}.
+    build: null,
+    selected: null,    // name of the option tab on screen; null = the Registered tab
+    buildGen: 0,       // bumped whenever a reply in flight must no longer be believed
+    inflight: 0,       // build requests not yet answered: the button waits for all of them
+    applying: false,   // a save request is in flight
+    moreOpen: false,   // the "More options" disclosure
   };
 
   /* ── Small helpers ─────────────────────────────────────────────────────── */
@@ -321,6 +396,8 @@
     };
     closeRulesDialog();
     renderRules();
+    // Options built under other rules are not options for these.
+    if (Object.keys(DEFAULT_RULES).some((key) => state.rules[key] !== before[key])) dropBuild(true);
     // The other rules apply at once, whatever happens to the reload below.
     renderCourses();
     if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
@@ -385,7 +462,7 @@
     }
     return [...seen.values()];
   }
-  function weekModel() {
+  function registeredMeetings() {
     const meetings = [];
     for (const row of state.baseline) {
       const day = normDay(row.day);
@@ -397,8 +474,46 @@
         code: String(row.course_code || row.course_key || ''),
         section: String(row.section || '').trim(),
         key: courseKeyOf(row),
+        kind: 'reg',
       });
     }
+    return meetings;
+  }
+  // The meetings an option's mappings add; a mapping with no usable time adds nothing.
+  function optionMeetings(opt) {
+    const meetings = [];
+    for (const mapping of opt.mappings || []) {
+      const key = courseKeyOf(mapping);
+      for (const mm of mapping.meetings || []) {
+        const day = normDay(mm.day);
+        const st = toMins(mm.start_time);
+        const en = toMins(mm.end_time);
+        if (!day || st === null || en === null || en <= st) continue;
+        meetings.push({
+          day, st, en,
+          code: key || String(mapping.course_code || ''),
+          section: String(mapping.section || '').trim(),
+          key,
+          kind: 'new',
+        });
+      }
+    }
+    return meetings;
+  }
+  // What the student's week holds under an option: the registered classes (unless this build
+  // ignored them) and the option's own, a planned class marked when it overlaps a registered one.
+  function weekMeetings(opt) {
+    const keepRegistered = !opt || state.build.rules.mode === 'keep';
+    const reg = keepRegistered ? registeredMeetings() : [];
+    const added = opt ? optionMeetings(opt) : [];
+    for (const m of added) {
+      for (const r of reg) {
+        if (r.day === m.day && m.st < r.en && r.st < m.en) { m.clash = true; r.clash = true; }
+      }
+    }
+    return [...reg, ...added];
+  }
+  function weekModel(meetings) {
     const days = ACADEMIC_DAYS.slice();
     for (const extra of ['FRI', 'SAT']) if (meetings.some((m) => m.day === extra)) days.push(extra);
     const byDay = {};
@@ -423,21 +538,30 @@
       freeDays: ACADEMIC_DAYS.filter((d) => !byDay[d].length),
     };
   }
+  // The three lines a tab shows about a week: how many days, which day is free, when it ends.
+  function factsOf(model) {
+    if (!model.meetings.length) return { first: T.noTimedClasses, second: [] };
+    let free;
+    if (model.freeDays.length === 0) free = T.noFreeDay;
+    else if (model.freeDays.length === 1) free = T.freeOne(IS_AR ? DAY_FULL_AR[model.freeDays[0]] : DAY_SHORT[model.freeDays[0]]);
+    else free = T.freeDays(model.freeDays.length);
+    return {
+      first: `${T.dayWord(model.campusDays)} · ${free}`,
+      second: [
+        `${T.ends} `, bdi(hhmm(model.lastEnd)), ' · ',
+        model.longestGap > 0 ? `${T.gap} ${durationText(model.longestGap)}` : T.noGap,
+      ],
+    };
+  }
   function renderTab(model) {
     const credits = registeredCredits();
     $('plbTabCredits').textContent = credits === null || !state.ctx ? '' : T.credits(credits);
     const facts1 = $('plbTabFacts1');
     const facts2 = $('plbTabFacts2');
     if (!state.ctx) { facts1.textContent = '—'; facts2.textContent = ''; return; }
-    if (!model.meetings.length) { facts1.textContent = T.noTimedClasses; facts2.textContent = ''; return; }
-    let free;
-    if (model.freeDays.length === 0) free = T.noFreeDay;
-    else if (model.freeDays.length === 1) free = T.freeOne(IS_AR ? DAY_FULL_AR[model.freeDays[0]] : DAY_SHORT[model.freeDays[0]]);
-    else free = T.freeDays(model.freeDays.length);
-    facts1.textContent = `${T.dayWord(model.campusDays)} · ${free}`;
-    facts2.replaceChildren(
-      `${T.ends} `, bdi(hhmm(model.lastEnd)), ' · ',
-      model.longestGap > 0 ? `${T.gap} ${durationText(model.longestGap)}` : T.noGap);
+    const facts = factsOf(model);
+    facts1.textContent = facts.first;
+    facts2.replaceChildren(...facts.second);
   }
   function weekBlock(m, rowStart, rowEnd, col) {
     const rows = rowEnd - rowStart;
@@ -446,7 +570,10 @@
     block.style.gridColumn = String(col);
     block.style.gridRow = `${rowStart} / ${rowEnd}`;
     block.dataset.code = m.key;
-    const label = `${m.code}${m.section ? ` ${IS_AR ? 'شعبة' : 'section'} ${m.section}` : ''}, ${DAY_SHORT[m.day]} ${range}`;
+    block.dataset.kind = m.kind || 'reg';
+    if (m.clash) block.dataset.clash = 'true';
+    const label = `${m.code}${m.section ? ` ${IS_AR ? 'شعبة' : 'section'} ${m.section}` : ''}, ${DAY_SHORT[m.day]} ${range}`
+      + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
     block.setAttribute('role', 'img');
     block.setAttribute('aria-label', label);
     block.append(
@@ -455,15 +582,35 @@
       el('span', 'plb-bt', bdi(range)));
     return block;
   }
+  function renderLegend(opt) {
+    const showRegistered = !opt || state.build.rules.mode === 'keep';
+    const parts = [];
+    if (showRegistered) parts.push(el('span', 'plb-lg-i', el('i', 'plb-k'), T.legendRegistered));
+    if (opt) parts.push(...(parts.length ? [' '] : []), el('span', 'plb-lg-i', el('i', 'plb-k plb-k--new'), T.planned));
+    $('plbLegend').replaceChildren(...parts);
+    for (const mark of $('plbLegend').querySelectorAll('i')) mark.setAttribute('aria-hidden', 'true');
+  }
   function renderWeek() {
     const host = $('plbWeek');
-    const model = weekModel();
-    renderTab(model);
+    const regModel = weekModel(registeredMeetings());
+    renderTab(regModel);
+    const opt = currentOption();
+    renderLegend(opt);
+    const name = $('plbWeekName');
+    if (opt) name.replaceChildren(...T.optionName(opt.name));
+    else name.textContent = T.registered;
+    $('plbWeekPanel').setAttribute('aria-labelledby', opt ? tabId(opt.name) : 'plbTabRegistered');
     if (!state.ctx) { host.replaceChildren(el('p', 'plb-empty', T.loadFirstWeek)); return; }
-    const untimed = registeredCourses().filter((c) => !c.timed).length;
-    const note = untimed ? el('p', 'plb-note', T.untimed(untimed)) : null;
+    const showRegistered = !opt || state.build.rules.mode === 'keep';
+    const untimed = showRegistered ? registeredCourses().filter((c) => !c.timed).length : 0;
+    const clashes = opt ? weekMeetings(opt).filter((m) => m.kind === 'new' && m.clash).length : 0;
+    const notes = [
+      untimed ? el('p', 'plb-note', T.untimed(untimed)) : null,
+      clashes ? el('p', 'plb-note', T.clashNote(clashes)) : null,
+    ].filter(Boolean);
+    const model = opt ? weekModel(weekMeetings(opt)) : regModel;
     if (!model.meetings.length) {
-      host.replaceChildren(...[el('p', 'plb-empty', T.noClassesAtAll), note].filter(Boolean));
+      host.replaceChildren(...[el('p', 'plb-empty', T.noClassesAtAll), ...notes]);
       return;
     }
     const rows = (model.endMin - model.startMin) / 15;
@@ -512,7 +659,103 @@
       foot.style.gridRow = String(footRow);
       grid.append(foot);
     });
-    host.replaceChildren(...[el('div', 'plb-wkwrap', grid), note].filter(Boolean));
+    host.replaceChildren(el('div', 'plb-wkwrap', grid), ...notes);
+  }
+
+  /* ── The options: tabs, their facts and the selected option ────────────── */
+  const tabId = (name) => `plbTab_${String(name).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+  function currentOption() {
+    if (!state.build || state.selected === null) return null;
+    return state.build.options.find((o) => o.name === state.selected) || null;
+  }
+  // The mapping an option chose for a course of the plan, or null.
+  function mappingFor(opt, code) {
+    const want = norm(code);
+    return (opt.mappings || []).find((m) => courseKeyOf(m) === want || norm(m.course_code) === want) || null;
+  }
+  // The plan's courses (as built) this option could not place.
+  function unplacedFor(opt) {
+    return state.build.shortlist.filter((item) => !mappingFor(opt, item.course_code));
+  }
+  function optionCredits(opt) {
+    const added = (opt.mappings || []).reduce((sum, m) => {
+      const item = state.build.shortlist.find((c) => norm(c.course_code) === courseKeyOf(m) || norm(c.course_code) === norm(m.course_code));
+      return sum + (item ? Number(item.credits) || 0 : 0);
+    }, 0);
+    return added + (state.build.rules.mode === 'keep' ? registeredCredits() || 0 : 0);
+  }
+  function optionIds(opt) {
+    return (opt.mappings || []).map((m) => m.term_section_id).filter(Boolean);
+  }
+  function optionTab(opt) {
+    const facts = factsOf(weekModel(weekMeetings(opt)));
+    const unplaced = unplacedFor(opt).length;
+    const selected = state.selected === opt.name;
+    const tab = el('button', 'plb-tab',
+      el('span', 'plb-tab-n', bdi(opt.name), ' ', el('span', 'plb-tab-cr', `· ${T.credits(optionCredits(opt))}`)),
+      el('span', 'plb-tab-x', facts.first),
+      el('span', 'plb-tab-x', ...facts.second),
+      unplaced ? el('span', 'plb-tab-x plb-tab-warn', T.notScheduled(unplaced)) : null);
+    tab.type = 'button';
+    tab.id = tabId(opt.name);
+    tab.dataset.opt = opt.name;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(selected));
+    tab.setAttribute('aria-controls', 'plbWeekPanel');
+    tab.tabIndex = selected ? 0 : -1;
+    return tab;
+  }
+  function moreNode(hidden) {
+    const wrap = el('div', 'plb-more');
+    wrap.id = 'plbMore';
+    wrap.setAttribute('role', 'presentation');
+    const button = el('button', 'plb-more-btn', T.moreOptions(hidden.length));
+    button.type = 'button';
+    button.id = 'plbMoreBtn';
+    button.setAttribute('aria-expanded', String(state.moreOpen));
+    button.setAttribute('aria-controls', 'plbMoreList');
+    const list = el('div', 'plb-more-list');
+    list.id = 'plbMoreList';
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', T.moreLabel);
+    list.hidden = !state.moreOpen;
+    for (const opt of hidden) {
+      const facts = factsOf(weekModel(weekMeetings(opt)));
+      const item = el('button', 'plb-more-item', bdi(opt.name), ` · ${T.credits(optionCredits(opt))} · ${facts.first}`);
+      item.type = 'button';
+      item.dataset.more = opt.name;
+      list.append(item);
+    }
+    wrap.append(button, list);
+    return wrap;
+  }
+  function renderStrip() {
+    const tabs = $('plbTabs');
+    tabs.querySelectorAll('[data-opt], #plbMore').forEach((n) => n.remove());
+    const registered = $('plbTabRegistered');
+    registered.setAttribute('aria-selected', String(state.selected === null));
+    registered.tabIndex = state.selected === null ? 0 : -1;
+    const options = state.build ? state.build.options : [];
+    // The first three are tabs; a later option chosen from "More options" takes the fourth place.
+    const shown = options.slice(0, 3);
+    const chosen = options.findIndex((o) => o.name === state.selected);
+    if (chosen >= 3) shown.push(options[chosen]);
+    const hidden = options.filter((o) => !shown.includes(o));
+    for (const opt of shown) tabs.insertBefore(optionTab(opt), registered);
+    if (hidden.length) tabs.insertBefore(moreNode(hidden), registered);
+    else state.moreOpen = false;
+  }
+  function selectTab(name, focus) {
+    state.selected = name;
+    state.moreOpen = false;
+    renderStrip();
+    renderWeek();
+    renderCourses();
+    renderActions();
+    if (focus) {
+      const tab = name === null ? $('plbTabRegistered') : $(tabId(name));
+      if (tab) tab.focus();
+    }
   }
 
   /* ── Courses ───────────────────────────────────────────────────────────── */
@@ -627,6 +870,7 @@
       return;
     }
     const keep = state.rules.mode === 'keep';
+    const opt = currentOption();
 
     // Registered
     const registered = registeredCourses();
@@ -652,7 +896,12 @@
       const code = item.course_code;
       const pin = item.pinned_sections && item.pinned_sections.length ? item.pinned_sections[0] : null;
       const sectionCell = el('td', 'plb-sc');
-      if (pin && pin.section) sectionCell.append(`${T.pinned} `, bdi(`§${pin.section}`));
+      const chosen = opt ? mappingFor(opt, code) : null;
+      if (opt) {
+        // On an option's tab the cell says what that option did with the course.
+        if (chosen) sectionCell.append(bdi(`§${String(chosen.section || '').trim() || '?'}`));
+        else { sectionCell.classList.add('plb-sc--miss'); sectionCell.append(T.notScheduledHere); }
+      } else if (pin && pin.section) sectionCell.append(`${T.pinned} `, bdi(`§${pin.section}`));
       else sectionCell.append(T.anySection);
       const box = el('input', 'plb-tick');
       box.type = 'checkbox';
@@ -725,6 +974,7 @@
   function addCourseToPlan(item) {
     if (inShortlist(item.course_code)) return;
     state.shortlist.push(item);
+    dropBuild(true);
     state.focus = { kind: 'remove', code: item.course_code };
     setStatus('ok', ...T.added(item.course_code));
     renderCourses();
@@ -733,6 +983,7 @@
     const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
     if (at < 0) return;
     const [gone] = state.shortlist.splice(at, 1);
+    dropBuild(true);
     state.focus = { kind: 'add', code: gone.course_code };
     setStatus('ok', ...T.removed(gone.course_code));
     renderCourses();
@@ -905,6 +1156,7 @@
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
+    dropBuild(true);   // options belong to the student and the plan they were built from
 
     const previousId = state.student ? String(state.student.student_id) : null;
     state.ctx = { studentId: String(data.student.student_id || studentId), year: String(data.year || year), term: String(data.term || term) };
@@ -932,7 +1184,271 @@
     renderRules();
     renderWeek();
     renderCourses();
+    renderActions();
     loadPlan(run);
+    return true;
+  }
+
+  /* ── Build, rebuild and apply ──────────────────────────────────────────── */
+  function setBuildLine(kind, ...parts) {
+    const line = $('plbBuildLine');
+    line.dataset.kind = kind || '';
+    line.replaceChildren(...parts.map((p) => (typeof p === 'string' ? document.createTextNode(p) : p)));
+  }
+  // The server's own words for a refusal: {error: {message}} or {error: "text"}; else a fixed line.
+  function errorText(data) {
+    const e = data && data.error;
+    if (e && typeof e === 'object' && e.message) return String(e.message);
+    if (typeof e === 'string' && e) return e;
+    return T.requestFailed;
+  }
+  const sessionGone = (response) => response.redirected || response.status === 401 || response.status === 403;
+
+  // The options are gone: the plan, the rules or the student they were built from changed. Any
+  // reply still in flight is no longer believed. `say` puts the plain line where the options were.
+  function dropBuild(say) {
+    state.buildGen += 1;
+    if (!state.build) return;
+    state.build = null;
+    state.selected = null;
+    state.moreOpen = false;
+    if (say) setBuildLine('warn', T.planChanged);
+    else setBuildLine('');
+    renderStrip();
+    renderWeek();
+    renderCourses();
+    renderActions();
+  }
+
+  function reasonLines(build) {
+    const lines = [];
+    for (const f of build.failures) {
+      const code = String(f.course_code || '');
+      let reason;
+      if (IS_AR) reason = f.kind === 'must_take' ? T.failMust : (f.kind === 'pinned_section' ? T.failPinned : T.failCredits);
+      else reason = String(f.reason || T.noFeasible);
+      lines.push([...(code ? [bdi(code), ': '] : []), reason]);
+    }
+    const groups = new Map();
+    for (const u of build.unscheduled) {
+      const why = T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+      if (!groups.has(why)) groups.set(why, []);
+      if (u.course_code) groups.get(why).push(String(u.course_code));
+    }
+    for (const [why, codes] of groups) lines.push(codes.length ? [...T.notScheduledList(codes), ' — ', why] : [why]);
+    if (!lines.length) lines.push([T.noFeasible]);
+    return lines;
+  }
+  function applicability() {
+    const opt = currentOption();
+    const build = state.build;
+    if (build && build.options.length && !build.rules.programOnly) return { ok: false, why: T.comparisonOnly };
+    if (!opt) return { ok: false, why: null };
+    if (!optionIds(opt).length) return { ok: false, why: T.nothingToSave };
+    return { ok: true, why: null };
+  }
+  function renderActions() {
+    const building = state.inflight > 0;
+    const build = $('plbBuild');
+    build.textContent = state.build ? T.rebuild : T.buildFirst;
+    build.disabled = !state.ctx || building || state.applying;
+    if (building) build.setAttribute('aria-busy', 'true'); else build.removeAttribute('aria-busy');
+    const verdict = applicability();
+    $('plbReview').disabled = !verdict.ok || building || state.applying;
+    const why = $('plbApplyWhy');
+    why.textContent = verdict.why || '';
+    why.hidden = !verdict.why;
+    const last = $('plbLastBuild');
+    if (state.build) last.replaceChildren(`${T.lastBuild} `, bdi(state.build.at));
+    else last.replaceChildren();
+    last.hidden = !state.build;
+    const note = $('plbBuildNote');
+    if (state.build && !state.build.options.length) {
+      note.replaceChildren(
+        el('p', 'plb-buildnote-lead', T.noOption),
+        el('ul', 'plb-buildnote-list', ...reasonLines(state.build).map((parts) => el('li', '', ...parts))));
+      note.hidden = false;
+    } else {
+      note.replaceChildren();
+      note.hidden = true;
+    }
+  }
+
+  // Exactly the body the current page posts for the same choices (page-planner.js, runBuilderRequest).
+  function buildBody() {
+    return {
+      student_id: state.ctx.studentId,
+      academic_year: state.ctx.year,
+      term: state.ctx.term,
+      mode: state.rules.mode,
+      eligibility_mode: state.rules.eligibility,
+      swap: state.rules.swap,
+      program_sections_only: state.rules.programOnly,
+      allow_full_sections: state.rules.allowFull,
+      max_credits: Number(state.rules.maxCredits || 0),
+      shortlist: state.shortlist,
+      baseline: state.baseline,
+    };
+  }
+  async function runBuild() {
+    if (!state.ctx || state.inflight > 0 || state.applying) return;
+    const button = $('plbBuild');
+    const hadFocus = document.activeElement === button;
+    state.inflight += 1;
+    // A new build retires the last one; the Registered week is what shows meanwhile.
+    state.build = null;
+    state.selected = null;
+    state.moreOpen = false;
+    const gen = ++state.buildGen;
+    const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly };
+    const shortlist = JSON.parse(JSON.stringify(state.shortlist));
+    const body = buildBody();
+    setBuildLine('busy', T.building);
+    renderStrip();
+    renderWeek();
+    renderCourses();
+    renderActions();
+    let result = null;
+    try { result = await postJson('/ops/planner/build/', body); } catch (err) { result = null; }
+    state.inflight -= 1;
+    try {
+      if (gen !== state.buildGen) {
+        // The plan, the rules or the student changed while this ran: its answer is not for this page.
+        if (state.inflight === 0) setBuildLine('warn', T.planChanged);
+        return;
+      }
+      if (!result) { setBuildLine('error', T.buildFailed); return; }
+      const { response, data } = result;
+      if (sessionGone(response)) { setBuildLine('error', T.sessionExpired); return; }
+      if (response.status === 429) { setBuildLine('error', T.tooMany); return; }
+      if (!data || typeof data !== 'object') { setBuildLine('error', T.buildFailed); return; }
+      if (data.error) { setBuildLine('error', errorText(data)); return; }
+      if (!response.ok) { setBuildLine('error', T.buildFailed); return; }
+      const summary = data.summary || {};
+      const options = Array.isArray(data.options) ? data.options : [];
+      const feasible = Boolean(summary.best_feasible && options.length);
+      const now = new Date();
+      state.build = {
+        options: feasible ? options : [],
+        shortlist,
+        rules,
+        at: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+        failures: Array.isArray(summary.hard_constraint_failures) ? summary.hard_constraint_failures : [],
+        unscheduled: Array.isArray(data.unscheduled) ? data.unscheduled : [],
+      };
+      state.selected = feasible ? String(options[0].name) : null;
+      setBuildLine('');
+      renderStrip();
+      renderWeek();
+      renderCourses();
+    } finally {
+      renderActions();
+      if (!state.inflight && (hadFocus || document.activeElement === document.body) && !button.disabled) button.focus();
+    }
+  }
+
+  function openApply() {
+    const opt = currentOption();
+    if (!opt || !applicability().ok || state.applying) return;
+    const build = state.build;
+    $('plbApplyTitle').replaceChildren(...(IS_AR ? ['مراجعة وتطبيق الخيار ', bdi(opt.name)] : ['Review and apply option ', bdi(opt.name)]));
+    $('plbApplySub').replaceChildren(bdi(`${state.ctx.studentId} · ${state.ctx.year}/${state.ctx.term}`));
+    $('plbApplyList').replaceChildren(...(opt.mappings || []).filter((m) => m.term_section_id).map((m) => {
+      const key = courseKeyOf(m) || String(m.course_code || '');
+      const item = build.shortlist.find((c) => norm(c.course_code) === key);
+      const days = [...new Set((m.meetings || []).map((mm) => normDay(mm.day)).filter(Boolean))];
+      const times = [...new Set((m.meetings || []).map((mm) => `${mm.start_time}-${mm.end_time}`))];
+      return el('li', 'plb-apply-row',
+        el('span', '', bdi(key), ...(m.section ? [' ', bdi(`§${String(m.section).trim()}`)] : []), ...(item && item.course_name ? [' ', isolate(item.course_name)] : [])),
+        el('span', 'plb-apply-when', days.map((d) => DAY_SHORT[d]).join(' '), ...(days.length && times.length ? [' '] : []), ...(times.length ? [bdi(times.join(' / '))] : [])));
+    }));
+    const registered = registeredCourses();
+    $('plbApplyReg').replaceChildren(build.rules.mode === 'keep'
+      ? el('span', '', T.keptRegistered(registered.length), ' ',
+        ...registered.flatMap((c, i) => (i ? [' · ', bdi(c.code)] : [bdi(c.code)])))
+      : T.droppedRegistered);
+    $('plbApplyWarn').textContent = T.replaceWarn;
+    const err = $('plbApplyErr');
+    err.textContent = '';
+    err.hidden = true;
+    renderApplyButtons();
+    const dialog = $('plbApplyDialog');
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    $('plbApplyCancel').focus();
+  }
+  function closeApply() {
+    const dialog = $('plbApplyDialog');
+    if (typeof dialog.close === 'function') { if (dialog.open) dialog.close(); } else dialog.removeAttribute('open');
+  }
+  function renderApplyButtons() {
+    $('plbApplyGo').disabled = state.applying;
+    $('plbApplyGo').textContent = state.applying ? T.saving : T.apply;
+    if (state.applying) $('plbApplyGo').setAttribute('aria-busy', 'true'); else $('plbApplyGo').removeAttribute('aria-busy');
+    $('plbApplyCancel').disabled = state.applying;
+  }
+  async function runApply() {
+    if (state.applying) return;                     // a second click cannot post twice
+    const opt = currentOption();
+    if (!opt || !applicability().ok) return;
+    const ctx = { ...state.ctx };
+    const gen = state.buildGen;
+    state.applying = true;
+    renderApplyButtons();
+    renderActions();
+    // Exactly the body the current page posts (page-planner.js, the applyOption handler).
+    const body = {
+      student_id: ctx.studentId,
+      academic_year: ctx.year,
+      term: ctx.term,
+      term_section_ids: optionIds(opt),
+      confirm_replace: true,
+    };
+    const refuse = (line) => {
+      state.applying = false;
+      const err = $('plbApplyErr');
+      err.textContent = line;
+      err.hidden = false;
+      renderApplyButtons();
+      renderActions();
+    };
+    let result = null;
+    try { result = await postJson('/ops/planner/save-student-sections/', body); } catch (err) { result = null; }
+    if (!result) { refuse(T.saveFailed); return; }
+    const { response, data } = result;
+    if (sessionGone(response)) { refuse(T.sessionExpired); return; }
+    if (!data || typeof data !== 'object') { refuse(T.saveFailed); return; }
+    if (data.error) { refuse(errorText(data)); return; }
+    if (!response.ok) { refuse(T.saveFailed); return; }
+
+    // Saved. What the write took away and what it clashes with is said, as the current page does.
+    const removed = Array.isArray(data.removed) ? data.removed : [];
+    const clashes = Array.isArray(data.clashes_with_registered) ? data.clashes_with_registered : [];
+    state.applying = false;
+    renderApplyButtons();
+    closeApply();
+    if (gen === state.buildGen) dropBuild(false);
+    const said = [T.saved];
+    if (removed.length) {
+      said.push('. ', T.removedPlanned(removed.length), ' (',
+        ...removed.flatMap((x, i) => [i ? ', ' : '', bdi(`${x.course_code || ''} ${x.section || ''}`.trim())]), ')');
+    }
+    if (clashes.length) {
+      said.push('. ', T.clashSaved(clashes.length), ' (',
+        ...clashes.flatMap((x, i) => [i ? ', ' : '', bdi(`${x.course_code || ''} ${x.section || ''} · ${x.clashes_with || ''}`.trim())]), ')');
+    }
+    if (removed.length || clashes.length) said.push('.');
+    setBuildLine('busy', T.loading);
+    const reloaded = state.ctx && state.ctx.studentId === ctx.studentId ? await loadStudent({ reuse: true }) : false;
+    if (reloaded) {
+      setBuildLine(removed.length || clashes.length ? 'warn' : 'ok', ...said);
+      setStatus('ok', T.saved);
+    } else {
+      setBuildLine('warn', T.savedNoReload);
+    }
+    renderActions();
+    const build = $('plbBuild');
+    if (!build.disabled) build.focus();
   }
 
   /* ── Wiring ────────────────────────────────────────────────────────────── */
@@ -957,7 +1473,62 @@
       const target = event.target;
       if (!target || target.dataset.act !== 'must') return;
       const item = state.shortlist.find((c) => norm(c.course_code) === target.dataset.code);
-      if (item) item.must_take = target.checked;
+      if (!item) return;
+      item.must_take = target.checked;
+      if (state.build || state.inflight) {
+        dropBuild(true);
+        state.focus = { kind: 'must', code: item.course_code };
+        renderCourses();
+      }
+    });
+
+    // The options: tabs (arrow keys, Home and End), "More options", Build and Review and apply.
+    $('plbBuild').addEventListener('click', runBuild);
+    $('plbReview').addEventListener('click', openApply);
+    $('plbApplyForm').addEventListener('submit', (event) => { event.preventDefault(); runApply(); });
+    $('plbApplyCancel').addEventListener('click', () => { if (!state.applying) closeApply(); });
+    $('plbApplyDialog').addEventListener('cancel', (event) => { if (state.applying) event.preventDefault(); });
+    $('plbApplyDialog').addEventListener('close', () => {
+      const review = $('plbReview');
+      if (!review.disabled && document.activeElement === document.body) review.focus();
+    });
+    const tabs = $('plbTabs');
+    tabs.addEventListener('click', (event) => {
+      const more = event.target.closest('#plbMoreBtn');
+      if (more) {
+        state.moreOpen = !state.moreOpen;
+        more.setAttribute('aria-expanded', String(state.moreOpen));
+        $('plbMoreList').hidden = !state.moreOpen;
+        return;
+      }
+      const item = event.target.closest('[data-more]');
+      if (item) { selectTab(item.dataset.more, true); return; }
+      const tab = event.target.closest('[role="tab"]');
+      if (tab) selectTab(tab.dataset.opt === undefined ? null : tab.dataset.opt, false);
+    });
+    tabs.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && state.moreOpen) {
+        state.moreOpen = false;
+        renderStrip();
+        $('plbMoreBtn').focus();
+        return;
+      }
+      const tab = event.target.closest('[role="tab"]');
+      if (!tab) return;
+      const all = [...tabs.querySelectorAll('[role="tab"]')];
+      const at = all.indexOf(tab);
+      const rtl = document.documentElement.dir === 'rtl';
+      let to = -1;
+      if (event.key === (rtl ? 'ArrowLeft' : 'ArrowRight')) to = (at + 1) % all.length;
+      else if (event.key === (rtl ? 'ArrowRight' : 'ArrowLeft')) to = (at - 1 + all.length) % all.length;
+      else if (event.key === 'Home') to = 0;
+      else if (event.key === 'End') to = all.length - 1;
+      if (to < 0) return;
+      event.preventDefault();
+      selectTab(all[to].dataset.opt === undefined ? null : all[to].dataset.opt, true);
+    });
+    document.addEventListener('click', (event) => {
+      if (state.moreOpen && !event.target.closest('#plbMore')) { state.moreOpen = false; renderStrip(); }
     });
 
     const add = $('plbAdd');
@@ -989,6 +1560,7 @@
     renderStudent();
     renderWeek();
     renderCourses();
+    renderActions();
     // /planner/?student=123456&year=1448&term=1 opens a student, as the current page does.
     const params = new URLSearchParams(window.location.search);
     const student = params.get('student') || params.get('student_id') || params.get('sid');
