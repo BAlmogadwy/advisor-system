@@ -381,3 +381,26 @@ def test_the_arabic_type_rules_never_reach_mri_split_or_the_sidebar() -> None:
         selector = re.sub(r"/\*.*?\*/", "", rule, flags=re.S).split("{")[0]
         for skipped in (".tw-mri *", ".sidebar *", ".sbp *"):
             assert skipped in selector, (skipped, selector.strip()[:120])
+
+
+def test_the_phone_drawer_sizes_never_reach_the_mri_page() -> None:
+    """The MRI page hides the sidebar, but a rule that reached it would still
+    move the hidden sidebar's computed styles there (owner: the page is left as
+    it is). Every selector in the phone drawer's block starts from the body
+    that is not the MRI page's."""
+    start = GLOBAL.index("/* ── The phone drawer: a touch surface")
+    block = GLOBAL[GLOBAL.index("@media (max-width: 768px) {", start) :]
+    depth, length = 0, 0
+    for i, ch in enumerate(block):
+        depth += {"{": 1, "}": -1}.get(ch, 0)
+        if ch == "}" and depth == 0:
+            length = i + 1
+            break
+    assert length, "the drawer's @media block closes"
+    selectors = {
+        part for selector, _, _, _ in _declarations(block[:length]) for part in _top_level(selector)
+    }
+    assert len(selectors) >= 20, sorted(selectors)
+    scope = ":where(body:not(.twm-root)) .sidebar "
+    strays = [s for s in selectors if not s.removeprefix('html[dir="rtl"] ').startswith(scope)]
+    assert strays == [], strays

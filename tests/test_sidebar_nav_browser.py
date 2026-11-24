@@ -810,6 +810,69 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             again.evaluate("localStorage.getItem('sidebar-nav-collapsed')"), '["advising"]'
         )
 
+    def test_the_phone_drawer_is_a_touch_surface(self) -> None:
+        """On a phone the drawer kept the 195px rail's compaction: 31.5px rows,
+        24px group headings in 11px capitals under 13px items, a 12.35px product
+        name, 28-32px buttons and an 11.3px language select, which iOS zooms
+        into when it takes focus — 34 of its 35 controls under 44px. Now every
+        control in it is a 44px target (the touch ladder's --control-h), its
+        rows, search row and select carry the touch tier's 16px text, a group
+        heading is set as a heading and is no smaller than its items, and the
+        drawer is 320px wide, which keeps those 16px labels on one line (that
+        last part is measured with the real fonts; these tests load none)."""
+        probe = """() => {
+          const sb = document.getElementById('appSidebar');
+          const style = (el) => getComputedStyle(el);
+          const size = (selector) => parseFloat(style(sb.querySelector(selector)).fontSize);
+          const height = (selector) => sb.querySelector(selector).getBoundingClientRect().height;
+          const drawn = [...sb.querySelectorAll('a[href], button, select')]
+            .filter((el) => el.getClientRects().length && style(el).visibility !== 'hidden');
+          const small = drawn
+            .map((el) => { const r = el.getBoundingClientRect();
+              return [el.id || el.className, +r.width.toFixed(2), +r.height.toFixed(2)]; })
+            .filter(([, w, h]) => w < 44 - 0.01 || h < 44 - 0.01);
+          const heading = style(sb.querySelector('.nav-lbl'));
+          return {
+            width: sb.getBoundingClientRect().width, controls: drawn.length, small,
+            rows: [height('.nav-lbl'), height('.nav-a')],
+            link: size('.nav-a'), heading: size('.nav-lbl-t'),
+            headingSet: [heading.fontWeight, heading.textTransform],
+            search: size('#navFind'), select: size('#sidebar-lang-select'), title: size('.logo-title'),
+            secondary: [size('.u-rl'), size('.logo-sub')],
+          };
+        }"""
+        for language, secondary in (("en", [11, 11]), ("ar", [13, 13])):
+            with self.subTest(language=language):
+                page = self._open(
+                    self._context(language=language, width=390, height=844), language=language
+                )
+                page.locator(".sidebar-toggle").click()
+                expect(page.locator("#appSidebar")).to_be_visible()
+                seen = page.evaluate(probe)
+                self.assertEqual(seen["width"], 320, seen)
+                self.assertGreaterEqual(seen["controls"], 30, seen)
+                self.assertEqual(seen["small"], [], seen)
+                self.assertEqual(seen["rows"], [44, 44], seen)
+                self.assertEqual(
+                    (seen["link"], seen["search"], seen["select"], seen["title"]),
+                    (16, 16, 16, 18),
+                    seen,
+                )
+                self.assertGreaterEqual(seen["heading"], seen["link"], seen)
+                self.assertEqual(seen["headingSet"], ["600", "none"], seen)
+                # Arabic's role and university lines take the full rail's step.
+                self.assertEqual(seen["secondary"], secondary, seen)
+                # A narrower phone keeps 56px of backdrop beside the drawer to
+                # close it with: 360 - 56 = 304.
+                page.set_viewport_size({"width": 360, "height": 740})
+                self.assertEqual(
+                    page.evaluate(
+                        "document.getElementById('appSidebar').getBoundingClientRect().width"
+                    ),
+                    304,
+                )
+                page.context.close()
+
     # ── The scroll affordance that was already there ───────────────
     def test_the_list_still_fades_at_whichever_edge_has_more_to_scroll(self) -> None:
         """`.nav-sec` carries a scroll-driven mask that fades the edge the list
