@@ -12,7 +12,7 @@
       </div>
       <div id="scrapeSourceMeta" class="meta-banner meta-info mb-10" role="status" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}جارٍ فحص طلاب قاعدة البيانات…{% else %}Checking database student roster…{% endif %}</div>
       <div id="scrapeMetrics" class="page-summary">
-          <span class="ps-item mc-teal"><span class="ps-lbl">Status</span><span class="ps-val" id="scrapeMetricStatus"><span class="status-dot status-stopped"></span>Idle</span></span>
+          <span class="ps-item mc-teal"><span class="ps-lbl">Status</span><span class="ps-val" id="scrapeMetricStatus"><span class="status-dot status-stopped"></span>{% if LANGUAGE_CODE == 'ar' %}خامل{% else %}Idle{% endif %}</span></span>
           <span class="ps-item mc-royal"><span class="ps-lbl">PID</span><span class="ps-val" id="scrapeMetricPid">-</span></span>
           <span class="ps-item mc-sky"><span class="ps-lbl">Started</span><span class="ps-val" id="scrapeMetricStarted">-</span></span>
           <span class="ps-item mc-warn"><span class="ps-lbl">Stopped</span><span class="ps-val" id="scrapeMetricStopped">-</span></span>

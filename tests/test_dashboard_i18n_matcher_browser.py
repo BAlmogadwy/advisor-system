@@ -17,6 +17,7 @@ than a Python copy of it: a copy would keep passing while the real page broke.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -539,6 +540,70 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
         table = ARABIC_FOR_EMPTY_STATES
         missing = [ar for ar in table if ar not in found["leaves"]]
         assert missing == [], f"Arabic captions not rendered: {missing}"
+
+    def test_the_debug_trace_colours_each_prerequisite_by_its_status(self) -> None:
+        """A passed prerequisite is green, one being studied blue, a missing one red.
+
+        The trace's statuses come from debug_reporting.py in upper case
+        (PASSED / STUDYING / MISSING). Until 2026-11 the pill compared them with
+        lower-case 'passed' / 'studying', so every pill rendered red, even for
+        a prerequisite the student had passed.
+        """
+        trace = [
+            {
+                "course_code": "CS210",
+                "prerequisites": ["CS101", "CS102", "MATH101"],
+                "prerequisite_status": [
+                    {"prerequisite": "CS101", "status": "PASSED"},
+                    {"prerequisite": "CS102", "status": "STUDYING"},
+                    {"prerequisite": "MATH101", "status": "MISSING"},
+                ],
+            }
+        ]
+        payload = {
+            "count": 1,
+            "items": [
+                {
+                    "student_id": "4400001",
+                    "program": "CS",
+                    "real_term": 3,
+                    "next_term": 4,
+                    "passed": ["CS101"],
+                    "studying": ["CS102"],
+                    "recommended_courses": ["CS210"],
+                    "recommendation_details": trace,
+                }
+            ],
+        }
+        context, page = self._arabic_dashboard()
+        try:
+            page.route(
+                "**/report/recommendation-debug/**",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(payload),
+                ),
+            )
+            page.evaluate("() => { location.hash = 'debug'; }")
+            page.fill("#dbgYear", "1447")
+            page.fill("#dbgSemester", "1")
+            page.click("#dbgRun")
+            page.click("#dbgTable .dbg-trace")
+            page.wait_for_selector("#debugTraceBody .pill-status")
+            pills = page.evaluate(
+                """() => [...document.querySelectorAll('#debugTraceBody .pill-status')]
+                    .map(el => [el.textContent.split(':')[0].trim(),
+                                ['pill-g', 'pill-b', 'pill-r'].filter(c => el.classList.contains(c))])"""
+            )
+        finally:
+            context.close()
+
+        assert pills == [
+            ["CS101", ["pill-g"]],
+            ["CS102", ["pill-b"]],
+            ["MATH101", ["pill-r"]],
+        ]
 
     def test_the_table_has_no_duplicate_keys(self) -> None:
         """Two entries for one key means one Arabic string is dead weight."""
