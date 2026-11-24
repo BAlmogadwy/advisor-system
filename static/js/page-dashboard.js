@@ -17,10 +17,10 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     // ── Batch Preview ──
     noBatchData: IS_AR ? 'لا توجد بيانات حتى الآن' : 'No batch data yet',
-    setBatchFilters: IS_AR ? 'حدد الفلاتر ثم اضغط معاينة' : 'Set filters and click Run Preview',
+    setBatchFilters: IS_AR ? 'يُرجى تحديد السنة والفصل أعلاه، ثم الضغط على <strong>تشغيل المعاينة</strong>' : 'Set filters and click Run Preview',
     runBatchHint: IS_AR ? 'شغّل المعاينة لعرض أفضل المقررات الموصى بها.' : 'Run a batch preview to see top course recommendations.',
     batchPreview: IS_AR ? 'معاينة الدفعة' : 'Batch preview',
-    runPreview: IS_AR ? 'معاينة' : 'Run Preview',
+    runPreview: IS_AR ? 'تشغيل المعاينة' : 'Run Preview',
     batchLoadFailed: IS_AR ? 'تعذّر تحميل ملخص الدفعة.' : 'Failed to load batch summary.',
     batchRecFailed: IS_AR ? 'تعذّر تحميل التوصيات.' : 'Failed to load recommendations.',
     noRecsFound: IS_AR ? 'لم يتم العثور على توصيات.' : 'No recommendations found.',
@@ -235,7 +235,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     hpLoaded: IS_AR ? 'تم تحميل تقرير الأولوية العالية' : 'Missing high priority report loaded',
 
     // ── Export ──
-    linkCopied: (label, path) => IS_AR ? `تم نسخ رابط ${label}: ${path}` : `${label} copied to clipboard: ${path}`,
+    linkCopied: (label, path) => IS_AR ? `تم نسخ ${label}: ${path}` : `${label} copied to clipboard: ${path}`,
     labelCopied: (label) => IS_AR ? `تم نسخ ${label}` : `${label} copied`,
     studentCsvLink: IS_AR ? 'رابط CSV الطالب' : 'Student CSV link',
     requiredFilters: IS_AR ? 'الفلاتر المطلوبة' : 'required filters',
@@ -270,6 +270,75 @@ const IS_AR = document.documentElement.lang === 'ar';
     kbShowHelp: IS_AR ? 'عرض هذه المساعدة' : 'Show this help',
     kbSortColumn: IS_AR ? 'ترتيب عمود الجدول' : 'Sort table column',
     kbClickHeader: IS_AR ? 'اضغط على رأس العمود' : 'Click column header',
+
+    // ── Strings the panels' scripts write after load ──
+    /* Words from fixed vocabularies the server sends (recommendation mode,
+       trace status, scrape action): translated for display only, never
+       compared. Any other value passes through unchanged. */
+    modeLabel: (m) => (IS_AR ? ({ strict: 'صارم', relaxed: 'مرن' }[m] || m) : m),
+    traceStatus: (s) => (IS_AR ? ({ PASSED: 'مُجتاز', STUDYING: 'قيد الدراسة', MISSING: 'ناقص' }[s] || s) : s),
+    scrapeAction: (a) => (IS_AR ? ({ started: 'بدأ', stopped: 'توقف', finished: 'اكتمل', failed: 'فشل' }[a] || a) : a),
+    /* The status line is technical: Arabic labels, Latin values. The path is
+       isolated (FSI…PDI) so its slashes and dots keep their order. */
+    scrapeStatusLine: (action, path) => IS_AR
+      ? `الإجراء: ${action} · السجل: ⁨${path}⁩`
+      : `action=${action} log=${path}`,
+    networkError: IS_AR ? 'خطأ في الاتصال' : 'Network error',
+    networkRequestFailed: IS_AR ? 'خطأ في الاتصال بالشبكة.' : 'Network request failed.',
+    networkRetriesFailed: IS_AR ? 'تعذّر الاتصال بالشبكة بعد عدة محاولات' : 'Network request failed after retries',
+    missingRequired: (label, fields) => IS_AR ? `${label}: حقول مطلوبة غير مكتملة (${fields})` : `${label}: missing required fields (${fields})`,
+    unknownTerm: IS_AR ? 'غير معروف' : 'Unknown',
+    clear: IS_AR ? 'مسح' : 'Clear',
+    creditsLbl: IS_AR ? 'الساعات' : 'Credits',
+    termWord: IS_AR ? 'الفصل' : 'Term',
+    impShort: IS_AR ? 'الأهمية' : 'Imp',
+    termShort: IS_AR ? 'الفصل ' : 'T',
+    blockerFilter: (code) => IS_AR ? ` • تصفية حسب العائق: ${code}` : ` • blocker filter: ${code}`,
+    loadingPrereqsFor: (c) => IS_AR ? `جارٍ تحميل المتطلبات السابقة للمقرر ${c}...` : `Loading prerequisites for ${c}...`,
+    failedPrereqsFor: (c) => IS_AR ? `تعذّر تحميل المتطلبات السابقة للمقرر ${c}.` : `Failed to load prerequisites for ${c}.`,
+    failedLoadPrereqs: IS_AR ? 'تعذّر تحميل المتطلبات السابقة' : 'Failed to load prerequisites',
+    noPrereqsFor: (c, p) => IS_AR ? `لا توجد متطلبات سابقة للمقرر ${c} في البرنامج ${p}.` : `No prerequisites found for ${c} in program ${p}.`,
+    noPrereqLinks: IS_AR ? 'لا توجد روابط متطلبات سابقة.' : 'No prerequisite links found.',
+    prereqsFor: (c, n) => IS_AR ? `المتطلبات السابقة للمقرر ${c} (عدد الروابط: ${n})` : `Prerequisites for ${c} (${n} link(s))`,
+    failedRefreshScrape: IS_AR ? 'تعذّر تحديث حالة الجلب' : 'Failed to refresh scrape status',
+    failedStartScrapeTitle: IS_AR ? 'تعذّر بدء الجلب' : 'Failed to start scrape',
+    failedStopScrapeTitle: IS_AR ? 'تعذّر إيقاف الجلب' : 'Failed to stop scrape',
+    oracleSelectFile: IS_AR ? 'يُرجى اختيار ملف Oracle.' : 'Please select an Oracle file.',
+    oracleProgramSection: IS_AR ? 'البرنامج والشعبة مطلوبان.' : 'Program and Section are required.',
+    parsing: IS_AR ? 'جارٍ التحليل…' : 'Parsing…',
+    oracleGenerated: (count, path, skipped) => IS_AR
+      ? `✅ تم إنشاء القائمة — عدد الطلاب: ${count}، الملف: ⁨${path}⁩ (عدد المتجاوَزين: ${skipped})`
+      : `✅ Generated ${count} students → ${path} (skipped: ${skipped})`,
+    studentListGenerated: (n) => IS_AR ? `تم إنشاء قائمة الطلاب — عدد الطلاب: ${n}` : `Student list generated: ${n} students`,
+    failedGenerateCsv: IS_AR ? 'تعذّر إنشاء ملف CSV' : 'Failed to generate CSV',
+    unableLoadDebug: IS_AR ? 'تعذّر تحميل تقرير التشخيص.' : 'Unable to load debug report.',
+    debugSummary: (sid, prog, real, next, recs) => IS_AR
+      ? `الطالب ${sid} (${prog})\nالفصل الفعلي: ${real}، الفصل التالي: ${next}\nالمقررات الموصى بها: ${recs}`
+      : `Student ${sid} (${prog})\nReal→Next: ${real}→${next}\nRecommended: ${recs}`,
+    viewTrace: IS_AR ? 'عرض التتبع' : 'View trace',
+    copySummary: IS_AR ? 'نسخ الملخص' : 'Copy summary',
+    copiedBang: IS_AR ? 'تم النسخ!' : 'Copied!',
+    noStudentsMatched: IS_AR ? 'لا يوجد طلاب مطابقون للمرشحات.' : 'No students matched filters.',
+    prereqsLbl: IS_AR ? 'المتطلبات السابقة' : 'Prereqs',
+    noPrereqStatus: IS_AR ? 'لا توجد حالة للمتطلبات السابقة' : 'No prerequisite status',
+    noTraceDetails: IS_AR ? 'لا توجد تفاصيل تتبع لهذا الطالب.' : 'No trace details for this student.',
+    unableLoadEligibility: IS_AR ? 'تعذّر تحميل تقرير الأهلية.' : 'Unable to load eligibility report.',
+    failedLoadAdvisors: IS_AR ? 'تعذّر تحميل قائمة المرشدين.' : 'Failed to load advisors list.',
+    advisorSaveFailed: IS_AR ? 'تعذّر حفظ المرشد' : 'Advisor save failed',
+    failedSaveAdvisor: IS_AR ? 'تعذّر حفظ المرشد.' : 'Failed to save advisor.',
+    seedFailedMeta: IS_AR ? 'فشل بذر المرشدين.' : 'Seed advisors failed.',
+    unknownError: IS_AR ? 'خطأ غير معروف' : 'Unknown error',
+    done: IS_AR ? 'تم' : 'Done',
+    networkErrorReport: IS_AR ? 'خطأ في الاتصال أثناء تحميل التقرير.' : 'Network error while loading report.',
+    failedLoadReport: IS_AR ? 'تعذّر تحميل التقرير.' : 'Failed to load report.',
+    exportLink: IS_AR ? 'رابط التصدير' : 'Export link',
+    /* Export filters a link still lacks, named for the reader; English keeps
+       the query-parameter names it always showed. */
+    exportField: (f) => (IS_AR ? ({ year: 'السنة', semester: 'الفصل', student_id: 'الرقم الجامعي', course_code: 'رمز المقرر', advisor_id: 'معرّف المرشد' }[f] || f) : f),
+    /* requireFields names the empty inputs by element id; Arabic names them
+       by what they hold. */
+    requiredFieldName: (id) => (IS_AR ? (/Year$/.test(id) ? 'السنة' : /Semester$/.test(id) ? 'الفصل' : /Course$/.test(id) ? 'رمز المقرر' : id) : id),
+    rowsPerPage: IS_AR ? 'عدد الصفوف في الصفحة' : 'Rows per page',
   };
   const links = document.querySelectorAll('.nav-link[data-target]');
   const panels = document.querySelectorAll('.panel');
@@ -419,7 +488,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       res = await fetch(url);
       data = await res.json();
     } catch (err) {
-      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-danger">Network error</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-danger">${T.networkError}</td></tr>`;
       q('batchMeta').textContent = preciseError(null, null, T.batchLoadFailed, err);
       q('batchMeta').className = 'meta-banner meta-danger mb-14';
       q('batchMetrics').classList.add('d-none');
@@ -448,7 +517,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchMetricTerm').textContent = `${data.year}/${data.semester}`;
     q('batchMetricStudents').textContent = String(data.student_count ?? 0);
     q('batchMetricTopCount').textContent = String(data.top_recommended_courses.length);
-    q('batchMetricMode').textContent = data.mode || (data.strict_passed_only ? 'strict' : 'relaxed');
+    q('batchMetricMode').textContent = T.modeLabel(data.mode || (data.strict_passed_only ? 'strict' : 'relaxed'));
     q('batchMetrics').classList.remove('d-none');
 
     if (tbody) {
@@ -630,24 +699,24 @@ const IS_AR = document.documentElement.lang === 'ar';
     const tbody = document.querySelector('#planPrereqTable tbody');
     if (!meta || !tbody) return;
 
-    meta.textContent = `Loading prerequisites for ${courseCode}...`;
+    meta.textContent = T.loadingPrereqsFor(courseCode);
     let res, data;
     try {
       res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(courseCode)}`);
       data = await res.json();
     } catch (err) {
-      meta.textContent = `Failed to load prerequisites for ${courseCode}.`;
-      notify.error('Failed to load prerequisites', err.message || String(err));
+      meta.textContent = T.failedPrereqsFor(courseCode);
+      notify.error(T.failedLoadPrereqs, err.message || String(err));
       return;
     }
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
-      meta.textContent = `No prerequisites found for ${courseCode} in program ${program}.`;
-      tbody.innerHTML = '<tr><td colspan="2" class="empty-note">No prerequisite links found.</td></tr>';
+      meta.textContent = T.noPrereqsFor(courseCode, program);
+      tbody.innerHTML = `<tr><td colspan="2" class="empty-note">${T.noPrereqLinks}</td></tr>`;
       return;
     }
 
-    meta.textContent = `Prerequisites for ${courseCode} (${data.items.length} link(s))`;
+    meta.textContent = T.prereqsFor(courseCode, data.items.length);
     tbody.innerHTML = data.items
       .map((row) => `<tr><td>${row.course_code}</td><td>${row.prerequisite_course_code}</td></tr>`)
       .join('');
@@ -765,7 +834,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     const termCourses = {};
     const termRows = {};
     data.items.forEach((row) => {
-      const term = String(row.programme_term ?? 'Unknown');
+      const term = String(row.programme_term ?? T.unknownTerm);
       termMap[term] = (termMap[term] || 0) + 1;
       termCredits[term] = (termCredits[term] || 0) + (Number(row.credit_hours) || 0);
       if (!termCourses[term]) termCourses[term] = [];
@@ -964,7 +1033,7 @@ const IS_AR = document.documentElement.lang === 'ar';
         <div class="rec" style="cursor:default;margin-bottom:12px">
           <div>
             <div class="rec-code">${c.course_code}</div>
-            <div class="rec-pre">Credits: ${c.credit_hours ?? '-'} &middot; Term ${c.programme_term ?? '-'} &middot; Importance ${Number(c.importance_score || 0).toFixed(2)}</div>
+            <div class="rec-pre">${T.creditsLbl}: ${c.credit_hours ?? '-'} &middot; ${T.termWord} ${c.programme_term ?? '-'} &middot; ${T.importance} ${Number(c.importance_score || 0).toFixed(2)}</div>
           </div>
         </div>
         <div class="kv" style="margin-bottom:6px"><strong class="text-t3 fs-11 text-caps" style="letter-spacing:0.05em">${T.prerequisites}</strong><div style="margin-top:2px;font-size:13px">${prereqs}</div></div>
@@ -1009,7 +1078,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     const meta = q('studentPlanMeta');
     if (meta && studentPlanData) {
-      const blockerNote = studentPlanBlockedBy ? ` • blocker filter: ${studentPlanBlockedBy}` : '';
+      const blockerNote = studentPlanBlockedBy ? T.blockerFilter(studentPlanBlockedBy) : '';
       meta.textContent = T.studentMeta(studentPlanData.student_id, studentPlanData.program) + blockerNote;
     }
 
@@ -1033,7 +1102,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     const usedCredits = planResult.usedCredits || 0;
 
     actionPlan.innerHTML = selected.length
-      ? `<div class="cpanel mb-0"><div class="cp-h"><span class="cp-t">${T.actionPlan}</span><span class="pill-status pill-g fs-10"><span class="pill-dot"></span>${strategy === 'balanced' ? T.balanced : T.maxImp} • ${usedCredits}/${targetCredits} CH</span></div><div class="cp-b" style="padding:8px 12px">${selected.map((c, i) => `<div class="plan-item"><div><div class="title">${c.course_code}</div><div class="sub">Imp ${Number(c.importance_score || 0).toFixed(1)} • T${c.programme_term ?? '-'} • ${c.credit_hours ?? '-'} CH</div></div><span class="pill-status pill-g fs-10"><span class="pill-dot"></span>#${i + 1}</span></div>`).join('')}</div></div>`
+      ? `<div class="cpanel mb-0"><div class="cp-h"><span class="cp-t">${T.actionPlan}</span><span class="pill-status pill-g fs-10"><span class="pill-dot"></span>${strategy === 'balanced' ? T.balanced : T.maxImp} • ${usedCredits}/${targetCredits} ${T.ch}</span></div><div class="cp-b" style="padding:8px 12px">${selected.map((c, i) => `<div class="plan-item"><div><div class="title">${c.course_code}</div><div class="sub">${T.impShort} ${Number(c.importance_score || 0).toFixed(1)} • ${T.termShort}${c.programme_term ?? '-'} • ${c.credit_hours ?? '-'} ${T.ch}</div></div><span class="pill-status pill-g fs-10"><span class="pill-dot"></span>#${i + 1}</span></div>`).join('')}</div></div>`
       : '';
 
     container.innerHTML = terms.map((termObj) => {
@@ -1302,7 +1371,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
 
     q('studentPlanHints').innerHTML = hints.length
-      ? `<div class="fs-11 fw-semibold text-t3 font-mono" style="margin-bottom:6px; letter-spacing:0.04em">${T.passFirst} <span style="opacity:0.5">${T.clickToFilter}</span></div><div class="d-flex flex-wrap align-items-center" style="gap:6px">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd fs-11" style="padding:4px 12px">Clear</button></div>`
+      ? `<div class="fs-11 fw-semibold text-t3 font-mono" style="margin-bottom:6px; letter-spacing:0.04em">${T.passFirst} <span style="opacity:0.5">${T.clickToFilter}</span></div><div class="d-flex flex-wrap align-items-center" style="gap:6px">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd fs-11" style="padding:4px 12px">${T.clear}</button></div>`
       : '';
 
     document.querySelectorAll('.hint-filter').forEach((el) => {
@@ -1462,7 +1531,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       statusMeta.className = 'meta-banner meta-danger meta-mono mb-10';
       statusMeta.textContent = T.scrapeStatusUnavailable;
       stopScrapeAutoRefresh();
-      notify.error('Failed to refresh scrape status', err.message || String(err));
+      notify.error(T.failedRefreshScrape, err.message || String(err));
       return;
     }
 
@@ -1488,7 +1557,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       statusMeta.textContent = T.scrapeControlUnavailable;
     } else {
       statusMeta.className = 'meta-banner meta-info meta-mono mb-10';
-      statusMeta.textContent = `action=${data.last_action ?? '-'} log=${data.log_path ?? '-'}`;
+      statusMeta.textContent = T.scrapeStatusLine(T.scrapeAction(data.last_action ?? '-'), data.log_path ?? '-');
     }
     q('scrapeUpdatedAt').textContent = `${T.lastUpdate}: ${new Date().toLocaleTimeString()}`;
     const logEl = q('scrapeOut');
@@ -1532,7 +1601,7 @@ const IS_AR = document.documentElement.lang === 'ar';
         const allRows = history.slice().reverse().map((h) => {
           const evt = String(h.event ?? '-');
           const evtPill = evt === 'started' ? 'pill-g' : evt === 'stopped' ? 'pill-a' : evt === 'failed' ? 'pill-r' : 'pill-b';
-          const evtLabel = evt === 'started' ? T.started : evt === 'stopped' ? T.stopped : evt === 'failed' ? T.failed : evt;
+          const evtLabel = evt === 'started' ? T.started : evt === 'stopped' ? T.stopped : evt === 'failed' ? T.failed : T.scrapeAction(evt);
           let source = '-';
           if (h.student_source === 'database') {
             const count = h.student_count === null || h.student_count === undefined ? '' : ` (${h.student_count})`;
@@ -1632,7 +1701,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       if (!res.ok) notify.error(T.failedStartScrape(data.error || res.statusText));
     } catch (err) {
       q('scrapeMeta').textContent = T.failedStartScrape(err);
-      notify.error('Failed to start scrape', err.message || String(err));
+      notify.error(T.failedStartScrapeTitle, err.message || String(err));
     }
     await Promise.all([refreshScrapeStatus(), syncScrapeSourceUi()]);
   };
@@ -1660,7 +1729,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       if (!res.ok) notify.error(T.failedStopScrape(data.error || res.statusText));
     } catch (err) {
       q('scrapeMeta').textContent = T.failedStopScrape(err);
-      notify.error('Failed to stop scrape', err.message || String(err));
+      notify.error(T.failedStopScrapeTitle, err.message || String(err));
     }
     await refreshScrapeStatus();
   };
@@ -1674,11 +1743,11 @@ const IS_AR = document.documentElement.lang === 'ar';
     const resultEl = q('oracleStudentsResult');
 
     if (!fileInput.files.length) {
-      notify.error('Please select an Oracle file.');
+      notify.error(T.oracleSelectFile);
       return;
     }
     if (!program || !section) {
-      notify.error('Program and Section are required.');
+      notify.error(T.oracleProgramSection);
       return;
     }
 
@@ -1689,7 +1758,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     q('oracleStudentsBtn').disabled = true;
     resultEl.classList.remove('d-none');
-    resultEl.textContent = 'Parsing…';
+    resultEl.textContent = T.parsing;
 
     try {
       const res = await fetch('/ops/scrape/oracle-students-csv/', {
@@ -1699,19 +1768,19 @@ const IS_AR = document.documentElement.lang === 'ar';
       });
       const data = await res.json();
       if (data.ok) {
-        resultEl.textContent = `✅ Generated ${data.count} students → ${data.path} (skipped: ${data.skipped})`;
+        resultEl.textContent = T.oracleGenerated(data.count, data.path, data.skipped);
         // The generated file is an explicit CSV scrape source.
         q('scrapeSource').value = 'csv';
         await syncScrapeSourceUi();
         q('scrapeCsv').value = data.path;
-        notify.success(`Student list generated: ${data.count} students`);
+        notify.success(T.studentListGenerated(data.count));
       } else {
         resultEl.textContent = `❌ ${data.error}`;
         notify.error(data.error);
       }
     } catch (err) {
       resultEl.textContent = `❌ ${err.message || err}`;
-      notify.error('Failed to generate CSV', err.message || String(err));
+      notify.error(T.failedGenerateCsv, err.message || String(err));
     } finally {
       q('oracleStudentsBtn').disabled = false;
     }
@@ -1726,7 +1795,7 @@ const IS_AR = document.documentElement.lang === 'ar';
   function requireFields(fieldIds, metaId, label) {
     const missing = fieldIds.filter((id) => !(String(q(id)?.value || '').trim()));
     if (!missing.length) return true;
-    const msg = `${label}: missing required fields (${missing.join(', ')})`;
+    const msg = T.missingRequired(label, missing.map(T.requiredFieldName).join(T.listSep));
     const meta = q(metaId);
     /* A successful run hides its banner; a later validation failure has to
        bring it back or the message lands in a hidden element. */
@@ -1771,7 +1840,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
 
     /* Only reach here on repeated genuine network failures */
-    throw lastNetworkErr || new Error('Network request failed after retries');
+    throw lastNetworkErr || new Error(T.networkRetriesFailed);
   }
 
   function preciseError(res, data, fallback, err) {
@@ -1829,7 +1898,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       ({ res, data } = await fetchJsonWithRetry(url));
     } catch (err) {
       tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${T.networkErrorDebug}</td></tr>`;
-      q('dbgMeta').textContent = preciseError(null, null, 'Unable to load debug report.', err);
+      q('dbgMeta').textContent = preciseError(null, null, T.unableLoadDebug, err);
       q('dbgMeta').className = 'meta-banner meta-danger';
       q('dbgSummary').classList.add('d-none');
       toast(T.debugFailed, false);
@@ -1859,7 +1928,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     if (q('dbgTableCnt')) q('dbgTableCnt').textContent = String(data.count || 0);
     tbody.innerHTML = data.items.map((x) => {
       const tracePayload = encodeURIComponent(JSON.stringify(x.recommendation_details || []));
-      const summary = `Student ${x.student_id} (${x.program})\nReal→Next: ${x.real_term}→${x.next_term}\nRecommended: ${(x.recommended_courses || []).join(', ') || '-'}`;
+      const summary = T.debugSummary(x.student_id, x.program, x.real_term, x.next_term, (x.recommended_courses || []).join(', ') || '-');
       const recList = (x.recommended_courses || []);
       const recHtml = recList.length ? recList.map(r => `<span class="pill-status pill-g fs-10" style="margin:1px"><span class="pill-dot"></span>${r}</span>`).join('') : '<span class="text-t3 fs-11">—</span>';
       return `<tr class="cr-row">
@@ -1869,9 +1938,9 @@ const IS_AR = document.documentElement.lang === 'ar';
         <td class="fs-11">${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
         <td class="fs-11">${(x.studying || []).join(', ') || '-'}</td>
         <td>${recHtml}</td>
-        <td style="white-space:nowrap"><div class="trace-actions"><button type="button" class="trace-btn trace-btn-view dbg-trace" data-trace="${tracePayload}" title="View trace"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>View</button><button type="button" class="trace-btn trace-btn-copy dbg-copy" data-summary="${encodeURIComponent(summary)}" title="Copy summary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>Copy</button></div></td>
+        <td style="white-space:nowrap"><div class="trace-actions"><button type="button" class="trace-btn trace-btn-view dbg-trace" data-trace="${tracePayload}" title="${T.viewTrace}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>${T.view}</button><button type="button" class="trace-btn trace-btn-copy dbg-copy" data-summary="${encodeURIComponent(summary)}" title="${T.copySummary}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>${T.copy}</button></div></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7" class="empty-note">No students matched filters.</td></tr>';
+    }).join('') || `<tr><td colspan="7" class="empty-note">${T.noStudentsMatched}</td></tr>`;
 
     document.querySelectorAll('.dbg-trace').forEach((b) => {
       b.addEventListener('click', () => {
@@ -1881,8 +1950,8 @@ const IS_AR = document.documentElement.lang === 'ar';
         let items = [];
         try { items = JSON.parse(decodeURIComponent(raw)); } catch {}
         body.innerHTML = Array.isArray(items) && items.length
-          ? items.map((it) => `<div class="plan-item"><div class="title">${it.course_code}</div><div class="sub">Prereqs: ${(it.prerequisites || []).join(', ') || 'None'}</div><div class="sub">${(it.prerequisite_status || []).map((s) => `<span class="pill-status ${s.status === 'passed' ? 'pill-g' : s.status === 'studying' ? 'pill-b' : 'pill-r'} fs-10" style="margin:1px"><span class="pill-dot"></span>${s.prerequisite}: ${s.status}</span>`).join(' ') || 'No prerequisite status'}</div></div>`).join('')
-          : '<div class="empty-note">No trace details for this student.</div>';
+          ? items.map((it) => `<div class="plan-item"><div class="title">${it.course_code}</div><div class="sub">${T.prereqsLbl}: ${esc((it.prerequisites || []).join(', ') || T.none)}</div><div class="sub">${it.prerequisite_status && it.prerequisite_status.length ? it.prerequisite_status.map((s) => `<span class="pill-status ${s.status === 'PASSED' ? 'pill-g' : s.status === 'STUDYING' ? 'pill-b' : 'pill-r'} fs-10" style="margin:1px"><span class="pill-dot"></span>${s.prerequisite}: ${esc(T.traceStatus(s.status))}</span>`).join(' ') : T.noPrereqStatus}</div></div>`).join('')
+          : `<div class="empty-note">${T.noTraceDetails}</div>`;
         const modalEl = q('debugTraceModal');
         if (modalEl) openDlgModal(modalEl);
       });
@@ -1893,7 +1962,7 @@ const IS_AR = document.documentElement.lang === 'ar';
         await navigator.clipboard.writeText(s);
         b.classList.add('copied');
         const orig = b.innerHTML;
-        b.innerHTML = '<span class="i i-xxs"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Copied!';
+        b.innerHTML = '<span class="i i-xxs"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.copiedBang;
         setTimeout(() => { b.innerHTML = orig; b.classList.remove('copied'); }, 1500);
         toast(T.debugCopied, true);
       });
@@ -2008,7 +2077,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     try {
       ({ res, data } = await fetchJsonWithRetry(url));
     } catch (err) {
-      q('elMeta').textContent = preciseError(null, null, 'Unable to load eligibility report.', err);
+      q('elMeta').textContent = preciseError(null, null, T.unableLoadEligibility, err);
       q('elMeta').className = 'meta-banner meta-danger';
       q('elSummary').classList.add('d-none');
       tbody.innerHTML = `<tr><td class="text-danger">${T.networkErrorEligibility}</td></tr>`;
@@ -2037,7 +2106,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('elMeta').textContent = '';
     q('elMeta').className = 'meta-banner meta-info d-none';
     q('elCount').textContent = String(eligibleIds.length);
-    q('elModeBadge').textContent = data.strict_passed_only ? 'strict' : 'relaxed';
+    q('elModeBadge').textContent = T.modeLabel(data.strict_passed_only ? 'strict' : 'relaxed');
     q('elCourseBadge').textContent = String(data.course_code || '-');
     q('elSummary').classList.remove('d-none');
     if (q('elTableCnt')) q('elTableCnt').textContent = String(eligibleIds.length);
@@ -2058,13 +2127,13 @@ const IS_AR = document.documentElement.lang === 'ar';
     try {
       const { res, data } = await fetchJsonWithRetry('/report/advisors/');
       if (!res.ok || !Array.isArray(data.items)) {
-        q('advMeta').textContent = preciseError(res, data, 'Failed to load advisors list.');
+        q('advMeta').textContent = preciseError(res, data, T.failedLoadAdvisors);
         return;
       }
       sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` + data.items.map((a) => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
       if (selectAdvisorId) sel.value = selectAdvisorId;
     } catch (err) {
-      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      q('advMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
     }
   }
 
@@ -2125,7 +2194,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       if (!email) setAdvisorFieldError('advEmail', 'advEmailErr', T.emailReq);
       if (!department) setAdvisorFieldError('advDept', 'advDeptErr', T.deptReqShort);
       q('advMeta').textContent = T.fixFieldsRetry;
-      toast('Advisor save failed', false);
+      toast(T.advisorSaveFailed, false);
       return;
     }
 
@@ -2133,7 +2202,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     if (!emailOk) {
       setAdvisorFieldError('advEmail', 'advEmailErr', T.emailFormatError);
       q('advMeta').textContent = T.fixFieldsRetry;
-      toast('Advisor save failed', false);
+      toast(T.advisorSaveFailed, false);
       return;
     }
 
@@ -2149,18 +2218,18 @@ const IS_AR = document.documentElement.lang === 'ar';
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = preciseError(res, data, 'Failed to save advisor.');
+        const msg = preciseError(res, data, T.failedSaveAdvisor);
         mapAdvisorSaveErrorToFields(msg);
         q('advMeta').textContent = msg;
-        toast('Advisor save failed', false);
+        toast(T.advisorSaveFailed, false);
         return;
       }
       q('advMeta').textContent = T.advisorSaved(advisor_id, full_name);
       toast(T.advisorSavedToast, true);
       await refreshAdvisorsDropdown(advisor_id);
     } catch (err) {
-      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      toast('Advisor save failed', false);
+      q('advMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
+      toast(T.advisorSaveFailed, false);
     } finally {
       btn.disabled = false;
       btn.textContent = T.saveAdvisor;
@@ -2183,7 +2252,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('advMeta').textContent = data.added ? T.columnCreated : T.columnExists;
       toast(T.columnReady, true);
     } catch (err) {
-      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      q('advMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
       toast(T.enableColumnFailed, false);
     } finally {
       btn.disabled = false;
@@ -2208,18 +2277,18 @@ const IS_AR = document.documentElement.lang === 'ar';
       });
       const data = await res.json();
       if (!res.ok) {
-        q('advMeta').textContent = preciseError(res, data, 'Seed advisors failed.');
-        outputEl.textContent = data.error || 'Unknown error';
+        q('advMeta').textContent = preciseError(res, data, T.seedFailedMeta);
+        outputEl.textContent = data.error || T.unknownError;
         toast(IS_AR ? 'فشل بذر المرشدين' : 'Seed advisors failed', false);
         return;
       }
       q('advMeta').textContent = IS_AR ? 'تم بذر المرشدين بنجاح' : 'Advisors seeded successfully';
-      outputEl.textContent = data.output || 'Done';
+      outputEl.textContent = data.output || T.done;
       toast(IS_AR ? 'تم بذر المرشدين' : 'Advisors seeded', true);
       await refreshAdvisorsDropdown();
     } catch (err) {
-      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      outputEl.textContent = err.message || 'Network error';
+      q('advMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
+      outputEl.textContent = err.message || T.networkError;
       toast(IS_AR ? 'فشل بذر المرشدين' : 'Seed advisors failed', false);
     } finally {
       btn.disabled = false;
@@ -2253,7 +2322,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('advMeta').textContent = T.mappingApplied(data.updated, data.errors_count);
       toast(T.mappingAppliedToast, true);
     } catch (err) {
-      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      q('advMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
       toast(T.mappingFailed, false);
     } finally {
       btn.disabled = false;
@@ -2291,7 +2360,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('advMeta').textContent = T.assignResult(sid, aidRaw, data.updated, data.errors_count);
       toast(T.studentAssigned, true);
     } catch (err) {
-      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      q('advMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
       toast(T.singleAssignFailed, false);
     } finally {
       btn.disabled = false;
@@ -2333,8 +2402,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     try {
       ({ res, data } = await fetchJsonWithRetry(url));
     } catch (err) {
-      q('hpMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Network error while loading report.</td></tr>';
+      q('hpMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
+      tbody.innerHTML = `<tr><td colspan="5" class="text-danger">${T.networkErrorReport}</td></tr>`;
       requestSidebarBadgeUpdate();
       toast(T.hpFailed, false);
       btn.disabled = false;
@@ -2342,8 +2411,8 @@ const IS_AR = document.documentElement.lang === 'ar';
       return;
     }
     if (!res.ok || !Array.isArray(data.items)) {
-      q('hpMeta').textContent = preciseError(res, data, 'Failed to load report.');
-      tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Failed to load report.</td></tr>';
+      q('hpMeta').textContent = preciseError(res, data, T.failedLoadReport);
+      tbody.innerHTML = `<tr><td colspan="5" class="text-danger">${T.failedLoadReport}</td></tr>`;
       requestSidebarBadgeUpdate();
       btn.disabled = false;
       btn.textContent = T.runReport;
@@ -2394,7 +2463,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     b.addEventListener('click', async () => {
       const id = b.getAttribute('data-link-id') || '';
       if (!id) return;
-      await copyLinkFrom(id, 'Export link');
+      await copyLinkFrom(id, T.exportLink);
     });
   });
 
@@ -2482,7 +2551,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       const missing = exportMissingFields(a.href);
       if (missing.length) {
         ev.preventDefault();
-        toast(T.exportBlocked(missing.join(', ')), false);
+        toast(T.exportBlocked(missing.map(T.exportField).join(T.listSep)), false);
         return;
       }
       // Let the browser handle download directly to preserve server filename.
@@ -2593,7 +2662,7 @@ const IS_AR = document.documentElement.lang === 'ar';
         '</span>' +
         '<span class="tbl-pager-size d-flex align-items-center" style="gap:4px">' +
           '<label for="' + pagerId + 'Sel" style="margin:0;font-weight:400">' + (isAr ? '\u0635\u0641\u0648\u0641' : 'Rows') + ':</label>' +
-          '<select id="' + pagerId + 'Sel" aria-label="Rows per page">' +
+          '<select id="' + pagerId + 'Sel" aria-label="' + T.rowsPerPage + '">' +
             '<option value="10"' + (rowsPerPage === 10 ? ' selected' : '') + '>10</option>' +
             '<option value="25"' + (rowsPerPage === 25 ? ' selected' : '') + '>25</option>' +
             '<option value="50"' + (rowsPerPage === 50 ? ' selected' : '') + '>50</option>' +
@@ -2746,8 +2815,8 @@ const IS_AR = document.documentElement.lang === 'ar';
       const earnedCredits = allCourses.filter(c => c.status === 'passed').reduce((a, c) => a + (Number(c.credit_hours) || 0), 0);
       const totalCredits = allCourses.reduce((a, c) => a + (Number(c.credit_hours) || 0), 0);
 
-      q('studentCtxEarned').textContent = String(earnedCredits) + ' CH';
-      q('studentCtxRemaining').textContent = String(totalCredits - earnedCredits) + ' CH';
+      q('studentCtxEarned').textContent = String(earnedCredits) + ' ' + T.ch;
+      q('studentCtxRemaining').textContent = String(totalCredits - earnedCredits) + ' ' + T.ch;
       q('studentCtxPrereqMet').textContent = String(passed);
       q('studentCtxPrereqPending').textContent = String(locked);
 

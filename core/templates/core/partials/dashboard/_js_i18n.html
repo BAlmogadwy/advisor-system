@@ -469,7 +469,11 @@
     if (!chip) return;
     const observer = new MutationObserver(() => {
       const meta = q('studentPlanMeta');
-      if (meta && meta.textContent && meta.textContent.includes('Student')) {
+      // T.studentMeta writes «الطالب …» in Arabic, which never contains
+      // 'Student'. startsWith, not includes: the Arabic error lines
+      // («أدخل رقم الطالب أولاً.») contain the word but are not a student.
+      const text = meta ? meta.textContent : '';
+      if (text && (IS_AR ? text.startsWith('الطالب ') : text.includes('Student'))) {
         chip.textContent = meta.textContent.split('•')[0].trim();
         chip.classList.remove('d-none');
       }
@@ -687,7 +691,7 @@
       const sbExport = document.querySelector('.sb-badge-export');
       const exportReady = Boolean(q('exStudentCsv')?.href?.includes('?'));
       if (sbExport) {
-        sbExport.textContent = exportReady ? 'Ready' : '';
+        sbExport.textContent = exportReady ? (IS_AR ? 'جاهز' : 'Ready') : '';
         sbExport.className = 'nav-badge sidebar-badge ready';
         sbExport.style.display = exportReady ? '' : 'none';
       }

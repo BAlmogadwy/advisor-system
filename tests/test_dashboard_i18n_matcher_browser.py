@@ -17,6 +17,7 @@ than a Python copy of it: a copy would keep passing while the real page broke.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -394,6 +395,11 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
             # Values the page interpolates are data beside Arabic, not labels.
             if "@" in text or ADMIN_USERNAME in text:
                 continue
+            # A file path the scrape status line shows: data, isolated in Latin.
+            if re.search(r"[A-Za-z]:\\|/[\w.-]+/", text):
+                continue
+            # Notation: the d of the decay curves "(1/d)" and "(1/√d)".
+            text = re.sub(r"\(1/√?d\)", "", text)
             stray = [
                 run
                 for run, lone_after_number in (
@@ -422,6 +428,75 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
 
         assert offenders == [], "half-translated labels on the page:\n" + "\n".join(
             f"  {text!r} -- stray {stray}" for text, stray in offenders
+        )
+
+    def test_no_panel_renders_a_label_wholly_in_english(self) -> None:
+        """The test above only sees a label that MIXES Arabic with English.
+
+        A label left wholly in English passed it: in 2026-11 the Arabic
+        dashboard still showed "Run preview", "Debug Details", "Download" and
+        about a hundred more across nine panels, because the walker cannot
+        reach an icon-and-text button or a hint with a <strong>. Text nodes
+        are read here, not leaf elements, so the words beside an icon count,
+        and so do placeholders, titles, aria-labels and options.
+        """
+        panels = [
+            "batch",
+            "debug",
+            "prereq",
+            "eligibility",
+            "highpriority",
+            "exports",
+            "scrape",
+            "advisoradmin",
+            "student",
+            "conflictmatrix",
+            "plan",
+        ]
+        context, page = self._arabic_dashboard()
+        try:
+            strings = page.evaluate(
+                """(ids) => {
+                    const out = [];
+                    for (const id of ids) {
+                      const root = document.getElementById(id);
+                      if (!root) { out.push([id, "MISSING PANEL"]); continue; }
+                      const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                      while (tw.nextNode()) {
+                        const p = tw.currentNode.parentElement;
+                        if (!p || ["SCRIPT", "STYLE"].includes(p.tagName) || p.closest("svg")) continue;
+                        const t = tw.currentNode.nodeValue.replace(/\\s+/g, " ").trim();
+                        if (t) out.push([id, t]);
+                      }
+                      root.querySelectorAll("[placeholder],[title],[aria-label]").forEach(el => {
+                        for (const a of ["placeholder", "title", "aria-label"]) {
+                          const v = (el.getAttribute(a) || "").trim();
+                          if (v) out.push([id, v]);
+                        }
+                      });
+                    }
+                    return out;
+                }""",
+                panels,
+            )
+        finally:
+            context.close()
+
+        offenders = []
+        for panel, text in strings:
+            if ARABIC.search(text) or "@" in text or ADMIN_USERNAME in text:
+                continue
+            words = [
+                run
+                for run in re.findall(r"[A-Za-z][A-Za-z0-9.+_-]*", text)
+                if run.rstrip(".") not in ALLOWED_LATIN
+                and not re.fullmatch(r"[A-Z]{1,}[0-9]*", run)  # codes, ids: CS101, A001
+                and "_" not in run
+            ]
+            if words:
+                offenders.append((panel, text))
+        assert offenders == [], "labels still wholly English in Arabic:\n" + "\n".join(
+            f"  #{panel}: {text!r}" for panel, text in offenders
         )
 
     def test_the_panel_empty_states_render_arabic(self) -> None:
@@ -465,6 +540,70 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
         table = ARABIC_FOR_EMPTY_STATES
         missing = [ar for ar in table if ar not in found["leaves"]]
         assert missing == [], f"Arabic captions not rendered: {missing}"
+
+    def test_the_debug_trace_colours_each_prerequisite_by_its_status(self) -> None:
+        """A passed prerequisite is green, one being studied blue, a missing one red.
+
+        The trace's statuses come from debug_reporting.py in upper case
+        (PASSED / STUDYING / MISSING). Until 2026-11 the pill compared them with
+        lower-case 'passed' / 'studying', so every pill rendered red, even for
+        a prerequisite the student had passed.
+        """
+        trace = [
+            {
+                "course_code": "CS210",
+                "prerequisites": ["CS101", "CS102", "MATH101"],
+                "prerequisite_status": [
+                    {"prerequisite": "CS101", "status": "PASSED"},
+                    {"prerequisite": "CS102", "status": "STUDYING"},
+                    {"prerequisite": "MATH101", "status": "MISSING"},
+                ],
+            }
+        ]
+        payload = {
+            "count": 1,
+            "items": [
+                {
+                    "student_id": "4400001",
+                    "program": "CS",
+                    "real_term": 3,
+                    "next_term": 4,
+                    "passed": ["CS101"],
+                    "studying": ["CS102"],
+                    "recommended_courses": ["CS210"],
+                    "recommendation_details": trace,
+                }
+            ],
+        }
+        context, page = self._arabic_dashboard()
+        try:
+            page.route(
+                "**/report/recommendation-debug/**",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(payload),
+                ),
+            )
+            page.evaluate("() => { location.hash = 'debug'; }")
+            page.fill("#dbgYear", "1447")
+            page.fill("#dbgSemester", "1")
+            page.click("#dbgRun")
+            page.click("#dbgTable .dbg-trace")
+            page.wait_for_selector("#debugTraceBody .pill-status")
+            pills = page.evaluate(
+                """() => [...document.querySelectorAll('#debugTraceBody .pill-status')]
+                    .map(el => [el.textContent.split(':')[0].trim(),
+                                ['pill-g', 'pill-b', 'pill-r'].filter(c => el.classList.contains(c))])"""
+            )
+        finally:
+            context.close()
+
+        assert pills == [
+            ["CS101", ["pill-g"]],
+            ["CS102", ["pill-b"]],
+            ["MATH101", ["pill-r"]],
+        ]
 
     def test_the_table_has_no_duplicate_keys(self) -> None:
         """Two entries for one key means one Arabic string is dead weight."""

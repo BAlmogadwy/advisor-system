@@ -13,12 +13,12 @@
         <div class="adm-step-line adm-step-line-inactive"></div>
         <div class="adm-step adm-step-inactive" id="admStep3">
           <div class="adm-step-circle">3</div>
-          <div class="adm-step-label">Single Assign</div>
+          <div class="adm-step-label">{% if LANGUAGE_CODE == 'ar' %}ربط فردي{% else %}Single Assign{% endif %}</div>
         </div>
       </div>
 
       <div class="advisor-block">
-        <h3><span class="badge text-bg-primary">Step 1</span> Create / Update Advisor Profile</h3>
+        <h3><span class="badge text-bg-primary">{% if LANGUAGE_CODE == 'ar' %}الخطوة 1{% else %}Step 1{% endif %}</span> {% if LANGUAGE_CODE == 'ar' %}إنشاء/تحديث ملف المرشد{% else %}Create / Update Advisor Profile{% endif %}</h3>
         <div class="small text-secondary mb-2">Use a unique advisor ID and valid institutional email.</div>
         <div class="field-row fb-fit">
           <div class="flex-field" style="min-width:110px">
@@ -28,17 +28,17 @@
           </div>
           <div style="flex:1.5;min-width:150px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الاسم الكامل{% else %}Full name{% endif %}</label>
-            <div class="fb-search fb-search-full"><input id="advName" placeholder="Dr. Name" maxlength="120" aria-label="Advisor name"></div>
+            <div class="fb-search fb-search-full"><input id="advName" placeholder="Dr. Name" maxlength="120" aria-label="{% if LANGUAGE_CODE == 'ar' %}اسم المرشد{% else %}Advisor name{% endif %}"></div>
             <div id="advNameErr" class="field-error"></div>
           </div>
           <div style="flex:1.5;min-width:160px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البريد الإلكتروني{% else %}Email{% endif %}</label>
-            <div class="fb-search fb-search-full"><input id="advEmail" type="email" placeholder="advisor@uni.edu" maxlength="120" aria-label="Advisor email"></div>
+            <div class="fb-search fb-search-full"><input id="advEmail" type="email" placeholder="advisor@uni.edu" maxlength="120" aria-label="{% if LANGUAGE_CODE == 'ar' %}البريد الإلكتروني للمرشد{% else %}Advisor email{% endif %}"></div>
             <div id="advEmailErr" class="field-error"></div>
           </div>
           <div class="flex-field" style="min-width:110px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</label>
-            <div class="fb-search fb-search-full"><input id="advDept" placeholder="CS,AI" maxlength="120" aria-label="Departments"></div>
+            <div class="fb-search fb-search-full"><input id="advDept" placeholder="CS,AI" maxlength="120" aria-label="{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}"></div>
             <div id="advDeptErr" class="field-error"></div>
           </div>
           <div class="field-action"><button id="advSave" class="btn btn-primary">Save advisor</button></div>
@@ -46,13 +46,13 @@
       </div>
 
       <div class="advisor-block">
-        <h3><span class="badge text-bg-primary">Step 2</span> Bulk Mapping</h3>
+        <h3><span class="badge text-bg-primary">{% if LANGUAGE_CODE == 'ar' %}الخطوة 2{% else %}Step 2{% endif %}</span> {% if LANGUAGE_CODE == 'ar' %}ربط جماعي{% else %}Bulk Mapping{% endif %}</h3>
         <div class="small text-secondary mb-2">Paste CSV rows to map many students at once.</div>
         <div class="field-row-mt">
           <div style="flex:0 0 auto"><button id="advEnsureColumn" class="fb-dd btn-adv-ensure">Enable students.advisor_id</button></div>
           <div class="flex-field" style="min-width:220px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ربط جماعي CSV (student_id,advisor_id){% else %}Bulk assign CSV (student_id,advisor_id){% endif %}</label>
-            <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="Assignment CSV data" class="adv-textarea"></textarea>
+            <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="{% if LANGUAGE_CODE == 'ar' %}بيانات الربط بصيغة CSV{% else %}Assignment CSV data{% endif %}" class="adv-textarea"></textarea>
           </div>
         </div>
         <div class="mt-8">
@@ -61,7 +61,7 @@
       </div>
 
       <div class="advisor-block">
-        <h3><span class="badge text-bg-primary">Step 3</span> Quick Single Assignment</h3>
+        <h3><span class="badge text-bg-primary">{% if LANGUAGE_CODE == 'ar' %}الخطوة 3{% else %}Step 3{% endif %}</span> {% if LANGUAGE_CODE == 'ar' %}ربط فردي سريع{% else %}Quick Single Assignment{% endif %}</h3>
         <div class="small text-secondary mb-2">Use for quick corrections without re-uploading CSV.</div>
         <div class="field-row-mt">
           <div class="flex-field">
@@ -85,6 +85,6 @@
         <pre id="advSeedOutput" class="small text-secondary mt-8 d-none" style="max-height:200px; overflow-y:auto; white-space:pre-wrap; font-family:monospace"></pre>
       </div>
 
-      <div id="advMeta" class="small text-secondary mt-2">No advisor action yet.</div>
+      <div id="advMeta" class="small text-secondary mt-2">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No advisor action yet.{% endif %}</div>
 
     </div>

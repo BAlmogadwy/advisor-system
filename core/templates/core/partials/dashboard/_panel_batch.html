@@ -6,8 +6,8 @@
         <div class="fb-search"><input id="batchSection" class="fb-w-16ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}"></div>
         <div class="fb-search"><select id="batchMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع المتطلبات السابقة{% else %}Prerequisite mode{% endif %}"><option value="strict" selected>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
         <div class="fb-actions">
-          <button id="runBatch" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
-          <button id="resetBatch" type="button" class="btn btn-outline-secondary">Reset</button>
+          <button id="runBatch" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تشغيل المعاينة{% else %}Run preview{% endif %}</button>
+          <button id="resetBatch" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إعادة ضبط{% else %}Reset{% endif %}</button>
         </div>
       </div>
       <div id="batchProgressWrap" class="batch-progress d-none">
@@ -16,20 +16,20 @@
 
       <div class="row g-2 mt-3 mb-2 d-none" id="batchMetrics">
         <div class="col-md-3"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Year / Semester</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}السنة / الفصل{% else %}Year / Semester{% endif %}</div></div>
           <div class="mc-val" id="batchMetricTerm">-</div>
         </div></div>
         <div class="col-md-3"><div class="mc mc-teal mc-hero">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students Scanned</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}عدد الطلاب المفحوصين{% else %}Students Scanned{% endif %}</div></div>
           <div class="mc-val" id="batchMetricStudents">0</div>
         </div></div>
         <div class="col-md-3"><div class="mc mc-sky">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></div><div class="mc-lbl">Top List Size</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}حجم قائمة الأعلى{% else %}Top List Size{% endif %}</div></div>
           <div class="mc-val" id="batchMetricTopCount">0</div>
         </div></div>
         <div class="col-md-3"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06-.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div><div class="mc-lbl">Mode</div></div>
-          <div class="mc-val mc-val-sm" id="batchMetricMode">strict</div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06-.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}الوضع{% else %}Mode{% endif %}</div></div>
+          <div class="mc-val mc-val-sm" id="batchMetricMode">{% if LANGUAGE_CODE == 'ar' %}صارم{% else %}strict{% endif %}</div>
         </div></div>
       </div>
 
@@ -43,20 +43,20 @@
 
       <div class="mb-6">
         <table class="tbl-card" id="batchTable">
-          <thead><tr><th scope="col" data-sort="num">#</th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="text">Course Name</th><th scope="col" data-sort="num">Count</th><th scope="col">Share</th></tr></thead>
-          <tbody><tr><td colspan="5"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
+          <thead><tr><th scope="col" data-sort="num">#</th><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course Name{% endif %}</th><th scope="col" data-sort="num">{% if LANGUAGE_CODE == 'ar' %}العدد{% else %}Count{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}النسبة{% else %}Share{% endif %}</th></tr></thead>
+          <tbody><tr><td colspan="5"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات حتى الآن{% else %}No batch data yet{% endif %}</div><div class="ap-empty-hint">{% if LANGUAGE_CODE == 'ar' %}يُرجى تحديد السنة والفصل أعلاه، ثم الضغط على <strong>تشغيل المعاينة</strong>{% else %}Set Year &amp; Semester above, then click <strong>Run preview</strong>{% endif %}</div></div></td></tr></tbody>
         </table>
       </div>
-      <nav class="tbl-pager" id="batchPager" aria-label="Batch table pagination"></nav>
+      <nav class="tbl-pager" id="batchPager" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفح جدول الدفعة{% else %}Batch table pagination{% endif %}"></nav>
 
       <div class="cpanel mt-3">
         <div class="cp-h">
           <span class="i i-faint"><svg viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/></svg></span>
-          <div class="cp-t">Top Recommendations</div>
-          <span class="cp-live">LIVE</span>
+          <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}أعلى التوصيات{% else %}Top Recommendations{% endif %}</div>
+          <span class="cp-live">{% if LANGUAGE_CODE == 'ar' %}مباشر{% else %}LIVE{% endif %}</span>
         </div>
         <div class="cp-b" id="batchTopChips">
-          <div class="empty-note">Run a batch preview to see top course recommendations.</div>
+          <div class="empty-note">{% if LANGUAGE_CODE == 'ar' %}شغّل المعاينة لعرض أفضل المقررات الموصى بها.{% else %}Run a batch preview to see top course recommendations.{% endif %}</div>
         </div>
       </div>
     </div>

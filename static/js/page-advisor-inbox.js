@@ -12,6 +12,16 @@
   const url = root.dataset.actionUrl;
   const errorEl = root.querySelector('.ai-action-error');
 
+  /* Every word this script writes, by page language. The server's own refusals
+     arrive already in the page's language; these are only for when it says nothing. */
+  const IS_AR = document.documentElement.lang === 'ar';
+  const T = {
+    notSent: IS_AR
+      ? 'تعذّر إرسال الإجراء، ولم يُجرَ أي تغيير.'
+      : 'The action could not be sent. Nothing was changed.',
+    refused: IS_AR ? 'رُفض الإجراء.' : 'The action was refused.',
+  };
+
   function csrf() {
     const field = root.querySelector('[name=csrfmiddlewaretoken]');
     if (field) return field.value;
@@ -44,7 +54,7 @@
       });
     } catch (e) {
       button.disabled = false;
-      fail('The action could not be sent. Nothing was changed.');
+      fail(T.notSent);
       return;
     }
 
@@ -55,7 +65,7 @@
       button.disabled = false;
       /* The server's reason, not a generic one: "record a reply before resolving"
          is the difference between a blocked click and an unexplained one. */
-      fail((payload && payload.error) || 'The action was refused.');
+      fail((payload && payload.error) || T.refused);
       return;
     }
 

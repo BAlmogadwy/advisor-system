@@ -1,5 +1,57 @@
 (function () {
   const cfg = window.virtualAdvisorConfig || {};
+  // Every word this script writes, in the page's language (Arabic when <html lang="ar">).
+  const IS_AR = document.documentElement.lang === 'ar';
+  const T = {
+    thinking: IS_AR ? 'جارٍ التفكير…' : 'Thinking...',
+    ask: IS_AR ? 'إرسال' : 'Ask',
+    checkingTools: IS_AR ? 'جارٍ فحص أدوات البيانات المتحقَّق منها…' : 'Checking verified data tools...',
+    you: IS_AR ? 'أنت' : 'You',
+    generalMode: IS_AR ? 'وضع الإرشاد العام. يُرجى إدخال الرقم الجامعي لاستخدام سياق متحقَّق منه للطالب.' : 'General advisor mode. Add a student ID for verified student context.',
+    ctxStudent: IS_AR ? 'الطالب' : 'Student',
+    ctxProgram: IS_AR ? 'البرنامج' : 'Program',
+    ctxSection: IS_AR ? 'الشعبة' : 'Section',
+    ctxGpa: IS_AR ? 'المعدل' : 'GPA',
+    ctxEarned: IS_AR ? 'الساعات المعتمدة المكتسبة' : 'Earned credits',
+    ctxPassed: IS_AR ? 'المقررات المجتازة' : 'Passed courses',
+    ctxRegistered: IS_AR ? 'المقررات المسجّلة هذا الفصل' : 'Registered this term',
+    ctxRemaining: IS_AR ? 'المتطلبات المتبقية' : 'Remaining requirements',
+    ctxRecommendations: IS_AR ? 'التوصيات' : 'Recommendations',
+    noFilters: IS_AR ? 'لا توجد مرشحات' : 'No filters',
+    advisorScope: IS_AR ? 'نطاق المرشد: ' : 'Advisor scope ',
+    departmentScope: IS_AR ? 'نطاق القسم: ' : 'Department scope ',
+    superAdminScope: IS_AR ? 'نطاق المشرف العام' : 'Super admin scope',
+    matchedPre: IS_AR ? 'المطابقون: ' : '',
+    matchedPost: IS_AR ? '' : ' matched',
+    shownPre: IS_AR ? 'المعروضون: ' : '',
+    shownPost: IS_AR ? '' : ' shown',
+    truncatedPre: IS_AR ? 'النتائج مقتطَعة: ' : '',
+    truncatedPost: IS_AR ? '' : ' truncated',
+    yes: IS_AR ? 'نعم' : 'Yes',
+    no: IS_AR ? 'لا' : 'No',
+    thId: IS_AR ? 'الرقم الجامعي' : 'ID',
+    thName: IS_AR ? 'الاسم' : 'Name',
+    thProgram: IS_AR ? 'البرنامج' : 'Program',
+    thGpa: IS_AR ? 'المعدل' : 'GPA',
+    thEarned: IS_AR ? 'المكتسبة' : 'Earned',
+    thCurrent: IS_AR ? 'الحالية' : 'Current',
+    thAdvisor: IS_AR ? 'المرشد' : 'Advisor',
+    noMatch: IS_AR ? 'لم يطابق هذا الاستعلام أي طالب في البيانات المتحقَّق منها.' : 'No verified students matched this query.',
+    noTool: IS_AR ? 'لم تكن أي أداة بيانات متحقَّق منها لازمة للإجابة الأخيرة.' : 'No verified data tool was needed for the latest answer.',
+    findStudents: IS_AR ? 'البحث عن الطلاب' : 'Find Students',
+    verifiedResult: IS_AR ? 'نتيجة متحقَّق منها' : 'Verified result',
+    toolError: IS_AR ? 'خطأ في الأداة' : 'Tool error',
+    serverUnreachable: IS_AR ? 'تعذّر الوصول إلى خادم النموذج المحلي.' : 'Local model server is not reachable.',
+    modelsVisiblePre: IS_AR ? 'عدد النماذج الظاهرة: ' : '',
+    modelVisible: IS_AR ? '' : ' model visible',
+    modelsVisible: IS_AR ? '' : ' models visible',
+    autoModel: IS_AR ? 'النموذج المحمَّل تلقائيًا' : 'Auto loaded model',
+    contactFailed: IS_AR ? 'تعذّر الاتصال بخادم النموذج المحلي.' : 'Could not contact local model server.',
+    previewFailed: IS_AR ? 'تعذّرت معاينة الأدوات المتحقَّق منها، وقد تتضمن الإجابة النهائية الأدلة مع ذلك.' : 'Verified tool preview failed. The final answer may still include evidence.',
+    noAnswer: IS_AR ? 'تعذّر على المرشد المحلي الإجابة.' : 'The local advisor could not answer.',
+    requestFailed: IS_AR ? 'تعذّر إرسال الطلب إلى المرشد المحلي. يُرجى التحقق من تشغيل LM Studio ثم إعادة المحاولة.' : 'The local advisor request failed. Check LM Studio and try again.',
+    cleared: IS_AR ? 'تم مسح المحادثة. يمكن طرح سؤال جديد عند الاستعداد.' : 'Conversation cleared. Ask a fresh question when ready.',
+  };
   const statusEl = document.getElementById('vaStatus');
   const modelEl = document.getElementById('vaModel');
   const formEl = document.getElementById('vaForm');
@@ -12,41 +64,52 @@
   const history = [];
   let lastToolRows = [];
 
-  function setStatus(ok, text) {
+  // `detail` is a technical name (an exception class) the server sends with an
+  // Arabic sentence: it stays Latin, isolated left-to-right, after the sentence.
+  function fillText(el, text, detail) {
+    el.textContent = text;
+    if (!detail) return;
+    const bdi = document.createElement('bdi');
+    bdi.dir = 'ltr';
+    bdi.textContent = String(detail);
+    el.append(' (', bdi, ').');
+  }
+
+  function setStatus(ok, text, detail) {
     if (!statusEl) return;
     statusEl.classList.toggle('is-ok', !!ok);
     statusEl.classList.toggle('is-bad', !ok);
     const label = statusEl.querySelector('span:last-child');
-    if (label) label.textContent = text;
+    if (label) fillText(label, text, detail);
   }
 
   function setBusy(isBusy) {
     if (sendBtn) {
       sendBtn.disabled = isBusy;
-      sendBtn.textContent = isBusy ? 'Thinking...' : 'Ask';
+      sendBtn.textContent = isBusy ? T.thinking : T.ask;
     }
   }
 
   function setToolPreviewBusy(isBusy) {
     if (!toolResultsEl) return;
     if (isBusy) {
-      toolResultsEl.innerHTML = '<div class="va-tool-loading">Checking verified data tools...</div>';
+      toolResultsEl.innerHTML = `<div class="va-tool-loading">${T.checkingTools}</div>`;
       if (downloadBtn) downloadBtn.disabled = true;
     }
   }
 
-  function appendMessage(role, content) {
+  function appendMessage(role, content, detail) {
     if (!messagesEl) return;
     const article = document.createElement('article');
     article.className = `va-message va-message-${role}`;
 
     const avatar = document.createElement('div');
     avatar.className = 'va-avatar';
-    avatar.textContent = role === 'user' ? 'You' : 'AI';
+    avatar.textContent = role === 'user' ? T.you : 'AI';
 
     const bubble = document.createElement('div');
     bubble.className = 'va-bubble';
-    bubble.textContent = content;
+    fillText(bubble, content, detail);
 
     article.appendChild(avatar);
     article.appendChild(bubble);
@@ -57,20 +120,20 @@
   function updateContextSummary(summary) {
     if (!contextEl || !summary) return;
     if (summary.mode !== 'student') {
-      contextEl.textContent = 'General advisor mode. Add a student ID for verified student context.';
+      contextEl.textContent = T.generalMode;
       return;
     }
     contextEl.innerHTML = '';
     [
-      ['Student', summary.student_id],
-      ['Program', summary.program || '-'],
-      ['Section', summary.section || '-'],
-      ['GPA', summary.gpa ?? '-'],
-      ['Earned credits', summary.total_earned_credits ?? '-'],
-      ['Passed courses', summary.passed_count ?? 0],
-      ['Registered this term', summary.current_registration_count ?? summary.studying_count ?? 0],
-      ['Remaining requirements', summary.remaining_requirement_count ?? '-'],
-      ['Recommendations', summary.recommendation_count ?? 0],
+      [T.ctxStudent, summary.student_id],
+      [T.ctxProgram, summary.program || '-'],
+      [T.ctxSection, summary.section || '-'],
+      [T.ctxGpa, summary.gpa ?? '-'],
+      [T.ctxEarned, summary.total_earned_credits ?? '-'],
+      [T.ctxPassed, summary.passed_count ?? 0],
+      [T.ctxRegistered, summary.current_registration_count ?? summary.studying_count ?? 0],
+      [T.ctxRemaining, summary.remaining_requirement_count ?? '-'],
+      [T.ctxRecommendations, summary.recommendation_count ?? 0],
     ].forEach(([label, value]) => {
       const row = document.createElement('div');
       row.className = 'va-context-row';
@@ -137,18 +200,18 @@
     const students = result.students || [];
     const filterText = Object.entries(filters)
       .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-      .join(' | ') || 'No filters';
+      .join(' | ') || T.noFilters;
     const scope = result.scope_applied || {};
     const scopeText = scope.role === 'ADVISOR'
-      ? `Advisor scope ${scope.advisor_id || '-'}`
+      ? `${T.advisorScope}${scope.advisor_id || '-'}`
       : scope.role === 'GENERAL_ACADEMIC_ADVISOR'
-        ? `Department scope ${(scope.departments || []).join(', ') || '-'}`
-        : 'Super admin scope';
+        ? `${T.departmentScope}${(scope.departments || []).join(', ') || '-'}`
+        : T.superAdminScope;
     return `
       <div class="va-tool-summary">
-        <span><b>${result.count ?? 0}</b> matched</span>
-        <span><b>${result.returned ?? 0}</b> shown</span>
-        <span><b>${result.truncated ? 'Yes' : 'No'}</b> truncated</span>
+        <span>${T.matchedPre}<b>${result.count ?? 0}</b>${T.matchedPost}</span>
+        <span>${T.shownPre}<b>${result.returned ?? 0}</b>${T.shownPost}</span>
+        <span>${T.truncatedPre}<b>${result.truncated ? T.yes : T.no}</b>${T.truncatedPost}</span>
       </div>
       <div class="va-tool-meta">
         <span>${escHtml(filterText)}</span>
@@ -158,13 +221,13 @@
         <table class="va-tool-table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Program</th>
-              <th>GPA</th>
-              <th>Earned</th>
-              <th>Current</th>
-              <th>Advisor</th>
+              <th>${T.thId}</th>
+              <th>${T.thName}</th>
+              <th>${T.thProgram}</th>
+              <th>${T.thGpa}</th>
+              <th>${T.thEarned}</th>
+              <th>${T.thCurrent}</th>
+              <th>${T.thAdvisor}</th>
             </tr>
           </thead>
           <tbody>
@@ -178,7 +241,7 @@
                 <td>${escHtml(student.current_registered_credits ?? '-')}</td>
                 <td>${escHtml(student.advisor_id || '-')}</td>
               </tr>
-            `).join('') : '<tr><td colspan="7">No verified students matched this query.</td></tr>'}
+            `).join('') : `<tr><td colspan="7">${T.noMatch}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -191,14 +254,14 @@
     lastToolRows = usable.flatMap(resultRowsForCsv);
     if (downloadBtn) downloadBtn.disabled = !lastToolRows.length;
     if (!usable.length) {
-      toolResultsEl.innerHTML = 'No verified data tool was needed for the latest answer.';
+      toolResultsEl.innerHTML = T.noTool;
       return;
     }
     toolResultsEl.innerHTML = usable.map((result) => `
       <article class="va-tool-card">
         <div class="va-tool-card-head">
-          <span>${escHtml(result.tool === 'find_students' ? 'Find Students' : result.tool)}</span>
-          <strong>${result.ok ? 'Verified result' : 'Tool error'}</strong>
+          <span>${escHtml(result.tool === 'find_students' ? T.findStudents : result.tool)}</span>
+          <strong>${result.ok ? T.verifiedResult : T.toolError}</strong>
         </div>
         ${result.tool === 'find_students' ? renderFindStudents(result) : `<pre>${escHtml(JSON.stringify(result, null, 2))}</pre>`}
       </article>
@@ -210,13 +273,13 @@
       const res = await fetch(cfg.healthUrl, { headers: { Accept: 'application/json' } });
       const data = await res.json();
       if (!data.ok) {
-        setStatus(false, data.error || 'Local model server is not reachable.');
+        setStatus(false, data.error_display || data.error || T.serverUnreachable, data.error_display ? data.error_detail : '');
         return;
       }
-      setStatus(true, `${data.models.length} model${data.models.length === 1 ? '' : 's'} visible`);
+      setStatus(true, `${T.modelsVisiblePre}${data.models.length}${data.models.length === 1 ? T.modelVisible : T.modelsVisible}`);
       if (modelEl) {
         const current = modelEl.value;
-        modelEl.innerHTML = '<option value="">Auto loaded model</option>';
+        modelEl.innerHTML = `<option value="">${T.autoModel}</option>`;
         data.models.forEach((m) => {
           const opt = document.createElement('option');
           opt.value = m.id;
@@ -226,7 +289,7 @@
         if (current) modelEl.value = current;
       }
     } catch (err) {
-      setStatus(false, 'Could not contact local model server.');
+      setStatus(false, T.contactFailed);
     }
   }
 
@@ -272,7 +335,7 @@
             if (data && data.ok) renderToolResults(data.tool_results);
           })
           .catch(() => {
-            if (toolResultsEl) toolResultsEl.innerHTML = 'Verified tool preview failed. The final answer may still include evidence.';
+            if (toolResultsEl) toolResultsEl.innerHTML = T.previewFailed;
           });
       }
       const res = await fetch(cfg.chatUrl, {
@@ -286,7 +349,7 @@
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
-        appendMessage('assistant', data.error || 'The local advisor could not answer.');
+        appendMessage('assistant', data.error_display || data.error || T.noAnswer, data.error_display ? data.error_detail : '');
         return;
       }
       appendMessage('assistant', data.answer);
@@ -294,7 +357,7 @@
       updateContextSummary(data.context_summary);
       renderToolResults(data.tool_results);
     } catch (err) {
-      appendMessage('assistant', 'The local advisor request failed. Check LM Studio and try again.');
+      appendMessage('assistant', T.requestFailed);
     } finally {
       setBusy(false);
     }
@@ -305,7 +368,7 @@
     history.splice(0, history.length);
     if (messagesEl) {
       messagesEl.innerHTML = '';
-      appendMessage('assistant', 'Conversation cleared. Ask a fresh question when ready.');
+      appendMessage('assistant', T.cleared);
     }
     renderToolResults([]);
   });
