@@ -141,7 +141,8 @@
 
   /* ── State: everything the screen draws is read from here ──────────────── */
   const state = {
-    gen: 0,            // student requests: only the newest may write
+    ctxGen: 0,         // student requests: only the newest may write
+    gen: 0,            // the student on screen: a new one retires the old one's plan and sections
     catGen: 0,         // section-catalogue requests: only the newest may write
     ctx: null,         // {studentId, year, term} of the student on screen
     student: null,
@@ -169,6 +170,12 @@
   function bdi(text) {
     const node = document.createElement('bdi');
     node.dir = 'ltr';
+    node.textContent = String(text);
+    return node;
+  }
+  // A name may be Arabic or Latin: isolate it and let its own first letter set the direction.
+  function isolate(text) {
+    const node = document.createElement('bdi');
     node.textContent = String(text);
     return node;
   }
@@ -313,15 +320,23 @@
     };
     closeRulesDialog();
     renderRules();
+    const settle = () => {
+      renderCourses();
+      if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
+        loadCatalog(state.gen);
+      }
+    };
     if (state.ctx && state.rules.eligibility !== before.eligibility) {
-      // The suggestions depend on eligibility: reload them, as the current page does.
-      loadStudent({ reuse: true });
+      // The suggestions depend on eligibility: reload them, as the current page does. If the
+      // reload fails the page still shows the old suggestions, so the old rule is put back;
+      // the other rules changed in the same dialog are kept and applied.
+      loadStudent({
+        reuse: true,
+        onFail: () => { state.rules.eligibility = before.eligibility; renderRules(); settle(); },
+      });
       return;
     }
-    renderCourses();
-    if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
-      loadCatalog(state.gen);
-    }
+    settle();
   }
 
   /* ── Student ───────────────────────────────────────────────────────────── */
@@ -593,7 +608,7 @@
   function courseRow(code, name, cells) {
     const row = el('tr', 'plb-tr');
     row.dataset.code = norm(code);
-    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-name', name || ''), ...cells);
+    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-name', name ? isolate(name) : ''), ...cells);
     return row;
   }
   function blockedReason(rec) {
@@ -616,6 +631,7 @@
       body.append(emptyRow(T.loadFirstCourses));
       table.append(body);
       renderCreditsHeader();
+      state.focus = null;
       return;
     }
     const keep = state.rules.mode === 'keep';
@@ -694,6 +710,7 @@
   }
   function renderCreditsHeader() {
     const header = $('plbCredits');
+    delete header.dataset.over;                // "over" is only ever said against a known cap
     if (!state.ctx) { header.textContent = ''; return; }
     const used = usedCredits();
     const cap = state.rules.maxCredits;
@@ -863,7 +880,12 @@
     if (!/^\d+$/.test(studentId)) { setStatus('error', T.enterStudent); return; }
     if (!/^\d{4}$/.test(year)) { setStatus('error', T.enterYear); return; }
 
-    const run = ++state.gen;
+    const mine = ++state.ctxGen;
+    const failed = (line) => {
+      $('plbRoot').removeAttribute('aria-busy');
+      setStatus('error', line);
+      if (options && typeof options.onFail === 'function') options.onFail();
+    };
     $('plbRoot').setAttribute('aria-busy', 'true');
     setStatus('loading', T.loading);
     let result;
@@ -872,19 +894,20 @@
         student_id: studentId, academic_year: year, term, eligibility_mode: state.rules.eligibility,
       });
     } catch (err) {
-      if (run !== state.gen) return;           // a newer request owns the page
-      $('plbRoot').removeAttribute('aria-busy');
-      setStatus('error', T.failed);
+      if (mine === state.ctxGen) failed(T.failed);  // otherwise a newer request owns the page
       return;
     }
-    if (run !== state.gen) return;             // everything below writes page state
-    $('plbRoot').removeAttribute('aria-busy');
+    if (mine !== state.ctxGen) return;         // everything below writes page state
     const { response, data } = result;
     if (!response.ok || !data || data.error || !data.student) {
       const code = data && data.error && data.error.code;
-      setStatus('error', response.status === 404 || code === 'STUDENT_NOT_FOUND' ? T.notFound : T.failed);
+      failed(response.status === 404 || code === 'STUDENT_NOT_FOUND' ? T.notFound : T.failed);
       return;
     }
+    $('plbRoot').removeAttribute('aria-busy');
+    // Only an accepted student retires the plan and section requests of the one on screen. A
+    // fetch that failed above leaves them alive, or their groups would say "loading" for good.
+    const run = ++state.gen;
 
     const previousId = state.student ? String(state.student.student_id) : null;
     state.ctx = { studentId: String(data.student.student_id || studentId), year: String(data.year || year), term: String(data.term || term) };

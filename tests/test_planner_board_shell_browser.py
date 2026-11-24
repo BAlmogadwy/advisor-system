@@ -206,6 +206,8 @@ class Fake:
         self.catalog_status = 200
         self.hold_catalog = 0  # how many of the next catalogue requests to hold back
         self.pending_catalog: list = []
+        self.hold_plan = 0  # how many of the next plan requests to hold back
+        self.pending_plan: list = []
 
     def context(self, route) -> None:
         body = route.request.post_data_json
@@ -217,6 +219,10 @@ class Fake:
         route.fulfill(status=status, json=payload)
 
     def plan(self, route) -> None:
+        if self.hold_plan:
+            self.hold_plan -= 1
+            self.pending_plan.append(route)
+            return
         if self.plan_status != 200:
             route.fulfill(status=self.plan_status, json={"error": "plan failed"})
             return
@@ -433,6 +439,51 @@ class PlannerBoardShellBrowserTests(StaticLiveServerTestCase):
         self.assertEqual(self._text(page, "#plbContext"), "4500001 · 1448/1")
         self.assertEqual(self._text(page, "#plbStatus"), "Student loaded.")
 
+    def test_a_failed_fetch_leaves_the_plan_of_the_student_on_screen_alive(self) -> None:
+        fake = Fake()
+        fake.hold_plan = 1
+        page = self._open(fake, load=False)
+        self._fetch(page, STUDENT_ID)  # the student loads; their plan is still on its way
+        expect(page.locator("#plbTable tbody[data-group='blocked']")).to_be_visible()
+        self.assertEqual(self._rows(page, "could"), [])
+        # A second fetch fails while that plan is still on its way.
+        fake.context_answer = lambda body: (404, {"error": {"code": "STUDENT_NOT_FOUND"}})
+        self._fetch(page, "4999999")
+        expect(page.locator("#plbStatus")).to_have_text("No student found with that ID.")
+        # The plan then arrives. It belongs to the student still on screen, so it is drawn:
+        # the group must not be left saying "loading" for good.
+        fake.pending_plan.pop().fulfill(json=STUDENT_PLAN)
+        expect(
+            page.locator("#plbTable tbody[data-group='could'] tr[data-code='STAT305']")
+        ).to_be_visible()
+        self.assertEqual(self._rows(page, "could"), ["STAT305", "CS351"])
+        self.assertIn("Sample Student", self._text(page, "#plbStudent"))
+
+    def test_a_slow_earlier_plan_cannot_paint_over_a_newer_students_plan(self) -> None:
+        fake = Fake()
+        fake.hold_plan = 1
+        page = self._open(fake, load=False)
+        self._fetch(page, STUDENT_ID)  # this student's plan is held back
+        expect(page.locator("#plbTable tbody[data-group='blocked']")).to_be_visible()
+        self._fetch(page, OTHER_ID)  # the newer student's plan answers at once
+        expect(
+            page.locator("#plbTable tbody[data-group='could'] tr[data-code='STAT305']")
+        ).to_be_visible()
+        self.assertEqual(self._text(page, "#plbContext"), "4500001 · 1448/1")
+        # The older plan then arrives, with a course of its own.
+        stale_course = {
+            "course_code": "OLD999",
+            "course_name": "Stale",
+            "credit_hours": 3,
+            "importance_score": 5,
+            "status": "not_taken",
+            "can_register": True,
+        }
+        fake.pending_plan.pop().fulfill(json={"terms": [{"courses": [stale_course]}]})
+        page.wait_for_timeout(400)
+        page.evaluate("new Promise(r => requestAnimationFrame(() => r(true)))")
+        self.assertEqual(self._rows(page, "could"), ["STAT305", "CS351"])
+
     # ── The rules ────────────────────────────────────────────────────────────
     def test_the_rules_summary_and_the_cap_default(self) -> None:
         page = self._open(Fake())
@@ -580,6 +631,46 @@ class PlannerBoardShellBrowserTests(StaticLiveServerTestCase):
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342", "AI431"])
         self.assertIn("Max credits 16", self._text(page, "#plbRules1"))
         self.assertEqual(self._text(page, "#plbRulesChanged"), "2 rules changed")
+
+    def test_a_failed_eligibility_reload_puts_the_old_rule_back(self) -> None:
+        fake = Fake()
+        page = self._open(fake)
+        fake.context_answer = lambda body: (
+            500,
+            {"ok": False, "error": {"code": "X", "message": "boom"}},
+        )
+        self._rules(page, elig="relaxed", mode="ignore")
+        expect(page.locator("#plbStatus")).to_have_text(
+            "The student could not be loaded. Try again."
+        )
+        # The page still shows the strict suggestions, so the summary must say strict ...
+        expect(page.locator("#plbRules1")).to_contain_text("Strict eligibility")
+        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
+        # ... while the other rule changed in the same dialog is kept and applied.
+        self.assertEqual(self._text(page, "#plbRulesChanged"), "1 rule changed")
+        self.assertIn("CS301", self._rows(page, "could"))
+
+    def test_closing_the_rules_dialog_puts_focus_back_on_edit_rules(self) -> None:
+        page = self._open(Fake())
+        for close in ("Escape", "#plbRulesCancel", "#plbRulesApply"):
+            with self.subTest(close=close):
+                page.click("#plbEditRules")
+                expect(page.locator("#plbRulesDialog")).to_be_visible()
+                if close == "Escape":
+                    page.keyboard.press("Escape")
+                else:
+                    page.click(close)
+                expect(page.locator("#plbRulesDialog")).to_be_hidden()
+                expect(page.locator("#plbEditRules")).to_be_focused()
+
+    def test_the_over_cap_mark_goes_when_max_credits_is_cleared(self) -> None:
+        page = self._open(Fake())
+        self._rules(page, max=12)
+        expect(page.locator("#plbCredits")).to_have_text("15 of 12 cr · 3 over")
+        self.assertEqual(page.get_attribute("#plbCredits", "data-over"), "true")
+        self._rules(page, max="")
+        expect(page.locator("#plbCredits")).to_have_text("15 cr")
+        self.assertIsNone(page.get_attribute("#plbCredits", "data-over"))
 
     def test_the_masthead_year_is_not_used_by_a_rules_reload(self) -> None:
         fake = Fake()
