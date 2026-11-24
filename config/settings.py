@@ -269,6 +269,10 @@ STUDENT_ADVISOR_V2_ENABLED = os.getenv("STUDENT_ADVISOR_V2_ENABLED", "true").low
 # passes. V2 must remain enabled while this is true so disabling only V2.1 has
 # an explicit rollback target; the runtime dispatcher enforces that invariant.
 STUDENT_ADVISOR_V21_ENABLED = os.getenv("STUDENT_ADVISOR_V21_ENABLED", "false").lower() == "true"
+# The new staff planner screen (core/templates/core/planner_board.html). Off by
+# default: /planner/ keeps serving the current page. Staff can open either one
+# while both exist with ?layout=board or ?layout=classic.
+PLANNER_BOARD_ENABLED = os.getenv("PLANNER_BOARD_ENABLED", "false").lower() == "true"
 # Local V2.1 browser launcher. DEBUG, this explicit switch, a loopback peer, and
 # an authenticated superuser are all required by the view; false is the only safe
 # default because the launcher intentionally changes the current session identity.
