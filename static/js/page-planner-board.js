@@ -28,7 +28,7 @@
     noStudentTitle: IS_AR ? 'لم يتم تحميل بيانات طالب' : 'No student loaded',
     noStudentHint: IS_AR ? 'أدخل رقم الطالب أعلاه واضغط جلب.' : 'Enter a student ID above and press Fetch.',
     gpa: IS_AR ? 'المعدل التراكمي' : 'GPA',
-    registeredCredits: IS_AR ? 'الساعات المسجلة' : 'Registered credits',
+    registeredCredits: IS_AR ? 'مسجّل هذا الفصل' : 'Registered this term',
     creditCap: IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap',
     advisory: (max) => (max ? (IS_AR ? `إرشادي · الأقصى ${max}` : `advisory · max ${max}`) : (IS_AR ? 'إرشادي' : 'advisory')),
     programme: IS_AR ? 'البرنامج' : 'Programme',
@@ -426,7 +426,10 @@
       return;
     }
     const gpa = finiteNonNegative(st.gpa);
-    const registered = finiteNonNegative(st.registered_credits);
+    // This term's registered credits, counted from the timetable on screen. The reply's
+    // `registered_credits` is the registrar's running total (144 for a senior): beside an
+    // 18-credit cap it reads as a mistake, and it is not what this screen is about.
+    const registered = registeredCredits();
     const cap = finitePositive(st.credit_cap);
     const reg = finitePositive(st.regulatory_max_credits);
     host.replaceChildren(
@@ -832,26 +835,29 @@
     const body = el('tbody', 'plb-group');
     body.dataset.group = name;
     body.append(el('tr', 'plb-grp', el('th', 'plb-mic', left), el('td', 'plb-mic plb-grp-end', right || '')));
-    body.firstChild.firstChild.colSpan = 3;
+    body.firstChild.firstChild.colSpan = 2;
     body.firstChild.lastChild.colSpan = 2;
     body.firstChild.firstChild.scope = 'rowgroup';
     return body;
   }
   function emptyRow(text) {
     const row = el('tr', 'plb-tr plb-tr--note', el('td', 'plb-empty-cell', text));
-    row.firstChild.colSpan = 5;
+    row.firstChild.colSpan = 4;
     return row;
   }
-  function courseRow(code, name, cells) {
+  // A course row is: code | name over its section line | must-take | action. The name and the
+  // section share one cell so the name has the width of the pane: real course titles are long
+  // Arabic phrases, and in a column of their own they wrapped onto four or five lines.
+  function courseRow(code, name, section, cells, off) {
     const row = el('tr', 'plb-tr');
     row.dataset.code = norm(code);
-    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-name', name ? isolate(name) : ''), ...cells);
+    const title = el('span', off ? 'plb-name plb-name--off' : 'plb-name', name ? isolate(name) : '');
+    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-main', title, section), ...cells);
     return row;
   }
   function blockedReason(rec) {
     const missing = (rec.missing_prerequisites || []).map(String).filter(Boolean);
-    const cell = el('td', 'plb-sc plb-sc--blocked', el('span', 'plb-chip', T.blocked));
-    cell.colSpan = 3;
+    const cell = el('span', 'plb-sc plb-sc--blocked', el('span', 'plb-chip', T.blocked));
     if (!missing.length) { cell.append(' ', T.prereqNotMet); return cell; }
     cell.append(' ', `${T.missing} `);
     missing.forEach((m, i) => { if (i) cell.append(', '); cell.append(bdi(m)); });
@@ -886,8 +892,8 @@
       icon.setAttribute('role', 'img');
       icon.setAttribute('aria-label', T.registeredLock);
       lock.append(icon);
-      regBody.append(courseRow(course.code, course.name, [
-        el('td', 'plb-sc', course.section ? bdi(`§${course.section}`) : T.unknown), el('td'), lock]));
+      regBody.append(courseRow(course.code, course.name,
+        el('span', 'plb-sc', course.section ? bdi(`§${course.section}`) : T.unknown), [el('td'), lock]));
     }
     table.append(regBody);
 
@@ -897,7 +903,7 @@
     for (const item of state.shortlist) {
       const code = item.course_code;
       const pin = item.pinned_sections && item.pinned_sections.length ? item.pinned_sections[0] : null;
-      const sectionCell = el('td', 'plb-sc');
+      const sectionCell = el('span', 'plb-sc');
       const chosen = opt ? mappingFor(opt, code) : null;
       if (opt) {
         // On an option's tab the cell says what that option did with the course.
@@ -912,8 +918,8 @@
       box.dataset.act = 'must';
       box.dataset.code = norm(code);
       const remove = iconButton('x', T.removeCourse(code), 'remove', code);
-      newBody.append(courseRow(code, item.course_name, [
-        sectionCell, el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)]));
+      newBody.append(courseRow(code, item.course_name, sectionCell,
+        [el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)]));
     }
     table.append(newBody);
 
@@ -930,8 +936,8 @@
       const body = groupBody('could', T.couldAdd, couldLeft);
       for (const course of pool) {
         const add = iconButton('plus', T.addCourse(course.code), 'add', course.code, 'plb-ib--add');
-        body.append(courseRow(course.code, course.name, [
-          el('td', 'plb-sc', sectionInfo(course.code)), el('td'), el('td', 'plb-act', add)]));
+        body.append(courseRow(course.code, course.name,
+          el('span', 'plb-sc', sectionInfo(course.code)), [el('td'), el('td', 'plb-act', add)]));
       }
       table.append(body);
     }
@@ -941,10 +947,7 @@
     if (blocked.length) {
       const body = groupBody('blocked', T.blocked, '');
       for (const rec of blocked) {
-        const row = el('tr', 'plb-tr');
-        row.dataset.code = norm(rec.course_code);
-        row.append(el('td', 'plb-code', bdi(rec.course_code)), el('td', 'plb-name plb-name--off', rec.course_name || ''), blockedReason(rec));
-        body.append(row);
+        body.append(courseRow(rec.course_code, rec.course_name, blockedReason(rec), [el('td'), el('td')], true));
       }
       table.append(body);
     }

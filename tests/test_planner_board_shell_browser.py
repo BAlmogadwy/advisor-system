@@ -47,7 +47,10 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertIn(STUDENT_ID, student)
         self.assertIn("AI", student)
         self.assertIn("3.42", self._text(page, ".plb-stat:nth-child(1)"))
-        self.assertIn("9", self._text(page, ".plb-stat:nth-child(2)"))
+        # This term's registered credits, counted from the timetable: not the registrar's
+        # running total (96 in the reply), which beside an 18-credit cap reads as a mistake.
+        self.assertEqual(self._text(page, ".plb-stat:nth-child(2)"), "9Registered this term")
+        self.assertNotIn("96", student)
         cap = self._text(page, ".plb-stat:nth-child(3)")
         self.assertIn("18", cap)
         self.assertIn("Credit cap", cap)
@@ -560,6 +563,31 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertEqual(self._text(page, "#plbTabFacts2"), "ends 14:00 · gap 45 min")
         # Blocks never overlap one another on a day.
         self.assertEqual(page.evaluate(OVERLAPS), [])
+
+    def test_a_long_arabic_course_name_has_the_width_of_the_pane(self) -> None:
+        # Real titles are long Arabic phrases. In a narrow column of their own they ran down four
+        # or five lines; the name now shares one cell with its section line.
+        long_name = "دراسات إسلامية: القيم والأخلاق الإسلامية"
+        rows = [*BASELINE, _row("GS104", long_name, "M46", 2, "THU", "08:00", "09:40", 46)]
+        fake = Fake()
+        fake.context_answer = lambda body: (
+            200,
+            {**context_for(str(body["student_id"])), "baseline": rows},
+        )
+        for font in ("app", "wide"):
+            with self.subTest(font=font):
+                page = self._open(fake, font=font)
+                self.assertEqual(self._text(page, "tr[data-code='GS104'] .plb-name"), long_name)
+                self.assertEqual(
+                    self._text(page, "tr[data-code='GS104'] .plb-main .plb-sc"), "§M46"
+                )
+                name = page.locator("#plbTable tr[data-code='GS104'] .plb-name").bounding_box()
+                table = page.locator("#plbTable").bounding_box()
+                self.assertGreater(name["width"], table["width"] * 0.5)
+                self.assertLessEqual(name["height"], 18 * 3 + 2)  # at most three 18 px lines
+                # The section is a line of its own under the name, not beside it.
+                under = page.locator("#plbTable tr[data-code='GS104'] .plb-sc").bounding_box()
+                self.assertGreaterEqual(under["y"], name["y"] + name["height"] - 1)
 
     def test_a_registered_row_without_times_is_noted_and_never_drawn_as_zero(self) -> None:
         fake = Fake()

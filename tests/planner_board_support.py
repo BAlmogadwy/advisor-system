@@ -106,7 +106,9 @@ def context_for(
             "cohort_section": "M",
             "advisor_id": "",
             "gpa": 3.42,
-            "registered_credits": 9,
+            # The registrar's running total, as the real endpoint sends it. The page must show
+            # this term's registered credits (9, from the baseline below), never this figure.
+            "registered_credits": 96,
             "credit_cap": 18,
             "regulatory_max_credits": 19,
             **student,

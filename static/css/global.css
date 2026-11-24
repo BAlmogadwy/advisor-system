@@ -8828,11 +8828,17 @@ html[data-theme="dark"] .plb {
 .plb-grp .plb-grp-end { text-align: end; padding-inline-end: 0; }
 .plb-tr > td { height: 32px; border-top: 1px solid var(--line); }
 .plb-grp + .plb-tr > td { border-top: 0; }
+/* A course row: code | name over its section line | must-take | action. The name has the width
+   of the pane, so a long Arabic title wraps once instead of running down a narrow column. */
 .plb-code { white-space: nowrap; }
-.plb-name { font-size: var(--text-sm); font-weight: 500; line-height: 18px; color: var(--ink); overflow-wrap: break-word; }
+.plb-tr > .plb-code { vertical-align: top; }   /* the code sits on the name's line, not between the two */
+.plb-tr > .plb-code, .plb-tr > .plb-main { padding-block: 5px; }
+.plb-code > bdi { line-height: 18px; }
+.plb-name { display: block; font-size: var(--text-sm); font-weight: 500; line-height: 18px; color: var(--ink); overflow-wrap: break-word; }
+.plb-name:empty { display: none; }
 .plb-name--off { color: var(--t3); }
-.plb-sc { font-size: var(--text-xs); line-height: 16px; color: var(--t3); white-space: nowrap; }
-.plb-sc--blocked { white-space: normal; padding-inline-end: 0; }
+.plb-sc { display: block; font-size: var(--text-xs); line-height: 16px; color: var(--t3); }
+.plb-sc--blocked { padding-inline-end: 0; }
 .plb-sc--miss { white-space: normal; color: var(--sev-warning-ink); font-weight: 600; }
 .plb-empty-cell { padding-block: 6px; font-size: var(--text-xs); color: var(--t3); }
 .plb-act { width: 1%; padding-inline-end: 0; white-space: nowrap; text-align: end; }
