@@ -708,7 +708,6 @@
   function moreNode(hidden) {
     const wrap = el('div', 'plb-more');
     wrap.id = 'plbMore';
-    wrap.setAttribute('role', 'presentation');
     const button = el('button', 'plb-more-btn', T.moreOptions(hidden.length));
     button.type = 'button';
     button.id = 'plbMoreBtn';
@@ -731,7 +730,9 @@
   }
   function renderStrip() {
     const tabs = $('plbTabs');
-    tabs.querySelectorAll('[data-opt], #plbMore').forEach((n) => n.remove());
+    const strip = $('plbStrip');
+    tabs.querySelectorAll('[data-opt]').forEach((n) => n.remove());
+    strip.querySelectorAll('#plbMore').forEach((n) => n.remove());
     const registered = $('plbTabRegistered');
     registered.setAttribute('aria-selected', String(state.selected === null));
     registered.tabIndex = state.selected === null ? 0 : -1;
@@ -742,7 +743,8 @@
     if (chosen >= 3) shown.push(options[chosen]);
     const hidden = options.filter((o) => !shown.includes(o));
     for (const opt of shown) tabs.insertBefore(optionTab(opt), registered);
-    if (hidden.length) tabs.insertBefore(moreNode(hidden), registered);
+    // "More options" is a disclosure, not a tab: it sits beside the tab list, never inside it.
+    if (hidden.length) strip.append(moreNode(hidden));
     else state.moreOpen = false;
   }
   function selectTab(name, focus) {
@@ -1202,13 +1204,21 @@
     if (typeof e === 'string' && e) return e;
     return T.requestFailed;
   }
-  const sessionGone = (response) => response.redirected || response.status === 401 || response.status === 403;
+  // The session is gone on a redirect to sign-in, a 401, or a 403 that is not one of the app's own
+  // refusals (the CSRF failure page). A 403 that carries the server's reason (role, student scope)
+  // is a refusal like any other and is shown in the server's words.
+  const sessionGone = (response, data) => response.redirected || response.status === 401
+    || (response.status === 403 && !(data && typeof data === 'object' && (data.error || data.reason_code)));
 
   // The options are gone: the plan, the rules or the student they were built from changed. Any
   // reply still in flight is no longer believed. `say` puts the plain line where the options were.
   function dropBuild(say) {
     state.buildGen += 1;
     if (!state.build) return;
+    // A review left open lists options that no longer exist: close it and say why. A save that is
+    // already on its way is left to finish and report.
+    const reviewing = $('plbApplyDialog').open && !state.applying;
+    if (reviewing) closeApply();
     state.build = null;
     state.selected = null;
     state.moreOpen = false;
@@ -1218,6 +1228,8 @@
     renderWeek();
     renderCourses();
     renderActions();
+    // The button that opened the review is disabled now: put the keyboard on the next step.
+    if (reviewing && !$('plbBuild').disabled) $('plbBuild').focus();
   }
 
   function reasonLines(build) {
@@ -1319,7 +1331,7 @@
       }
       if (!result) { setBuildLine('error', T.buildFailed); return; }
       const { response, data } = result;
-      if (sessionGone(response)) { setBuildLine('error', T.sessionExpired); return; }
+      if (sessionGone(response, data)) { setBuildLine('error', T.sessionExpired); return; }
       if (response.status === 429) { setBuildLine('error', T.tooMany); return; }
       if (!data || typeof data !== 'object') { setBuildLine('error', T.buildFailed); return; }
       if (data.error) { setBuildLine('error', errorText(data)); return; }
@@ -1390,9 +1402,13 @@
   async function runApply() {
     if (state.applying) return;                     // a second click cannot post twice
     const opt = currentOption();
-    if (!opt || !applicability().ok) return;
+    if (!opt || !applicability().ok) {
+      // Nothing applicable is left to save (the options went while this was open): never go quiet.
+      closeApply();
+      setBuildLine('warn', T.planChanged);
+      return;
+    }
     const ctx = { ...state.ctx };
-    const gen = state.buildGen;
     state.applying = true;
     renderApplyButtons();
     renderActions();
@@ -1416,7 +1432,7 @@
     try { result = await postJson('/ops/planner/save-student-sections/', body); } catch (err) { result = null; }
     if (!result) { refuse(T.saveFailed); return; }
     const { response, data } = result;
-    if (sessionGone(response)) { refuse(T.sessionExpired); return; }
+    if (sessionGone(response, data)) { refuse(T.sessionExpired); return; }
     if (!data || typeof data !== 'object') { refuse(T.saveFailed); return; }
     if (data.error) { refuse(errorText(data)); return; }
     if (!response.ok) { refuse(T.saveFailed); return; }
@@ -1427,7 +1443,7 @@
     state.applying = false;
     renderApplyButtons();
     closeApply();
-    if (gen === state.buildGen) dropBuild(false);
+    dropBuild(false);
     const said = [T.saved];
     if (removed.length) {
       said.push('. ', T.removedPlanned(removed.length), ' (',
@@ -1492,8 +1508,8 @@
       const review = $('plbReview');
       if (!review.disabled && document.activeElement === document.body) review.focus();
     });
-    const tabs = $('plbTabs');
-    tabs.addEventListener('click', (event) => {
+    const strip = $('plbStrip');
+    strip.addEventListener('click', (event) => {
       const more = event.target.closest('#plbMoreBtn');
       if (more) {
         state.moreOpen = !state.moreOpen;
@@ -1503,10 +1519,12 @@
       }
       const item = event.target.closest('[data-more]');
       if (item) { selectTab(item.dataset.more, true); return; }
+      // The strip is redrawn on every choice, so focus is put back on the chosen tab: without that
+      // Enter or Space on a tab would drop the keyboard user at the top of the page.
       const tab = event.target.closest('[role="tab"]');
-      if (tab) selectTab(tab.dataset.opt === undefined ? null : tab.dataset.opt, false);
+      if (tab) selectTab(tab.dataset.opt === undefined ? null : tab.dataset.opt, true);
     });
-    tabs.addEventListener('keydown', (event) => {
+    strip.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && state.moreOpen) {
         state.moreOpen = false;
         renderStrip();
@@ -1515,7 +1533,7 @@
       }
       const tab = event.target.closest('[role="tab"]');
       if (!tab) return;
-      const all = [...tabs.querySelectorAll('[role="tab"]')];
+      const all = [...strip.querySelectorAll('[role="tab"]')];
       const at = all.indexOf(tab);
       const rtl = document.documentElement.dir === 'rtl';
       let to = -1;

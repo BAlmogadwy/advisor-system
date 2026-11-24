@@ -357,13 +357,15 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._text(page, "#plbMoreBtn"), "More options (2)")
         self.assertEqual(page.get_attribute("#plbMoreBtn", "aria-expanded"), "false")
         self.assertTrue(page.locator("#plbMoreList").is_hidden())
-        # "More options" sits between the option tabs and the Registered tab.
-        order = page.eval_on_selector_all(
-            "#plbTabs > *", "ns => ns.map(n => n.id || n.dataset.opt)"
+        # The tab list holds tabs only; "More options" is a disclosure beside it.
+        order = page.eval_on_selector_all("#plbTabs > *", "ns => ns.map(n => n.id)")
+        self.assertEqual(order, ["plbTab_B1", "plbTab_B2", "plbTab_B3", "plbTabRegistered"])
+        roles = page.eval_on_selector_all(
+            "#plbTabs > *", "ns => ns.map(n => n.getAttribute('role'))"
         )
-        self.assertEqual(
-            order, ["plbTab_B1", "plbTab_B2", "plbTab_B3", "plbMore", "plbTabRegistered"]
-        )
+        self.assertEqual(roles, ["tab", "tab", "tab", "tab"])
+        beside = page.eval_on_selector_all("#plbStrip > *", "ns => ns.map(n => n.id)")
+        self.assertEqual(beside, ["plbTabs", "plbMore"])
 
     def test_each_tab_says_its_three_lines_from_its_own_meetings(self) -> None:
         page, _ = self._built()
@@ -588,7 +590,70 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         fake.save_answer = lambda body: (403, {"detail": "CSRF"})
         page.click("#plbApplyGo")
         expect(page.locator("#plbApplyErr")).to_contain_text("session has expired")
-        self.assertEqual(len(fake.save_bodies), 3)
+        # A 403 that carries the server's own reason (role, student scope) is not a lost session.
+        fake.save_answer = lambda body: (
+            403,
+            {"ok": False, "error": {"code": "STAFF_ROLE_REQUIRED", "message": "Staff only"}},
+        )
+        page.click("#plbApplyGo")
+        expect(page.locator("#plbApplyErr")).to_have_text("Staff only")
+        self.assertEqual(len(fake.save_bodies), 4)
+
+    def test_options_dropped_under_an_open_review_close_it_and_nothing_is_saved(self) -> None:
+        fake = BuildFake()
+        page, _ = self._built(fake)
+        fake.hold_ids = {OTHER_ID}
+        self._fetch(page, OTHER_ID)  # another student is on the way, slowly
+        page.click("#plbReview")
+        expect(page.locator("#plbApplyDialog")).to_be_visible()
+        # The other student arrives under the open review: the options it lists are gone.
+        _body, route = fake.pending.pop()
+        route.fulfill(json=context_for(OTHER_ID))
+        expect(page.locator("#plbApplyDialog")).to_be_hidden()
+        self._assert_options_gone(page)
+        expect(page.locator("#plbBuild")).to_be_focused()
+        self.assertEqual(fake.save_bodies, [])
+
+    def test_apply_after_the_options_went_during_a_refused_save_closes_the_review(self) -> None:
+        fake = BuildFake()
+        fake.hold_save = 1
+        page, _ = self._built(fake)
+        fake.hold_ids = {OTHER_ID}
+        self._fetch(page, OTHER_ID)  # another student is on the way, slowly
+        page.click("#plbReview")
+        page.click("#plbApplyGo")  # and the save is on its way too
+        expect(page.locator("#plbApplyGo")).to_be_disabled()
+        # The student arrives first: the options go, the save is left to finish and report.
+        _body, route = fake.pending.pop()
+        route.fulfill(json=context_for(OTHER_ID))
+        expect(page.locator("#plbStatus")).to_have_text("Student loaded.")
+        expect(page.locator("#plbApplyDialog")).to_be_visible()
+        fake.pending_save.pop().fulfill(
+            status=409, json={"ok": False, "error": {"code": "X", "message": "Refused"}}
+        )
+        expect(page.locator("#plbApplyErr")).to_have_text("Refused")
+        # Apply again: there is nothing left to save, and the page says so instead of going quiet.
+        page.click("#plbApplyGo")
+        expect(page.locator("#plbApplyDialog")).to_be_hidden()
+        expect(page.locator("#plbBuildLine")).to_have_text(
+            "The plan changed. Build again to see options."
+        )
+        self.assertEqual(len(fake.save_bodies), 1)
+
+    def test_choosing_a_tab_keeps_the_focus_on_it(self) -> None:
+        page, _ = self._built()
+        page.focus("#plbTab_B1")
+        page.keyboard.press("ArrowRight")
+        expect(page.locator("#plbTab_B2")).to_be_focused()
+        # Enter on a tab redraws the strip: the keyboard must not fall to the top of the page.
+        page.keyboard.press("Enter")
+        expect(page.locator("#plbTab_B2")).to_be_focused()
+        self.assertEqual(page.get_attribute("#plbTab_B2", "aria-selected"), "true")
+        page.click("#plbTab_B3")
+        expect(page.locator("#plbTab_B3")).to_be_focused()
+        self.assertEqual(page.get_attribute("#plbTab_B3", "aria-selected"), "true")
+        page.click("#plbTabRegistered")
+        expect(page.locator("#plbTabRegistered")).to_be_focused()
 
     def test_apply_is_available_only_on_an_option_tab(self) -> None:
         page, _ = self._built()
@@ -702,6 +767,17 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         )
         page.click("#plbBuild")
         expect(line).to_have_text("Your session has expired. Sign in again, then retry.")
+        # A 403 that carries the server's own reason is a refusal, said in the server's words.
+        fake.build_raw = None
+        fake.build_answer = lambda body: (
+            403,
+            {"ok": False, "error": {"code": "SCOPE", "message": "Not one of your students."}},
+        )
+        page.click("#plbBuild")
+        expect(line).to_have_text("Not one of your students.")
+        fake.build_answer = lambda body: (403, {"error": "Insufficient role: requires staff"})
+        page.click("#plbBuild")
+        expect(line).to_have_text("Insufficient role: requires staff")
         # And the page recovers by itself.
         fake.build_raw = None
         fake.build_answer = lambda body: (200, FIVE)

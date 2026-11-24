@@ -58,12 +58,14 @@
 
         <!-- ═══ Option strip: only the registered week until a build exists ═══ -->
         <div class="plb-opts">
-          <div class="plb-tabs" id="plbTabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}الجدول المعروض{% else %}Timetable to show{% endif %}">
+          <div class="plb-tabs" id="plbStrip">
+            <div class="plb-tablist" id="plbTabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}الجدول المعروض{% else %}Timetable to show{% endif %}">
             <button type="button" class="plb-tab" id="plbTabRegistered" role="tab" aria-selected="true" aria-controls="plbWeekPanel">
               <span class="plb-tab-n"><span id="plbTabName">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span><span class="plb-tab-lock" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="plb-tab-cr" id="plbTabCredits"></span></span>
               <span class="plb-tab-x" id="plbTabFacts1">—</span>
               <span class="plb-tab-x" id="plbTabFacts2"></span>
             </button>
+            </div>
           </div>
 
           <div class="plb-acts" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات وتطبيقها{% else %}Build and apply{% endif %}">
