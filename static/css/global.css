@@ -5647,6 +5647,11 @@ pre, .pre-output {
    The sidebar is outside the global box-sizing reset, so each touch row is a
    border box here: its 44px is the target, not the text inside its padding. */
 @media (max-width: 768px) {
+  /* The visible height, not 100vh: a phone's 100vh is the height with its
+     browser toolbar hidden, so with the toolbar showing the footer's controls
+     sat partly under it. A browser without dvh keeps the 100vh above. */
+  :where(body:not(.twm-root)) .sidebar { height: 100dvh; }
+
   :where(body:not(.twm-root)) .sidebar :is(.nav-find-btn, .nav-lbl, .nav-a, .s-usr, .s-usr-logout, .theme-toggle) {
     box-sizing: border-box;
   }
@@ -5706,6 +5711,18 @@ pre, .pre-output {
     padding-block: 0 !important;
     font-size:     var(--field-fs) !important;
   }
+}
+/* A short screen, such as a phone on its side: between the fixed header,
+   search row and footer, 375px left the list two rows. There the whole drawer
+   scrolls as one, as a modal drawer does (it opens at its top: the script that
+   centres the current page scrolls the list alone). */
+@media (max-width: 768px) and (max-height: 540px) {
+  :where(body:not(.twm-root)) .sidebar .nav-sec { flex: none; overflow: visible; }
+}
+/* A mouse on a narrow window: a group heading answers the pointer the way the
+   desktop's headings do. Not on touch, where a hover state outlives the tap. */
+@media (max-width: 768px) and (hover: hover) {
+  :where(body:not(.twm-root)) .sidebar .nav-lbl:hover { background: var(--surface); }
 }
 
 /* ============================================================

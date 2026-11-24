@@ -386,21 +386,17 @@ def test_the_arabic_type_rules_never_reach_mri_split_or_the_sidebar() -> None:
 def test_the_phone_drawer_sizes_never_reach_the_mri_page() -> None:
     """The MRI page hides the sidebar, but a rule that reached it would still
     move the hidden sidebar's computed styles there (owner: the page is left as
-    it is). Every selector in the phone drawer's block starts from the body
-    that is not the MRI page's."""
+    it is). Every selector in the phone drawer's section, from its heading to
+    the next section's, starts from the body that is not the MRI page's."""
     start = GLOBAL.index("/* ── The phone drawer: a touch surface")
-    block = GLOBAL[GLOBAL.index("@media (max-width: 768px) {", start) :]
-    depth, length = 0, 0
-    for i, ch in enumerate(block):
-        depth += {"{": 1, "}": -1}.get(ch, 0)
-        if ch == "}" and depth == 0:
-            length = i + 1
-            break
-    assert length, "the drawer's @media block closes"
+    end = GLOBAL.rindex("/*", start, GLOBAL.index("MODAL DIALOG SYSTEM", start))
+    section = re.sub(r"/\*.*?\*/", " ", GLOBAL[start:end], flags=re.S)
+    # the drawer's sizes, its short-screen scroll and its pointer hover
+    assert section.count("@media (max-width: 768px)") == 3, section
     selectors = {
-        part for selector, _, _, _ in _declarations(block[:length]) for part in _top_level(selector)
+        part for selector, _, _, _ in _declarations(section) for part in _top_level(selector)
     }
     assert len(selectors) >= 20, sorted(selectors)
-    scope = ":where(body:not(.twm-root)) .sidebar "
-    strays = [s for s in selectors if not s.removeprefix('html[dir="rtl"] ').startswith(scope)]
+    scope = re.compile(r":where\(body:not\(\.twm-root\)\) \.sidebar(?![\w-])")
+    strays = [s for s in selectors if not scope.match(s.removeprefix('html[dir="rtl"] '))]
     assert strays == [], strays
