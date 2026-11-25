@@ -126,10 +126,7 @@
       return IS_AR ? 'الحد الإرشادي غير معروف.' : 'The advisory cap is not known.';
     },
     maxError: (max) => (IS_AR ? `أدخل عددًا صحيحًا من 1 إلى ${max}.` : `Enter a whole number from 1 to ${max}.`),
-    // The rules summary.
-    ruleMode: { keep: IS_AR ? 'الإبقاء على المسجّل' : 'Keep Registered', ignore: IS_AR ? 'تجاهل المسجّل' : 'Ignore Registered' },
-    ruleElig: { strict: IS_AR ? 'أهلية صارمة' : 'Strict eligibility', relaxed: IS_AR ? 'أهلية مرنة' : 'Relaxed eligibility' },
-    ruleMax: (n) => (n === null ? (IS_AR ? 'الحد الأقصى غير محدد' : 'Max credits not set') : (IS_AR ? `الحد الأقصى ${n}` : `Max credits ${n}`)),
+    // The summary of the three rules that are not on the board.
     ruleProg: { true: IS_AR ? 'شُعب البرنامج فقط' : 'This programme only', false: IS_AR ? 'أي برنامج' : 'Any programme' },
     ruleFull: { true: IS_AR ? 'الشُعب الممتلئة مسموحة' : 'Full sections allowed', false: IS_AR ? 'بلا شُعب ممتلئة' : 'No full sections' },
     ruleSwap: { true: IS_AR ? 'اقتراح تبديلات' : 'Suggest swaps', false: IS_AR ? 'بلا تبديلات' : 'No swaps' },
@@ -637,8 +634,6 @@
   }
   function renderRules() {
     const r = state.rules;
-    // The first line is a hidden full summary kept for the record; the controls say the same.
-    $('plbRules1').textContent = [T.ruleMode[r.mode], T.ruleElig[r.eligibility], T.ruleMax(r.maxCredits)].join(' · ');
     $('plbRules2').textContent = [T.ruleProg[r.programOnly], T.ruleFull[r.allowFull], T.ruleSwap[r.swap]].join(' · ');
     // The controls on the board show the rules in force.
     $('plbRegKeep').checked = r.mode === 'keep';
@@ -662,7 +657,10 @@
   // Max credits as typed: '' is "not set" (null); a whole number from 1 to the regulatory maximum;
   // anything else is refused. One reading for the dialog and for the field on the board.
   function parseMaxCredits(raw) {
-    const text = raw.trim();
+    // Arabic-Indic and Persian digits are read as the digits they are.
+    const text = raw.trim().replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (c) => String(c.charCodeAt(0) & 15))
+      // Leading zeros are not part of the number ("018" is 18).
+      .replace(/^0+(?=\d)/, '');
     if (text === '') return { ok: true, value: null };
     const ceiling = regulatoryMax();
     const value = /^\d{1,2}$/.test(text) ? Number(text) : NaN;
@@ -685,8 +683,9 @@
     $('plbRuleMaxHint').textContent = maxHintText();
     fillRulesDialog({ ...state.rules, ...(preset || {}) });
     const note = $('plbRuleEligNote');
-    if (preset && preset.eligibility) note.dataset.flag = 'true'; else delete note.dataset.flag;
     const dialog = $('plbRulesDialog');
+    if (preset && preset.eligibility) { note.dataset.flag = 'true'; dialog.dataset.from = 'eligibility'; }
+    else { delete note.dataset.flag; delete dialog.dataset.from; }
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
     (preset && preset.eligibility ? $('plbRuleElig') : $('plbRuleMode')).focus();
@@ -759,6 +758,8 @@
     err.hidden = true;
     err.textContent = '';
     if (max.value !== state.rules.maxCredits) commitRules({ ...state.rules, maxCredits: max.value });
+    // What was applied is what the field says ("018" becomes "18").
+    field.value = max.value === null ? '' : String(max.value);
   }
 
   /* ── Student ───────────────────────────────────────────────────────────── */
@@ -1604,13 +1605,10 @@
     button.setAttribute('aria-controls', 'plbDetail');
     return button;
   }
-  // `lead` (a node) closes the title cell, right before the end cell: "Reset to suggestions" before "Must-take".
-  function groupBody(name, left, right, lead) {
+  function groupBody(name, left, right) {
     const body = el('tbody', 'plb-group');
     body.dataset.group = name;
-    const title = lead ? el('th', 'plb-mic', el('span', 'plb-grp-in', el('span', 'plb-grp-l', left), lead))
-      : el('th', 'plb-mic', left);
-    body.append(el('tr', 'plb-grp', title, el('td', 'plb-mic plb-grp-end', right || '')));
+    body.append(el('tr', 'plb-grp', el('th', 'plb-mic', left), el('td', 'plb-mic plb-grp-end', right || '')));
     body.firstChild.firstChild.colSpan = 2;
     body.firstChild.lastChild.colSpan = 2;
     body.firstChild.firstChild.scope = 'rowgroup';
@@ -1644,8 +1642,6 @@
   }
   function renderCourses() {
     const table = $('plbTable');
-    // The reset link lives in the "New in this plan" header; it is parked while the rows are rebuilt.
-    $('plbResetHome').append($('plbReset'));
     table.querySelectorAll('tbody').forEach((n) => n.remove());
     const addInput = $('plbAdd');
     addInput.disabled = !state.ctx;
@@ -1680,7 +1676,8 @@
     table.append(regBody);
 
     // New in this plan
-    const newBody = groupBody('new', `${T.newInPlan} · ${T.credits(planCredits())}`, T.mustTake, $('plbReset'));
+    const newBody = groupBody('new', `${T.newInPlan} · ${T.credits(planCredits())}`, T.mustTake);
+    newBody.append(resetRow());
     if (!state.shortlist.length) newBody.append(emptyRow(T.nothingAdded));
     for (const item of state.shortlist) {
       const code = item.course_code;
@@ -1759,8 +1756,20 @@
   }
   // The list is the suggested one (every field the build reads, in the same order): nothing to reset.
   const isSuggested = () => JSON.stringify(state.shortlist) === JSON.stringify(state.suggested);
+  // "Reset to suggestions": a row of its own under the group's title, so the title stays the group's name.
+  function resetRow() {
+    const button = el('button', 'plb-lk', T.resetPlan);
+    button.type = 'button';
+    button.id = 'plbReset';
+    button.dataset.act = 'reset';
+    button.disabled = true;
+    const cell = el('td', 'plb-grp-act', button);
+    cell.colSpan = 4;
+    return el('tr', 'plb-grp-link', cell);
+  }
   function renderReset() {
-    $('plbReset').disabled = !state.ctx || isSuggested();
+    const button = $('plbReset');
+    if (button) button.disabled = !state.ctx || isSuggested();
   }
   function resetToSuggestions() {
     if (!state.ctx || isSuggested()) return;
@@ -1770,7 +1779,8 @@
     setStatus('ok', T.resetDone(state.shortlist.length));
     renderCourses();
     if (state.build) renderWeek();
-    if ($('plbReset').disabled && !$('plbAdd').disabled) $('plbAdd').focus();
+    const reset = $('plbReset');
+    if (reset && reset.disabled && !$('plbAdd').disabled) $('plbAdd').focus();
   }
   function renderCreditsHeader() {
     renderReset();
@@ -3219,7 +3229,6 @@
   /* ── Wiring ────────────────────────────────────────────────────────────── */
   function wire() {
     $('plbLoad').addEventListener('submit', (event) => { event.preventDefault(); loadStudent(); });
-    $('plbReset').addEventListener('click', resetToSuggestions);
     // A click anywhere during a load means the user has moved on: Fetch does not take the keyboard back.
     document.addEventListener('pointerdown', () => { state.fetchKeyboard = false; }, true);
     $('plbEditRules').addEventListener('click', () => openRulesDialog());
@@ -3232,6 +3241,14 @@
     });
     $('plbMaxIn').addEventListener('blur', commitMaxInPlace);
     $('plbRulesCancel').addEventListener('click', closeRulesDialog);
+    // A dialog opened by the Eligibility switch hands the keyboard back to it, however it closes.
+    $('plbRulesDialog').addEventListener('close', () => {
+      const dialog = $('plbRulesDialog');
+      if (dialog.dataset.from !== 'eligibility') return;
+      delete dialog.dataset.from;
+      const on = document.querySelector('input[name="plbEligIn"]:checked');
+      if (on) on.focus();
+    });
     $('plbRulesReset').addEventListener('click', () => fillRulesDialog(state.defaults));
     $('plbRulesForm').addEventListener('submit', (event) => { event.preventDefault(); applyRulesDialog(); });
 
@@ -3242,7 +3259,8 @@
       if (target.dataset.act === 'detail') {
         if (state.detail && state.detail.code === code) closeDetail(true);
         else openDetail(code);
-      } else if (target.dataset.act === 'remove') removeCourseFromPlan(code);
+      } else if (target.dataset.act === 'reset') resetToSuggestions();
+      else if (target.dataset.act === 'remove') removeCourseFromPlan(code);
       else if (target.dataset.act === 'add') {
         const course = planPool().find((c) => c.code === code);
         if (course) addCourseToPlan(itemFromPlan(course));

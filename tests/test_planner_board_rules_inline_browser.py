@@ -11,10 +11,12 @@ from __future__ import annotations
 import re
 
 from tests.planner_board_support import (
+    OTHER_ID,
     OVERFLOWS,
     STUDENT_ID,
     BuildFake,
     PlannerBoardCase,
+    context_for,
     expect,
 )
 
@@ -214,9 +216,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page = self._open(BuildFake())
         page.fill("#plbMaxIn", "16")
         page.press("#plbMaxIn", "Enter")
-        self.assertEqual(
-            self._text(page, "#plbRules1"), "Keep Registered · Strict eligibility · Max credits 16"
-        )
+        self.assertEqual(self._rules_now(page), {"mode": "keep", "elig": "strict", "max": "16"})
         self.assertEqual(self._text(page, "#plbCredits"), "15 of 16 cr · 1 free")
         page.fill("#plbMaxIn", "17")
         page.press("#plbMaxIn", "Tab")
@@ -225,7 +225,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         # Empty is "not set", as in the dialog.
         page.fill("#plbMaxIn", "")
         page.press("#plbMaxIn", "Enter")
-        self.assertIn("Max credits not set", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["max"], "")
 
     def test_an_invalid_max_credits_is_refused_with_the_dialogs_message(self) -> None:
         for bad in ("0", "20", "abc", "1.5", "-3", "100"):
@@ -279,7 +279,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page.keyboard.press("ArrowDown")
         expect(page.locator("#plbRegIgnore")).to_be_checked()
         expect(page.locator("#plbRegIgnore")).to_be_focused()
-        self.assertEqual(self._text(page, "#plbRules1").split(" · ")[0], "Ignore Registered")
+        self.assertEqual(self._rules_now(page)["mode"], "ignore")
         page.keyboard.press("ArrowUp")
         expect(page.locator("#plbRegKeep")).to_be_checked()
         page.focus("#plbEligStrict")
@@ -300,7 +300,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         )
         page.click("#plbRegIgnore")
         expect(page.locator("#plbRegIgnore")).to_be_checked()
-        self.assertIn("تجاهل المسجّل", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["mode"], "ignore")
         page.fill("#plbMaxIn", "99")
         page.press("#plbMaxIn", "Enter")
         expect(page.locator("#plbMaxInErr")).to_have_text("أدخل عددًا صحيحًا من 1 إلى 19.")
@@ -314,7 +314,6 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self.assertEqual(
             self._text(page, "#plbRules2"), "This programme only · No full sections · No swaps"
         )
-        expect(page.locator("#plbRules1")).to_be_hidden()  # the controls say it
         page.click("#plbEditRules")
         expect(page.locator("#plbRulesDialog")).to_be_visible()
         expect(page.locator("#plbRuleProg")).to_be_visible()
@@ -333,10 +332,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         expect(page.locator("#plbRulesDialog")).not_to_be_visible()  # no list to lose
         page.fill("#plbMaxIn", "15")
         page.press("#plbMaxIn", "Enter")
-        self.assertEqual(
-            self._text(page, "#plbRules1"),
-            "Ignore Registered · Relaxed eligibility · Max credits 15",
-        )
+        self.assertEqual(self._rules_now(page), {"mode": "ignore", "elig": "relaxed", "max": "15"})
         self.assertEqual(fake.context_bodies, [])  # no student: nothing to reload
         self._fetch(page, STUDENT_ID)
         expect(page.locator("#plbTable tbody[data-group='blocked']")).to_be_visible()
@@ -461,21 +457,26 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         )  # as quiet as the other disabled one
 
     # ── the layout ──────────────────────────────────────────────────────────
-    def test_reset_to_suggestions_sits_in_the_new_group_header_before_must_take(self) -> None:
+    def test_reset_to_suggestions_is_a_cell_of_its_own_and_the_group_keeps_its_name(self) -> None:
         for language in ("en", "ar"):
             with self.subTest(language=language):
                 page = self._open(BuildFake(), language=language)
-                inside = page.evaluate(
-                    "!!document.querySelector(\"#plbTable tbody[data-group='new'] .plb-grp th #plbReset\")"
+                group = "#plbTable tbody[data-group='new']"
+                self.assertTrue(
+                    page.evaluate(
+                        f'!!document.querySelector("{group} tr.plb-grp-link td #plbReset")'
+                    )
                 )
-                self.assertTrue(inside)
                 self.assertFalse(page.evaluate("!!document.querySelector('.plb-ph #plbReset')"))
-                reset = page.evaluate(BOX, "#plbReset")
-                must = page.evaluate(BOX, "#plbTable tbody[data-group='new'] .plb-grp td")
+                # the title cell holds the group's name and nothing else
+                self.assertEqual(page.locator(f"{group} th button").count(), 0)
+                title = self._text(page, f"{group} th")
+                expect(page.locator(f"{group} th")).to_have_accessible_name(title)
                 if language == "en":
-                    self.assertLessEqual(reset["r"], must["l"] + 1)
-                else:
-                    self.assertGreaterEqual(reset["l"], must["r"] - 1)
+                    self.assertEqual(title, "New in this plan · 6 cr")
+                head = page.evaluate(BOX, f"{group} th")
+                reset = page.evaluate(BOX, "#plbReset")
+                self.assertGreaterEqual((reset["t"] + reset["b"]) / 2, head["b"] - 1)
                 page.context.close()
 
     def test_reset_in_its_new_place_still_resets(self) -> None:
@@ -530,6 +531,108 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
                     )
                     self.assertEqual(page.evaluate(OVERFLOWS), [])
                     page.context.close()
+
+    # ── digits, and what the field says after it applies ────────────────────
+    def test_arabic_indic_and_persian_digits_are_read_as_digits_by_the_field_and_the_dialog(
+        self,
+    ) -> None:
+        for typed, want in (("١٥", "15"), ("۱۲", "12")):
+            with self.subTest(typed=typed, entry="field"):
+                page = self._open(BuildFake())
+                page.fill("#plbMaxIn", typed)
+                page.press("#plbMaxIn", "Enter")
+                expect(page.locator("#plbMaxInErr")).to_be_hidden()
+                self.assertEqual(self._rules_now(page)["max"], want)
+                self.assertEqual(
+                    self._text(page, "#plbCredits"),
+                    f"15 of {want} cr · 0 free" if want == "15" else f"15 of {want} cr · 3 over",
+                )
+                page.context.close()
+            with self.subTest(typed=typed, entry="dialog"):
+                page = self._open(BuildFake())
+                page.click("#plbEditRules")
+                page.fill("#plbRuleMax", typed)
+                page.click("#plbRulesApply")
+                expect(page.locator("#plbRulesDialog")).not_to_be_visible()
+                self.assertEqual(self._rules_now(page)["max"], want)
+                page.context.close()
+
+    def test_the_field_shows_what_was_applied(self) -> None:
+        page = self._open(BuildFake())
+        page.fill("#plbMaxIn", "016")
+        page.press("#plbMaxIn", "Enter")
+        self.assertEqual(self._rules_now(page)["max"], "16")
+        page.fill("#plbMaxIn", "017")
+        page.press("#plbMaxIn", "Tab")
+        self.assertEqual(self._rules_now(page)["max"], "17")
+        page.fill("#plbMaxIn", "١٨")
+        page.press("#plbMaxIn", "Tab")
+        self.assertEqual(self._rules_now(page)["max"], "18")
+        # a refused value is left as typed, with the refusal beside it
+        page.fill("#plbMaxIn", "00")
+        page.press("#plbMaxIn", "Enter")
+        self.assertEqual(self._rules_now(page)["max"], "00")
+        expect(page.locator("#plbMaxInErr")).to_be_visible()
+
+    def test_a_loaded_student_updates_the_field_unless_it_is_being_edited(self) -> None:
+        fake = BuildFake()
+        caps = {STUDENT_ID: 18, OTHER_ID: 16}
+
+        def answer(body):
+            return 200, context_for(
+                str(body["student_id"]),
+                eligibility_mode=body["eligibility_mode"],
+                credit_cap=caps[str(body["student_id"])],
+            )
+
+        fake.context_answer = answer
+        page = self._open(fake)
+        self._fetch(page, OTHER_ID)
+        expect(page.locator("#plbMaxIn")).to_have_value("16")
+        # In the middle of typing: the next student's cap does not overwrite it.
+        page.focus("#plbMaxIn")
+        page.keyboard.type("9")
+        typed = page.input_value("#plbMaxIn")
+        page.evaluate(
+            f"document.getElementById('plbStudentId').value = '{STUDENT_ID}';"
+            "document.getElementById('plbLoad').requestSubmit();"
+        )
+        expect(page.locator("#plbContext")).to_have_text(f"{STUDENT_ID} · 1448/1")
+        self.assertEqual(page.input_value("#plbMaxIn"), typed)
+        expect(page.locator("#plbMaxIn")).to_be_focused()
+        # Out of the field, the next load puts the student's cap there.
+        page.fill("#plbMaxIn", "18")
+        page.press("#plbMaxIn", "Tab")
+        self._fetch(page, OTHER_ID)
+        expect(page.locator("#plbContext")).to_have_text(f"{OTHER_ID} · 1448/1")
+        expect(page.locator("#plbMaxIn")).to_have_value("16")
+
+    # ── the keyboard on the Eligibility switch ──────────────────────────────
+    def test_an_arrow_key_on_eligibility_over_a_changed_list_opens_the_dialog_and_cancel_returns(
+        self,
+    ) -> None:
+        page, fake = self._changed_list()
+        page.focus("#plbEligStrict")
+        page.keyboard.press("ArrowDown")
+        expect(page.locator("#plbRulesDialog")).to_be_visible()
+        self.assertEqual(page.input_value("#plbRuleElig"), "relaxed")
+        expect(page.locator("#plbRuleElig")).to_be_focused()
+        self.assertEqual(len(fake.context_bodies), 1)
+        page.click("#plbRulesCancel")
+        expect(page.locator("#plbRulesDialog")).not_to_be_visible()
+        expect(page.locator("#plbEligStrict")).to_be_checked()
+        expect(page.locator("#plbEligStrict")).to_be_focused()
+        # Escape gives it back too, and the arrow works again from there.
+        page.keyboard.press("ArrowDown")
+        expect(page.locator("#plbRulesDialog")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(page.locator("#plbEligStrict")).to_be_focused()
+        self.assertEqual(self._rows(page, "new"), ["AI331"])
+        # Apply rules lands on the switch as well, now showing the new rule.
+        page.keyboard.press("ArrowDown")
+        page.click("#plbRulesApply")
+        expect(page.locator("#plbEligRelaxed")).to_be_checked()
+        expect(page.locator("#plbEligRelaxed")).to_be_focused()
 
 
 def BuildFake_default_body() -> dict:

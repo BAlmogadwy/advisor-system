@@ -8741,7 +8741,6 @@ html[data-theme="dark"] .plb {
 .plb-rules { display: flex; flex-direction: column; margin-top: 4px; }
 .plb-rh { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 16px; }
 .plb-rl { margin: 0; font-size: var(--text-xs); line-height: 16px; color: var(--t2); }
-.plb-rl[hidden] { display: none; }
 /* The rules an adviser changes on almost every student, one click away: two two-way switches and a number. */
 .plb-rc { display: flex; flex-direction: column; gap: 4px; margin-block: 6px 4px; }
 .plb-rc-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; min-width: 0; }
@@ -8999,9 +8998,10 @@ div.plb-dt-sec { cursor: default; }
 .plb-why-p { margin: 0; }
 .plb-stat:lang(ar) { padding-inline: 6px; }
 .plb-grp .plb-grp-end { white-space: nowrap; }
-/* "Reset to suggestions" closes the title cell of "New in this plan", just before "Must-take"; it wraps under the title when the pane is narrow. */
-.plb-grp-in { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 12px; }
-.plb-grp-in > .plb-lk { margin-block: -6px; }
+/* "Reset to suggestions": a row of its own under the group's title, at the end of the line. */
+.plb-tbl .plb-grp-act { padding: 0; text-align: end; }
+.plb-grp-act .plb-lk { margin-block: -6px; }
+.plb-grp-link + .plb-tr > td { border-top: 0; }
 
 /* the guidance column, option names, and the planned blocks of the week that open the detail.
    Everything wraps: nothing here is sized to a text width. */
@@ -9215,7 +9215,7 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
   .plb-ib, .plb-tickwrap { min-width: var(--control-h-lg); min-height: var(--control-h-lg); }
   .plb-ib { width: var(--control-h-lg); height: var(--control-h-lg); }
   .plb-gh .plb-lk { margin-block: 0; }
-  .plb-view, .plb-grp-in > .plb-lk { margin-block: 0; }
+  .plb-view, .plb-grp-act .plb-lk { margin-block: 0; }
   .plb-load .btn.btn-sm { min-height: var(--control-h-lg); }
   .plb-sc-btn { padding-block: calc((var(--control-h-lg) - 16px) / 2); margin-block: calc((16px - var(--control-h-lg)) / 2); }
   .plb-dt-close, .plb-dt-sec, .plb-dt-must, .plb-why-btn, .plb .plb-detail .btn { min-height: var(--control-h-lg); }
