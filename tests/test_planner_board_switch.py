@@ -1,11 +1,15 @@
 """The new planner screen is reachable only through a switch.
 
-`PLANNER_BOARD_ENABLED` (default off) picks which template /planner/ renders;
+`PLANNER_BOARD_ENABLED` (default off; on for the live site through render.yaml) picks
+which template /planner/ renders;
 `?layout=board` and `?layout=classic` let staff open either one while both
 exist. The staff rule is the same for both.
 """
 
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -66,6 +70,29 @@ class TestSwitch:
     @override_settings(PLANNER_BOARD_ENABLED=True)
     def test_an_unknown_layout_value_keeps_the_default_when_on(self, staff_client: Client) -> None:
         assert BOARD in _templates(staff_client.get("/planner/?layout=nonsense"))
+
+    def test_production_turns_the_board_on_and_nothing_else_does(self) -> None:
+        # The live site serves the board: render.yaml sets it for the web service and for no
+        # other service. The setting's default stays off, so local runs and the tests keep the
+        # old page until it is retired.
+        from django.conf import settings
+
+        from scripts.validate_render_blueprint import load_blueprint
+
+        base = Path(settings.BASE_DIR)
+        services = {
+            service["name"]: {env["key"]: env for env in service.get("envVars") or []}
+            for service in load_blueprint(base / "render.yaml")["services"]
+        }
+        assert services["advisor-system"]["PLANNER_BOARD_ENABLED"] == {
+            "key": "PLANNER_BOARD_ENABLED",
+            "value": "true",
+        }
+        assert [name for name, env in services.items() if "PLANNER_BOARD_ENABLED" in env] == [
+            "advisor-system"
+        ]
+        source = (base / "config" / "settings.py").read_text(encoding="utf-8")
+        assert re.search(r'os\.getenv\("PLANNER_BOARD_ENABLED", "false"\)', source)
 
     def test_the_setting_defaults_to_off(self) -> None:
         from django.conf import settings

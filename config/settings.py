@@ -270,8 +270,9 @@ STUDENT_ADVISOR_V2_ENABLED = os.getenv("STUDENT_ADVISOR_V2_ENABLED", "true").low
 # an explicit rollback target; the runtime dispatcher enforces that invariant.
 STUDENT_ADVISOR_V21_ENABLED = os.getenv("STUDENT_ADVISOR_V21_ENABLED", "false").lower() == "true"
 # The new staff planner screen (core/templates/core/planner_board.html). Off by
-# default: /planner/ keeps serving the current page. Staff can open either one
-# while both exist with ?layout=board or ?layout=classic.
+# default here and in the tests, so the old page and its tests keep running until
+# it is retired; the live site turns it on in render.yaml. While both exist, staff
+# can open either one with ?layout=board or ?layout=classic.
 PLANNER_BOARD_ENABLED = os.getenv("PLANNER_BOARD_ENABLED", "false").lower() == "true"
 # Local V2.1 browser launcher. DEBUG, this explicit switch, a loopback peer, and
 # an authenticated superuser are all required by the view; false is the only safe
