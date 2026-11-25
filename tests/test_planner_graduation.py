@@ -173,3 +173,72 @@ def test_working_or_expected_timetable_cannot_stand_in_for_registration():
     assert result["baseline"]["reason_code"] == "no_registered_timetable"
     assert result["options"]["A1"]["terms_including_planning_term"] == 4
     assert result["options"]["A1"]["delta_terms"] is None
+
+
+def _row(year, term, credits, waiting=False):
+    return {"academic_year": year, "term": term, "credits": credits, "waiting": waiting}
+
+
+def test_credits_by_term_for_baseline_and_option_are_literal():
+    sections = _seed_curriculum()
+    result = _compare(
+        [_option("A1", sections["AI331", "M1"]), _option("B1", sections["STAT305", "M1"])]
+    )
+    # Registered CS301 only: 3 cr now, a waiting term (AI331 must come first), then the rest.
+    assert result["baseline"]["credits_by_term"] == [
+        _row(1448, 1, 3),
+        _row(1448, 2, 0, True),
+        _row(1449, 1, 6),
+        _row(1449, 2, 6),
+        _row(1450, 1, 3),
+    ]
+    # CS301 + AI331 now (6 cr), then the gateway lets the chain run without a gap.
+    assert result["options"]["A1"]["credits_by_term"] == [
+        _row(1448, 1, 6),
+        _row(1448, 2, 3),
+        _row(1449, 1, 6),
+        _row(1449, 2, 3),
+    ]
+    assert result["options"]["B1"]["credits_by_term"][:2] == [
+        _row(1448, 1, 6),
+        _row(1448, 2, 0, True),
+    ]
+
+
+def test_credits_by_term_length_and_last_entry_match_the_completion():
+    sections = _seed_curriculum()
+    result = _compare(
+        [_option("A1", sections["AI331", "M1"]), _option("B1", sections["STAT305", "M1"])]
+    )
+    for row in (result["baseline"], *result["options"].values()):
+        rows = row["credits_by_term"]
+        assert len(rows) == row["terms_including_planning_term"]
+        assert (rows[-1]["academic_year"], rows[-1]["term"]) == (
+            row["completion_academic_year"],
+            row["completion_term"],
+        )
+        assert rows[0]["waiting"] is False
+        assert set(rows[0]) == {"academic_year", "term", "credits", "waiting"}
+
+
+def test_credits_by_term_is_empty_when_unresolved_or_unavailable():
+    sections = _seed_curriculum()
+    Prerequisite.objects.create(
+        program="PLN", course_code="AI480", prerequisite_course_code="NEVER100"
+    )
+    result = _compare([_option("A1", sections["AI331", "M1"])])
+    assert result["baseline"]["status"] == "unresolved"
+    assert result["baseline"]["credits_by_term"] == []
+    assert result["options"]["A1"]["credits_by_term"] == []
+
+    from core.services.planner_graduation import compare_planner_graduation
+
+    summer = compare_planner_graduation(
+        student_id=STUDENT_ID,
+        year=YEAR,
+        term=3,
+        options=[_option("A1", sections["AI331", "M1"])],
+    )
+    assert summer["baseline"]["status"] == "unavailable"
+    assert summer["baseline"]["credits_by_term"] == []
+    assert summer["options"]["A1"]["credits_by_term"] == []

@@ -228,6 +228,48 @@
       : (n ? `${n} ${n === 1 ? 'option' : 'options'}` : 'no option')),
     whyUnscheduled: IS_AR ? 'مقررات غير مجدولة' : 'Courses left unscheduled',
     whyAllPlaced: IS_AR ? 'جُدول كل مقرر في الخطة في كل خيار.' : 'Every course in the plan was scheduled in each option.',
+    // Projected graduation (the wording is the current page's, page-planner.js PROJECTION_TEXT).
+    gradNone: IS_AR ? 'ابنِ الخيارات لعرض التوقع.' : 'Build options to see the projection.',
+    gradLoading: IS_AR ? 'جارٍ حساب الإكمال المتوقع…' : 'Calculating projected completion…',
+    gradExpired: IS_AR ? 'أعد بناء الخيارات لتحديث التوقع.' : 'Build the options again to refresh the projection.',
+    gradUnavailable: IS_AR ? 'التوقع غير متاح' : 'Projection unavailable',
+    gradBusy: IS_AR ? 'طلبات كثيرة جدًا. حاول بعد لحظات.' : 'Too many requests. Try again in a moment.',
+    gradRetry: IS_AR ? 'حاول مرة أخرى' : 'Try again',
+    gradUnresolved: IS_AR ? 'تعذّر تحديد فصل الإكمال' : 'Completion term unresolved',
+    gradNoReg: IS_AR ? 'لا يوجد تسجيل رسمي لهذا الفصل' : 'No registrar registration for this term',
+    gradSame: IS_AR ? 'نفس فصل التسجيل الحالي' : 'Same completion term',
+    gradAsRegistered: IS_AR ? 'كما هو مسجّل' : 'As registered',
+    gradPerTerm: IS_AR ? 'الساعات في كل فصل' : 'Credits per term',
+    gradReasons: IS_AR ? 'أسباب على مستوى المقررات' : 'Course-level reasons',
+    gradWaiting: IS_AR ? 'لا يمكن دراسة أي مقرر في هذا الفصل' : 'No course can be taken in this term',
+    gradNoCourses: IS_AR ? 'بلا مقررات' : 'no courses',
+    gradRetainedExpected: IS_AR
+      ? 'يتضمن الخيار المقررات المحتفَظ بها من الخطة المتوقعة.'
+      : 'This option includes retained courses from the expected plan.',
+    gradRetainedWorking: IS_AR
+      ? 'يتضمن الخيار المقررات المحتفَظ بها من الجدول قيد العمل.'
+      : 'This option includes retained courses from the working timetable.',
+    // "Term 2, 1449": the year is a left-to-right island of its own.
+    gradTerm: (year, term) => (IS_AR ? [`الفصل ${term}، `, bdi(year)] : [`Term ${term}, `, bdi(year)]),
+    gradTermWord: (n) => (IS_AR
+      ? (n === 1 ? 'فصل' : n === 2 ? 'فصلان' : n <= 10 ? 'فصول' : 'فصلًا')
+      : (n === 1 ? 'term' : 'terms')),
+    gradTermCount: (n) => (IS_AR
+      ? (n === 1 ? 'فصل واحد' : n === 2 ? 'فصلان' : `${n} ${n <= 10 ? 'فصول' : 'فصلًا'}`)
+      : `${n} ${n === 1 ? 'term' : 'terms'}`),
+    gradTiming: (delta) => {
+      const n = Math.abs(delta);
+      if (!IS_AR) return `${n} ${n === 1 ? 'term' : 'terms'} ${delta < 0 ? 'sooner' : 'later'}`;
+      let label = `بـ${n} ${n <= 10 ? 'فصول' : 'فصلًا'}`;
+      if (n === 1) label = 'بفصل واحد';
+      if (n === 2) label = 'بفصلين';
+      return delta < 0 ? `أبكر ${label}` : `أبعد ${label}`;
+    },
+    gradAssumes: (planning, cap) => (IS_AR
+      ? ['يشمل هذا الفصل (', bdi(planning), ') · يفترض اجتياز المقررات · حتى ', `${cap} ${cap === 1 ? 'ساعة' : cap === 2 ? 'ساعتان' : cap <= 10 ? 'ساعات' : 'ساعة'}`, ' في كل فصل لاحق']
+      : ['Includes this term (', bdi(planning), ') · assumes courses are passed · up to ', `${cap} cr`, ' per future term']),
+    gradCompletes: IS_AR ? '، يكتمل في ' : ', completes ',
+    gradSep: IS_AR ? '، ' : ', ',
   };
 
   const DAY_ORDER = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -279,6 +321,7 @@
     moreOpen: false,   // the "More options" disclosure
     detail: null,      // {code, name, credits}: the course whose detail panel is open
     whyOpen: false,    // the "Why these options" disclosure
+    gradWhy: false,    // the "Course-level reasons" disclosure of the projection band
   };
   const STALE_AFTER_MS = 30 * 60 * 1000;
 
@@ -632,7 +675,9 @@
     const facts2 = $('plbTabFacts2');
     if (!state.ctx) { facts1.textContent = '—'; facts2.textContent = ''; return; }
     const facts = factsOf(model);
-    facts1.textContent = facts.first;
+    const projection = projectionOf();
+    const terms = projection ? termsNode(projection.baseline) : null;
+    facts1.replaceChildren(...present(terms, terms ? ' · ' : null, facts.first));
     facts2.replaceChildren(...facts.second);
   }
   function weekBlock(m, rowStart, rowEnd, col) {
@@ -813,6 +858,7 @@
   function optionTab(opt, alike) {
     const facts = factsOf(weekModel(weekMeetings(opt)));
     const unplaced = unplacedFor(opt).length;
+    const terms = termsNode(forecastFor(opt.name));
     const seats = fewestSeats(opt);
     const flags = [unplaced ? T.notScheduled(unplaced) : null, seats === null ? null : T.seatsLeft(seats)].filter(Boolean);
     const selected = state.selected === opt.name;
@@ -820,7 +866,7 @@
     const also = (opt.aliases || []).map((a) => el('span', 'plb-tab-aka', ' | ', bdi(a.name)));
     const tab = el('button', 'plb-tab',
       el('span', 'plb-tab-n', bdi(opt.name), ...also, ' ', el('span', 'plb-tab-cr', `· ${T.credits(optionCredits(opt))}`)),
-      el('span', 'plb-tab-x', facts.first),
+      el('span', 'plb-tab-x', ...present(terms, terms ? ' · ' : null, facts.first)),
       el('span', 'plb-tab-x', ...facts.second),
       alike ? differenceLine(opt, state.build.options) : null,
       flags.length ? el('span', 'plb-tab-x plb-tab-warn', flags.join(' · ')) : null);
@@ -848,7 +894,8 @@
     list.hidden = !state.moreOpen;
     for (const opt of hidden) {
       const facts = factsOf(weekModel(weekMeetings(opt)));
-      const item = el('button', 'plb-more-item', bdi(opt.name), ` · ${T.credits(optionCredits(opt))} · ${facts.first}`);
+      const terms = termsNode(forecastFor(opt.name));
+      const item = el('button', 'plb-more-item', bdi(opt.name), ` · ${T.credits(optionCredits(opt))} · `, ...present(terms, terms ? ' · ' : null), facts.first);
       item.type = 'button';
       item.dataset.more = opt.name;
       list.append(item);
@@ -1387,6 +1434,7 @@
     state.build = null;
     state.selected = null;
     state.moreOpen = false;
+    state.gradWhy = false;
     if (say) setBuildLine('warn', T.planChanged);
     else setBuildLine('');
     renderStrip();
@@ -1488,6 +1536,7 @@
     if (stale) $('plbReview').setAttribute('aria-describedby', 'plbBuildLine');
     else $('plbReview').removeAttribute('aria-describedby');
     renderWhy();
+    renderGrad();
     const last = $('plbLastBuild');
     if (state.build) last.replaceChildren(`${T.lastBuild} `, bdi(state.build.at));
     else last.replaceChildren();
@@ -1547,6 +1596,308 @@
     if (focus) $('plbWhyBtn').focus();
   }
 
+  /* ── Projected graduation ──────────────────────────────────────────────── */
+  const isObj = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+  const termLabel = (pos) => `${pos.academic_year}/${pos.term}`;
+  // The reply of the projection endpoint, once it is believed; null before, and for any other state.
+  function projectionOf() {
+    const projection = state.build && state.build.projection;
+    return projection && projection.state === 'ready' ? projection : null;
+  }
+  // What the forecast says about one option: its row, "unavailable" when the reply has none, null when
+  // there is no projection to read.
+  function forecastFor(name) {
+    const projection = projectionOf();
+    if (!projection) return null;
+    const row = projection.options[name];
+    return isObj(row) ? row : { status: 'unavailable' };
+  }
+  const isComplete = (row) => !!row && row.status === 'complete'
+    && Number.isInteger(row.terms_including_planning_term) && row.terms_including_planning_term > 0;
+  // "4 terms" in bold, to open the first facts line of a tab or an item; null when the forecast is not complete.
+  function termsNode(row) {
+    return isComplete(row) ? el('b', 'plb-tab-terms', T.gradTermCount(row.terms_including_planning_term)) : null;
+  }
+  const creditList = (row) => (Array.isArray(row.credits_by_term) ? row.credits_by_term.filter(isObj) : []);
+  const completionParts = (row) => (row.completion_academic_year && row.completion_term
+    ? T.gradTerm(row.completion_academic_year, row.completion_term) : []);
+  function resultOf(delta) {
+    if (!Number.isInteger(delta)) return null;
+    if (delta === 0) return { kind: 'same', text: T.gradSame };
+    return { kind: delta < 0 ? 'sooner' : 'later', text: T.gradTiming(delta) };
+  }
+
+  /* The sentences behind "Course-level reasons": every code the server can send, in the current page's words. */
+  const gradPos = (pos) => (isObj(pos) && pos.academic_year && pos.term ? T.gradTerm(pos.academic_year, pos.term) : []);
+  const joinCodes = (codes) => codes.flatMap((code, i) => (i ? [T.gradSep, bdi(code)] : [bdi(code)]));
+  function gradReason(reason) {
+    if (!isObj(reason)) return null;
+    const course = reason.course_code ? bdi(reason.course_code) : '';
+    const related = reason.related_course_code ? bdi(reason.related_course_code) : '';
+    const before = gradPos(reason.before);
+    const after = gradPos(reason.after);
+    switch (reason.code) {
+      case 'same_course_set':
+        return [IS_AR ? 'يتضمن الخيار المقررات نفسها في التسجيل الحالي.' : 'This option includes the same courses as current registration.'];
+      case 'course_moved_earlier':
+      case 'course_moved_later':
+        return IS_AR ? ['انتقل ', course, ' من ', ...before, ' إلى ', ...after, '.'] : [course, ' moves from ', ...before, ' to ', ...after, '.'];
+      case 'prerequisite_moved_earlier':
+      case 'prerequisite_moved_later': {
+        const earlier = reason.code === 'prerequisite_moved_earlier';
+        if (IS_AR) {
+          return ['انتقل المتطلب السابق ', course, ' من ', ...before, ' إلى ', ...after, '، وانتقل المقرر ', related,
+            earlier ? ' أيضًا إلى فصل أبكر.' : ' أيضًا إلى فصل لاحق.'];
+        }
+        return ['Prerequisite ', course, ' moves from ', ...before, ' to ', ...after, '. Its dependent course ', related,
+          earlier ? ' also moves earlier.' : ' also moves later.'];
+      }
+      case 'requirement_resolved':
+        return IS_AR ? ['أمكن إدراج ', course, ' في التوقع.'] : [course, ' can now be placed in the projection.'];
+      case 'requirement_unresolved':
+        return IS_AR ? ['تعذّر إدراج ', course, ' في التوقع.'] : [course, ' could not be placed in the projection.'];
+      case 'course_added':
+        return IS_AR ? ['يتضمن هذا الخيار ', course, ' في فصل التخطيط.'] : ['This option includes ', course, ' in the planning term.'];
+      case 'course_removed':
+        return IS_AR ? ['يخلو هذا الخيار من ', course, ' في فصل التخطيط.'] : ['This option omits ', course, ' from the planning term.'];
+      case 'academic_plan_unavailable':
+        return [IS_AR ? 'الخطة الدراسية غير متاحة.' : 'The academic plan is unavailable.'];
+      case 'no_registered_timetable':
+        return [IS_AR ? 'يلزم وجود جدول مسجّل رسميًا لمقارنة موعد التخرّج.' : 'A registrar timetable is needed to compare graduation dates.'];
+      case 'unsupported_planning_term':
+        return [IS_AR ? 'يشمل توقع التخرّج الفصلين الدراسيين الأول والثاني فقط.' : 'Graduation forecasts are available for regular terms 1 and 2.'];
+      case 'unmet_course_prerequisites': {
+        const missing = joinCodes(Array.isArray(reason.missing_prerequisites) ? reason.missing_prerequisites : []);
+        return IS_AR
+          ? ['لم تكتمل متطلبات ', course, ' قبل فصل التخطيط: ', ...missing, '.']
+          : [course, ' requires ', ...missing, ' before the planning term.'];
+      }
+      case 'section_metadata_unavailable':
+        return [IS_AR ? 'بيانات إحدى الشعب غير كافية لحساب التوقع.' : 'Section data is incomplete for this projection.'];
+      default:
+        return null;
+    }
+  }
+  function gradBlocked(requirement) {
+    const code = bdi(requirement.code);
+    const prerequisites = Array.isArray(requirement.missing_course_prerequisites) ? requirement.missing_course_prerequisites : [];
+    const gates = [];
+    if (prerequisites.length) gates.push([IS_AR ? 'المتطلبات السابقة المتبقية ' : 'missing prerequisites ', ...joinCodes(prerequisites)]);
+    const hours = requirement.credit_hour_gate ? Number(requirement.credit_hour_gate.remaining) : 0;
+    if (hours > 0) gates.push([IS_AR ? `الساعات الإضافية المطلوبة ${hours}` : `${hours} more credits required`]);
+    if (requirement.project_sequence_gate) gates.push([IS_AR ? 'قيد تسلسل مقررات المشروع' : 'project sequence requirement']);
+    if (!gates.length) return IS_AR ? ['تعذّر إدراج ', code, ' في التوقع.'] : [code, ' could not be placed in the projection.'];
+    return [code, ' · ', ...gates.flatMap((gate, i) => (i ? [T.gradSep, ...gate] : gate))];
+  }
+  // An option's reasons, then the requirements it cannot place. A "could not be placed" reason is
+  // skipped when the same course is listed as a blocked requirement (the current page's rule).
+  function gradWhyItems(row) {
+    const blocking = (Array.isArray(row.unresolved_requirements) ? row.unresolved_requirements : []).filter(isObj);
+    const detailed = new Set(blocking.map((r) => r.code));
+    const items = (Array.isArray(row.reasons) ? row.reasons : [])
+      .filter((r) => !(isObj(r) && r.code === 'requirement_unresolved' && detailed.has(r.course_code)))
+      .map(gradReason).filter(Boolean);
+    items.push(...blocking.map(gradBlocked));
+    return items;
+  }
+
+  /* The runway: two lines on one term axis. */
+  function tickNodes(list) {
+    return list.map((entry, i) => {
+      const waiting = !!entry.waiting;
+      const credits = Number(entry.credits) || 0;
+      const tick = el('div', `plb-tk${waiting ? ' plb-tk--wait' : ''}${i === list.length - 1 ? ' plb-tk--end' : ''}`,
+        waiting ? '–' : String(credits),
+        i === 0 && !waiting ? el('span', 'plb-u', T.creditUnit(credits)) : null);
+      tick.setAttribute('aria-hidden', 'true');
+      tick.title = waiting ? T.gradWaiting : `${termLabel(entry)} · ${T.credits(credits)}`;
+      return tick;
+    });
+  }
+  // The whole line as one sentence for a screen reader; the ticks and the axis are hidden from it.
+  function gradSentence(labelParts, row, result, list) {
+    const parts = [...labelParts, ': ', T.gradTermCount(row.terms_including_planning_term), T.gradCompletes, ...completionParts(row)];
+    if (result) parts.push(T.gradSep, result.text);
+    parts.push('. ', T.gradPerTerm, ': ');
+    list.forEach((entry, i) => {
+      if (i) parts.push(T.gradSep);
+      parts.push(bdi(termLabel(entry)), ' ', entry.waiting ? T.gradNoCourses : String(Number(entry.credits) || 0));
+    });
+    parts.push('.');
+    return el('p', 'sr-only', ...parts);
+  }
+  function gradNote(kind, row) {
+    if (kind === 'reg' && row && row.reason_code === 'no_registered_timetable') return T.gradNoReg;
+    return row && row.status === 'unresolved' ? T.gradUnresolved : T.gradUnavailable;
+  }
+  function gradLine(kind, row, label, result) {
+    const line = el('div', `plb-rwl plb-rwl--${kind}`);
+    if (!isComplete(row)) {
+      line.classList.add('plb-rwl--note');
+      line.append(
+        el('div', 'plb-rl', el('span', 'plb-st', el('span', 'plb-mic', ...label()))),
+        el('p', 'plb-rwn', gradNote(kind, row)));
+      return line;
+    }
+    const list = creditList(row);
+    const count = row.terms_including_planning_term;
+    const land = el('div', 'plb-land',
+      result ? el('span', 'plb-won', result.text) : null,
+      el('b', '', ...completionParts(row)));
+    if (result) land.firstElementChild.dataset.result = result.kind;
+    land.style.setProperty('--plb-from', String(list.length + 2));
+    line.append(
+      el('div', 'plb-rl',
+        el('span', 'plb-num', String(count)),
+        el('span', 'plb-st', el('b', '', T.gradTermWord(count)), el('span', 'plb-mic', ...label()))),
+      el('i', 'plb-brk'),
+      ...tickNodes(list),
+      land,
+      gradSentence(label(), row, result, list));
+    return line;
+  }
+  function gradAxis(list, cols) {
+    const axis = el('div', 'plb-rwl plb-rwl--ax', el('span', 'plb-axn plb-mic', T.gradPerTerm), el('i', 'plb-brk'));
+    axis.setAttribute('aria-hidden', 'true');
+    // Past eight columns every other label is dropped, starting from the first; the ticks keep a title.
+    const every = cols > 8 ? 2 : 1;
+    for (let i = 0; i < cols; i += 1) {
+      const entry = list[i];
+      axis.append(el('span', `plb-ax${i === 0 ? ' plb-ax--now' : ''}`, entry && i % every === 0 ? bdi(termLabel(entry)) : null));
+    }
+    return axis;
+  }
+  const spanOf = (cols) => (cols <= 5 ? 's' : cols <= 8 ? 'm' : cols <= 14 ? 'l' : 'xl');
+  function gradRunway(projection) {
+    const opt = currentOption();
+    const regRow = isObj(projection.baseline) ? projection.baseline : { status: 'unavailable' };
+    const optRow = opt ? forecastFor(opt.name) : null;
+    const lines = [];
+    if (opt) {
+      const result = isComplete(optRow) && isComplete(regRow) ? resultOf(optRow.delta_terms) : null;
+      lines.push(gradLine('opt', optRow, () => T.optionName(opt.name), result));
+    }
+    lines.push(gradLine('reg', regRow, () => [T.gradAsRegistered], null));
+    const lists = [optRow, regRow].filter(isComplete).map(creditList);
+    const longest = lists.reduce((best, list) => (list.length > best.length ? list : best), []);
+    const cols = longest.length;
+    const runway = el('div', 'plb-rw', ...lines, cols ? gradAxis(longest, cols) : null);
+    runway.dataset.span = spanOf(cols);
+    runway.style.setProperty('--plb-cols', String(Math.max(cols, 1)));
+    return runway;
+  }
+
+  function renderGrad() {
+    const grad = $('plbGrad');
+    const hadFocus = grad.contains(document.activeElement);
+    const line = $('plbGradLine');
+    const retry = $('plbGradRetry');
+    const whyBtn = $('plbGradWhyBtn');
+    const why = $('plbGradWhy');
+    const build = state.build;
+    const projection = build && build.projection ? build.projection : null;
+    const kind = projection ? projection.state : 'none';
+    const sayings = {
+      none: T.gradNone, loading: T.gradLoading, expired: T.gradExpired, unavailable: T.gradUnavailable,
+      busy: T.gradBusy, signedout: T.sessionExpired, ready: '',
+    };
+    grad.dataset.state = kind;
+    if (build && build.stale) grad.dataset.stale = build.stale; else delete grad.dataset.stale;
+    line.textContent = sayings[kind] || '';
+    line.hidden = kind === 'ready';
+    const canRetry = kind === 'unavailable' || kind === 'busy';
+    retry.hidden = !canRetry;
+    retry.textContent = canRetry ? T.gradRetry : '';
+
+    // What follows the line: the runway, the assumptions, the warning and the reasons.
+    const ready = kind === 'ready' ? projection : null;
+    $('plbGradRunway').replaceChildren(...(ready ? [gradRunway(ready)] : []));
+    const asm = $('plbGradAsm');
+    const kept = $('plbGradRetained');
+    const stale = $('plbGradStale');
+    asm.hidden = !ready;
+    kept.hidden = true;
+    stale.hidden = !(ready && build.stale);
+    asm.replaceChildren();
+    kept.replaceChildren();
+    stale.textContent = ready && build.stale ? T.gradExpired : '';
+    let items = [];
+    let disclosure = false;
+    if (ready) {
+      const cap = Number.isFinite(Number(ready.cap)) && Number(ready.cap) > 0 ? Number(ready.cap) : 18;
+      const planning = isObj(ready.planning) && ready.planning.academic_year && ready.planning.term
+        ? termLabel(ready.planning)
+        : (state.ctx ? `${state.ctx.year}/${state.ctx.term}` : '');
+      asm.replaceChildren(...T.gradAssumes(planning, cap));
+      const keptText = { expected_plan: T.gradRetainedExpected, working_timetable: T.gradRetainedWorking }[ready.retainedKind];
+      kept.hidden = !keptText;
+      kept.textContent = keptText || '';
+      const opt = currentOption();
+      if (opt) {
+        const row = forecastFor(opt.name);
+        items = gradWhyItems(row);
+        // A complete forecast keeps its reasons behind the button; one that failed lists them at once.
+        disclosure = isComplete(row) && items.length > 0;
+      }
+    }
+    whyBtn.hidden = !disclosure;
+    whyBtn.setAttribute('aria-expanded', String(state.gradWhy));
+    whyBtn.replaceChildren(T.gradReasons, svg(ICONS.chev, 12));
+    const open = items.length > 0 && (disclosure ? state.gradWhy : true);
+    why.hidden = !open;
+    why.replaceChildren(...(open ? items.map((parts) => el('li', '', ...parts)) : []));
+
+    // A control that was just hidden took the keyboard with it: keep it in the band.
+    if (hadFocus) {
+      const here = document.activeElement;
+      if (!here || !grad.contains(here) || here.closest('[hidden]')) {
+        const next = [retry, whyBtn, line].find((node) => !node.closest('[hidden]')) || grad;
+        next.focus();
+      }
+    }
+  }
+  function setGradWhy(open, focus) {
+    state.gradWhy = open;
+    renderGrad();
+    if (focus && !$('plbGradWhyBtn').hidden) $('plbGradWhyBtn').focus();
+  }
+
+  // One request per build: the options kept on screen are forecast from the build's own signed token.
+  // A reply is believed only if its build is still on screen and it answers the newest request for
+  // it. It is NOT tied to buildGen: a plan or rule change only marks the build out of date, and the
+  // forecast of the options still shown must still arrive.
+  async function loadProjection(build) {
+    const run = (build.projRun += 1);
+    build.projection = { state: 'loading' };
+    renderGrad();
+    let result = null;
+    try { result = await postJson('/ops/planner/graduation-projection/', { token: build.token }); } catch (err) { result = null; }
+    if (state.build !== build || run !== build.projRun) return;
+    let next = { state: 'unavailable' };
+    if (result) {
+      const { response, data } = result;
+      if (sessionGone(response, data)) next = { state: 'signedout' };
+      else if (response.status === 409) next = { state: 'expired' };
+      else if (response.status === 429) next = { state: 'busy' };
+      else if (response.ok && isObj(data) && data.ok && isObj(data.baseline) && isObj(data.options)) {
+        next = {
+          state: 'ready',
+          baseline: data.baseline,
+          options: data.options,
+          retainedKind: data.retained_baseline_kind || null,
+          cap: data.future_max_credits_per_term,
+          planning: data.planning_term,
+        };
+      }
+    }
+    build.projection = next;
+    keepingFocus(() => {
+      renderStrip();
+      renderTab(weekModel(registeredMeetings()));
+      renderActions();
+    });
+  }
+
   // Exactly the body the current page posts for the same choices (page-planner.js, runBuilderRequest).
   function buildBody() {
     return {
@@ -1573,6 +1924,7 @@
     state.selected = null;
     state.moreOpen = false;
     state.whyOpen = false;
+    state.gradWhy = false;
     const gen = ++state.buildGen;
     const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly };
     const shortlist = JSON.parse(JSON.stringify(state.shortlist));
@@ -1611,12 +1963,17 @@
         at: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
         failures: Array.isArray(summary.hard_constraint_failures) ? summary.hard_constraint_failures : [],
         unscheduled: Array.isArray(data.unscheduled) ? data.unscheduled : [],
+        token: typeof data.graduation_projection_token === 'string' ? data.graduation_projection_token : '',
+        projection: null,
+        projRun: 0,
       };
       state.selected = feasible ? String(options[0].name) : null;
       setBuildLine('');
       renderStrip();
       renderWeek();
       renderCourses();
+      // The forecast of what the page kept; no options or no token: no request.
+      if (state.build.options.length && state.build.token) loadProjection(state.build);
     } finally {
       renderActions();
       if (!state.inflight && (hadFocus || document.activeElement === document.body) && !button.disabled) button.focus();
@@ -2010,12 +2367,18 @@
       }
     });
     $('plbWhyBtn').addEventListener('click', () => setWhy(!state.whyOpen, false));
+    $('plbGradWhyBtn').addEventListener('click', () => setGradWhy(!state.gradWhy, false));
+    $('plbGradRetry').addEventListener('click', () => {
+      const build = state.build;
+      if (build && build.token && build.projection && ['unavailable', 'busy'].includes(build.projection.state)) loadProjection(build);
+    });
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
       if (event.target.closest && event.target.closest('#plbDetail')) { event.preventDefault(); closeDetail(true); return; }
       // Only from the disclosure's own corner: Escape in the course search or on a tab is not
       // a request to close this, and must not pull the keyboard away from where it is.
       if (state.whyOpen && event.target.closest && event.target.closest('.plb-acts')) { event.preventDefault(); setWhy(false, true); }
+      if (state.gradWhy && event.target.closest && event.target.closest('#plbGrad')) { event.preventDefault(); setGradWhy(false, true); }
     });
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkAge(); });
     setInterval(checkAge, 60 * 1000);

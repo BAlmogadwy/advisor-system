@@ -333,6 +333,82 @@ def build_reply(options):
 
 
 FIVE = build_reply([B1, B2, B3, C1, C2])
+
+
+# ── The graduation projection (part four): replies of /ops/planner/graduation-projection/ ─────
+def term_rows(values, waiting=(), year=1448, term=1):
+    """credits_by_term for these credits, from the planning term on (1448/1, 1448/2, 1449/1, ...)."""
+    rows = []
+    for i, credits in enumerate(values):
+        rows.append(
+            {"academic_year": year, "term": term, "credits": credits, "waiting": i in waiting}
+        )
+        year, term = (year, 2) if term == 1 else (year + 1, 1)
+    return rows
+
+
+def forecast(values, delta=None, waiting=(), reasons=(), unresolved=(), **extra):
+    """A complete forecast: one tick per entry of `values`; the completion term is the last one."""
+    rows = term_rows(values, waiting)
+    return {
+        "status": "complete",
+        "course_codes": [],
+        "terms_including_planning_term": len(rows),
+        "completion_academic_year": rows[-1]["academic_year"],
+        "completion_term": rows[-1]["term"],
+        "credits_by_term": rows,
+        "unresolved_requirements": list(unresolved),
+        "delta_terms": delta,
+        "reasons": list(reasons),
+        **extra,
+    }
+
+
+NO_FORECAST = {
+    "status": "unavailable",
+    "course_codes": [],
+    "terms_including_planning_term": None,
+    "completion_academic_year": None,
+    "completion_term": None,
+    "credits_by_term": [],
+    "unresolved_requirements": [],
+    "delta_terms": None,
+    "reasons": [{"code": "section_metadata_unavailable"}],
+}
+UNRESOLVED = {**NO_FORECAST, "status": "unresolved", "reasons": []}
+
+
+def projection_reply(baseline, options, **top):
+    return {
+        "ok": True,
+        "planning_term": {"academic_year": 1448, "term": 1},
+        "future_max_credits_per_term": 18,
+        "retained_baseline_kind": None,
+        "baseline": baseline,
+        "options": options,
+        **top,
+    }
+
+
+# What every board test that does not look at the projection gets: nothing is forecast, so the
+# tabs read as they did before the band existed.
+DEFAULT_PROJECTION = projection_reply(
+    {**NO_FORECAST, "kind": None, "reason_code": "no_registered_timetable"},
+    {name: NO_FORECAST for name in ("B1", "B2", "B3", "C1", "C2")},
+)
+REG_FORECAST = forecast([6, 18, 18, 18, 6], kind="registered_timetable", reason_code=None)
+# The mock-up's example: B1 finishes one term sooner than the registered week, B2 in the same term,
+# B3 later (with a term in which no course can be taken), C1 sooner, C2 cannot be resolved.
+READY = projection_reply(
+    REG_FORECAST,
+    {
+        "B1": forecast([15, 18, 18, 15], delta=-1),
+        "B2": forecast([12, 18, 18, 18, 6], delta=0),
+        "B3": forecast([15, 0, 18, 18, 18, 9], delta=1, waiting=(1,)),
+        "C1": forecast([15, 18, 18, 12], delta=-1),
+        "C2": UNRESOLVED,
+    },
+)
 SAVED = {
     "ok": True,
     "inserted": 2,
@@ -404,6 +480,11 @@ class BuildFake(Fake):
         self.pending_save: list = []
         self.saved = False
         self.build_raw = None  # a callable(route) that answers the next build itself
+        self.projection_bodies: list[dict] = []
+        self.projection_answer = lambda body: (200, DEFAULT_PROJECTION)
+        self.hold_projection = 0  # how many of the next projection requests to hold back
+        self.pending_projection: list = []
+        self.projection_raw = None  # a callable(route) that answers the next one itself
         self.context_answer = self._context
 
     def _context(self, body):
@@ -422,6 +503,18 @@ class BuildFake(Fake):
             self.pending_build.append(route)
             return
         status, payload = self.build_answer(route.request.post_data_json)
+        route.fulfill(status=status, json=payload)
+
+    def projection(self, route) -> None:
+        self.projection_bodies.append(route.request.post_data_json)
+        if self.projection_raw is not None:
+            self.projection_raw(route)
+            return
+        if self.hold_projection:
+            self.hold_projection -= 1
+            self.pending_projection.append(route)
+            return
+        status, payload = self.projection_answer(route.request.post_data_json)
         route.fulfill(status=status, json=payload)
 
     def save(self, route) -> None:
@@ -497,6 +590,8 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             context.route("**/ops/planner/build/", fake.build)
         if hasattr(fake, "save"):
             context.route("**/ops/planner/save-student-sections/", fake.save)
+        if hasattr(fake, "projection"):
+            context.route("**/ops/planner/graduation-projection/", fake.projection)
         page = context.new_page()
         page.on("pageerror", lambda error: self.page_errors.append(str(error)))
         if clock:
@@ -529,6 +624,23 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         )
         expect(page.locator("#plbBuild")).to_be_enabled()
         return page, fake
+
+    def _projected(self, reply=None, fake=None, **kwargs):
+        """A built board whose projection has arrived (READY unless a reply is given)."""
+        fake = fake or BuildFake()
+        answer = READY if reply is None else reply
+        fake.projection_answer = lambda body: (200, answer)
+        page, fake = self._built(fake, **kwargs)
+        expect(page.locator("#plbGradLine")).to_be_hidden()
+        return page, fake
+
+    @staticmethod
+    def _grad(page, selector: str) -> list[str]:
+        """The text of every node of the band that matches, whitespace collapsed."""
+        return page.eval_on_selector_all(
+            f"#plbGrad {selector}",
+            "nodes => nodes.map(n => n.textContent.replace(/\\s+/g, ' ').trim())",
+        )
 
     @staticmethod
     def _tab_names(page) -> list[str]:
