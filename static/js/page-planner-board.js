@@ -314,9 +314,9 @@
         ? ['مثل ', bdi(name), ` في ${joined}؛ ${clause[decider]}`, ...values]
         : [`Same ${joined} as `, bdi(name), `; ${clause[decider]}`, ...values];
     },
-    whyNoGap: IS_AR ? 'لا فجوات' : 'none',
+    whyNoGap: IS_AR ? 'بلا فجوات' : 'none',
     whyLevel: (name) => (IS_AR
-      ? ['يتساوى مع ', bdi(name), ' في كل ما سبق؛ وقد أورده البناء أولًا.']
+      ? ['يتساوى مع ', bdi(name), ' في كل المعايير؛ وقد ورد في نتيجة البناء قبله.']
       : ['Level with ', bdi(name), ' on every count; the build listed it first.']),
     whyTimed: (name) => (IS_AR
       ? ['له مواعيد محددة، بخلاف ', bdi(name), '.']
@@ -1125,8 +1125,12 @@
     }
     for (const group of groups.values()) {
       if (group.length < 2) continue;
-      const most = group.reduce((best, row) => (row.days > best.days ? row : best), group[0]);
-      most.said = T.optLighter(most.days);
+      // "Lighter days" is true only of the one week that spreads the same kind of days over more
+      // of them than any other in its group. Weeks with as many days each are not lighter than
+      // one another: they keep the shared name, and the later ones lose it below.
+      const most = Math.max(...group.map((row) => row.days));
+      const widest = group.filter((row) => row.days === most);
+      if (widest.length === 1) widest[0].said = T.optLighter(most);
     }
     const used = new Set();
     for (const row of rows) {

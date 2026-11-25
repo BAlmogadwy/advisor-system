@@ -315,6 +315,17 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         self.assertEqual(said["C1"], "Option C1 · Four lighter days")
         self.assertEqual(said["B1"], "Option B1")
 
+    def test_weeks_with_as_many_days_each_are_not_called_lighter(self) -> None:
+        # Found on real data: two options that differ by one section, as many days each. Neither
+        # is lighter than the other: the first keeps the shared name and the later one goes without.
+        page, _fake = self._board(
+            [
+                week_option("B1", AFTERNOON, (["MON"], "14:00", "15:15")),
+                week_option("B2", AFTERNOON, (["MON"], "15:30", "16:45")),
+            ]
+        )
+        self.assertEqual(self._names_on_tabs(page), {"B1": "Two afternoons", "B2": None})
+
     def test_names_in_arabic(self) -> None:
         page, _fake = self._board(
             [
@@ -536,7 +547,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         )
         page, _ = self._suggest(same, self._same_terms(["B1", "B2"]), language="ar")
         self.assertEqual(
-            self._sentences(page)[0], "يتساوى مع B2 في كل ما سبق؛ وقد أورده البناء أولًا."
+            self._sentences(page)[0], "يتساوى مع B2 في كل المعايير؛ وقد ورد في نتيجة البناء قبله."
         )
 
     def test_two_options_that_schedule_everything_are_not_each_called_the_only_one(self) -> None:
