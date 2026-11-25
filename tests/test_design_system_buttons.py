@@ -85,6 +85,10 @@ NEUTRAL_TEMPLATE_SITES = {
     ("static/js/page-planner.js", "add-suggested"),
     ("static/js/page-planner.js", "add-plan"),
     ("static/js/page-planner.js", "select-option"),
+    # The new planner screen (planner_board.html): Fetch and the Edit rules dialog.
+    ("core/templates/core/planner_board.html", "plbFetch"),
+    ("core/templates/core/planner_board.html", "plbRulesReset"),
+    ("core/templates/core/planner_board.html", "plbRulesCancel"),
     ("core/templates/core/section_planning.html", "spDeptFilterClear"),
     ("core/templates/core/student_advisor.html", "saHistoryToggle"),
     ("core/templates/core/student_graduation.html", "link:student_advisor"),

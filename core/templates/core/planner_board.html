@@ -1,0 +1,162 @@
+{% extends "core/base.html" %}
+{% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الطالب{% else %}Student Timetable Builder{% endif %}{% endblock %}
+
+{% block extra_css %}{# All planner board styles live in static/css/global.css (PLANNER BOARD section, prefix plb-). #}{% endblock %}
+
+{% block main_padding %}p-3{% endblock %}
+
+{% block content_width %}wide{% endblock %}
+
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}{% endblock %}
+
+{% block page_chips %}
+            <span class="plb-ctx" id="plbContext" hidden></span>
+{% endblock %}
+
+{% block page_header_right %}
+      <form class="plb-load" id="plbLoad" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحميل طالب{% else %}Load a student{% endif %}" novalidate>
+        <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}</span><input id="plbStudentId" class="plb-w-id" type="text" inputmode="numeric" autocomplete="off" autofocus dir="ltr"></label>
+        <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}</span><input id="plbYear" class="plb-w-year" type="text" inputmode="numeric" maxlength="4" autocomplete="off" dir="ltr" value="{{ default_year }}"></label>
+        <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}</span><select id="plbTerm"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+        <button type="submit" id="plbFetch" class="btn btn-sm btn-neutral">{% if LANGUAGE_CODE == 'ar' %}جلب{% else %}Fetch{% endif %}</button>
+      </form>
+{% endblock %}
+
+{% block page_intro %}{% endblock %}
+
+{% block content %}
+      <div class="plb" id="plbRoot" data-default-term="{{ default_term }}" data-loaded="false">
+
+        <p class="plb-status" id="plbStatus" role="status" aria-live="polite"></p>
+
+        <!-- ═══ Band: projection, guidance, student and rules ═══ -->
+        <div class="plb-band">
+          <section class="plb-grad" aria-labelledby="plbGradTitle">
+            <h2 class="plb-h2" id="plbGradTitle">{% if LANGUAGE_CODE == 'ar' %}التخرّج المتوقع{% else %}Projected graduation{% endif %}</h2>
+            <p class="plb-empty">{% if LANGUAGE_CODE == 'ar' %}ابنِ الخيارات لعرض التوقع.{% else %}Build options to see the projection.{% endif %}</p>
+          </section>
+
+          <section class="plb-guide" id="plbGuide" aria-label="{% if LANGUAGE_CODE == 'ar' %}إرشادات هذا البناء{% else %}Guidance for this build{% endif %}" hidden></section>
+
+          <section class="plb-stu" aria-label="{% if LANGUAGE_CODE == 'ar' %}الطالب والقواعد{% else %}Student and rules{% endif %}">
+            <div id="plbStudent">
+              <p class="plb-empty"><strong>{% if LANGUAGE_CODE == 'ar' %}لم يتم تحميل بيانات طالب{% else %}No student loaded{% endif %}</strong><br>{% if LANGUAGE_CODE == 'ar' %}أدخل رقم الطالب أعلاه واضغط جلب.{% else %}Enter a student ID above and press Fetch.{% endif %}</p>
+            </div>
+            <div class="plb-rules" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}قواعد هذا البناء{% else %}Rules for this build{% endif %}">
+              <div class="plb-rh">
+                <span class="plb-mic">{% if LANGUAGE_CODE == 'ar' %}قواعد هذا البناء{% else %}Rules for this build{% endif %}</span>
+                <button type="button" class="plb-lk" id="plbEditRules" aria-haspopup="dialog">{% if LANGUAGE_CODE == 'ar' %}تعديل القواعد{% else %}Edit rules{% endif %}</button>
+              </div>
+              <p class="plb-rl" id="plbRules1"></p>
+              <p class="plb-rl" id="plbRules2"></p>
+              <p class="plb-changed" id="plbRulesChanged" hidden></p>
+            </div>
+          </section>
+        </div>
+
+        <!-- ═══ Option strip: only the registered week until a build exists ═══ -->
+        <div class="plb-opts">
+          <div class="plb-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}الجدول المعروض{% else %}Timetable to show{% endif %}">
+            <button type="button" class="plb-tab" id="plbTabRegistered" role="tab" aria-selected="true" aria-controls="plbWeekPanel">
+              <span class="plb-tab-n"><span id="plbTabName">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span><span class="plb-tab-lock" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="plb-tab-cr" id="plbTabCredits"></span></span>
+              <span class="plb-tab-x" id="plbTabFacts1">—</span>
+              <span class="plb-tab-x" id="plbTabFacts2"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- ═══ Panes: courses | week | detail (later) ═══ -->
+        <div class="plb-body plb-body--nodetail">
+
+          <section class="plb-courses" aria-labelledby="plbCoursesTitle">
+            <div class="plb-ph">
+              <h2 class="plb-h2" id="plbCoursesTitle">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</h2>
+              <span class="plb-phn" id="plbCredits"></span>
+              <div class="plb-addwrap">
+                <label class="plb-cap plb-add"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><input id="plbAdd" type="text" role="combobox" aria-expanded="false" aria-controls="plbAddList" aria-autocomplete="list" autocomplete="off" placeholder="{% if LANGUAGE_CODE == 'ar' %}إضافة مقرر{% else %}Add a course{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}إضافة مقرر من خطة الطالب{% else %}Add a course from the plan{% endif %}" disabled></label>
+                <ul class="plb-list" id="plbAddList" role="listbox" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المطابقة{% else %}Matching courses{% endif %}" hidden></ul>
+              </div>
+            </div>
+            <table class="plb-tbl" id="plbTable">
+              <thead>
+                <tr>
+                  <th scope="col" colspan="2" class="plb-mic">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+                  <th scope="col" class="plb-mic">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</th>
+                  <th scope="col" class="plb-mic"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إلزامي{% else %}Must-take{% endif %}</span></th>
+                  <th scope="col" class="plb-mic"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إجراء{% else %}Action{% endif %}</span></th>
+                </tr>
+              </thead>
+            </table>
+          </section>
+
+          <section class="plb-week" id="plbWeekPanel" role="tabpanel" aria-labelledby="plbTabRegistered">
+            <div class="plb-ph">
+              <h2 class="plb-h2">{% if LANGUAGE_CODE == 'ar' %}الأسبوع{% else %}Week{% endif %}</h2>
+              <span class="plb-phn">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span>
+              <span class="plb-lg"><i class="plb-k" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span>
+            </div>
+            <div id="plbWeek"></div>
+          </section>
+
+          <aside class="plb-detail" id="plbDetail" hidden></aside>
+        </div>
+      </div>
+
+      <!-- ═══ Edit rules ═══ -->
+      <dialog id="plbRulesDialog" class="ux-dialog plb-dialog" aria-labelledby="plbRulesTitle">
+        <form method="dialog" id="plbRulesForm" novalidate>
+          <div class="ux-dialog-head">
+            <div>
+              <h2 class="ux-dialog-title" id="plbRulesTitle">{% if LANGUAGE_CODE == 'ar' %}قواعد هذا البناء{% else %}Rules for this build{% endif %}</h2>
+              <p class="ux-dialog-sub">{% if LANGUAGE_CODE == 'ar' %}تحدد هذه القواعد كيف يُبنى الجدول. تُطبَّق عند الضغط على «تطبيق القواعد».{% else %}These set how a timetable is built. They apply when you choose Apply rules.{% endif %}</p>
+            </div>
+          </div>
+          <div class="ux-dialog-body">
+            <div class="ux-field">
+              <label class="ux-field-label" for="plbRuleMode">{% if LANGUAGE_CODE == 'ar' %}المقررات المسجّلة{% else %}Registered courses{% endif %}</label>
+              <select id="plbRuleMode" class="form-select">
+                <option value="keep">{% if LANGUAGE_CODE == 'ar' %}الإبقاء على المسجّل{% else %}Keep Registered{% endif %}</option>
+                <option value="ignore">{% if LANGUAGE_CODE == 'ar' %}تجاهل المسجّل (تخطيط فقط){% else %}Ignore Registered (planning only){% endif %}</option>
+              </select>
+            </div>
+            <div class="ux-field">
+              <label class="ux-field-label" for="plbRuleElig">{% if LANGUAGE_CODE == 'ar' %}أهلية المقررات{% else %}Course eligibility{% endif %}</label>
+              <select id="plbRuleElig" class="form-select" aria-describedby="plbRuleEligNote">
+                <option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم — المتطلبات المجتازة والساعات المكتسبة فقط{% else %}Strict — passed prerequisites + earned credits only{% endif %}</option>
+                <option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن — يحتسب قيد الدراسة والساعات المسجلة{% else %}Relaxed — count studying + registered credits{% endif %}</option>
+              </select>
+              <p class="ux-field-hint" id="plbRuleEligNote">{% if LANGUAGE_CODE == 'ar' %}تغيير الأهلية يعيد تحميل المقررات المقترحة ويُعيد ضبط المقررات التي أضفتها أو أزلتها.{% else %}Changing eligibility reloads the suggested courses and resets the courses you added or removed.{% endif %}</p>
+            </div>
+            <div class="ux-field">
+              <label class="ux-field-label" for="plbRuleMax">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى للساعات{% else %}Max credits{% endif %}</label>
+              <input id="plbRuleMax" class="form-control" type="text" inputmode="numeric" autocomplete="off" dir="ltr" aria-describedby="plbRuleMaxHint plbRuleMaxErr">
+              <p class="ux-field-hint" id="plbRuleMaxHint"></p>
+              <p class="plb-err" id="plbRuleMaxErr" role="alert" hidden></p>
+            </div>
+            <div class="ux-field">
+              <label class="plb-check"><input id="plbRuleProg" type="checkbox"><span>{% if LANGUAGE_CODE == 'ar' %}شُعب برنامج الطالب فقط{% else %}Only this student's programme{% endif %}</span></label>
+              <p class="ux-field-hint">{% if LANGUAGE_CODE == 'ar' %}عند إيقافه تظهر شُعب برامج أخرى أيضًا، للمقارنة فقط.{% else %}When off, other programmes' sections are listed too, for comparison only.{% endif %}</p>
+            </div>
+            <div class="ux-field">
+              <label class="plb-check"><input id="plbRuleFull" type="checkbox"><span>{% if LANGUAGE_CODE == 'ar' %}تضمين شُعب بلا مقاعد شاغرة{% else %}Include sections with no seats left{% endif %}</span></label>
+              <p class="ux-field-hint">{% if LANGUAGE_CODE == 'ar' %}للتخطيط فقط، ولا يحجز مقعدًا. الشُعب ذات السعة غير المعروفة لا تُعامل كممتلئة.{% else %}Planning only; this does not reserve a seat. Sections whose capacity is unknown are not treated as full.{% endif %}</p>
+            </div>
+            <div class="ux-field">
+              <label class="plb-check"><input id="plbRuleSwap" type="checkbox"><span>{% if LANGUAGE_CODE == 'ar' %}اقتراح تبديلات{% else %}Suggest swaps{% endif %}</span></label>
+              <p class="ux-field-hint">{% if LANGUAGE_CODE == 'ar' %}لا تُقترح تبديلات فعلية بعد.{% else %}No real swaps are suggested yet.{% endif %}</p>
+            </div>
+          </div>
+          <div class="ux-dialog-foot">
+            <button type="button" class="btn btn-sm btn-neutral plb-foot-start" id="plbRulesReset">{% if LANGUAGE_CODE == 'ar' %}استعادة الافتراضي{% else %}Reset to defaults{% endif %}</button>
+            <button type="button" class="btn btn-neutral" id="plbRulesCancel">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+            <button type="submit" class="btn btn-primary" id="plbRulesApply">{% if LANGUAGE_CODE == 'ar' %}تطبيق القواعد{% else %}Apply rules{% endif %}</button>
+          </div>
+        </form>
+      </dialog>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/page-planner-board.js' %}?v=1"></script>
+{% endblock %}

@@ -5,6 +5,7 @@ import logging
 import re
 from hashlib import sha256
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -175,7 +176,12 @@ def planner_page(request: HttpRequest) -> HttpResponse:
         "default_year": _defs["currentYear"],
         "default_term": _defs["currentTerm"],
     }
-    return render(request, "core/planner.html", ctx)
+    # The new screen sits beside the current one behind a switch: the setting picks
+    # the default, ?layout=board or ?layout=classic lets staff open either.
+    layout = request.GET.get("layout", "")
+    use_board = layout == "board" or (settings.PLANNER_BOARD_ENABLED and layout != "classic")
+    template = "core/planner_board.html" if use_board else "core/planner.html"
+    return render(request, template, ctx)
 
 
 @login_required(login_url="login")
