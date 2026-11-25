@@ -404,8 +404,10 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             "Registered · fixed here",
         )
         self.assertEqual(self._text(page, "tbody[data-group='registered'] .plb-grp td"), "9 cr")
+        # The title cell also holds the "Reset to suggestions" link now: the title is its own span.
         self.assertEqual(
-            self._text(page, "tbody[data-group='new'] .plb-grp th"), "New in this plan · 6 cr"
+            self._text(page, "tbody[data-group='new'] .plb-grp th .plb-grp-l"),
+            "New in this plan · 6 cr",
         )
         self.assertEqual(self._text(page, "tbody[data-group='new'] .plb-grp td"), "Must-take")
         self.assertIn("Could be added", self._text(page, "tbody[data-group='could'] .plb-grp"))
@@ -710,7 +712,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbStatus")).to_have_text("أدخل رقم الطالب.")
         page.click("#plbEditRules")
         self.assertIn("أهلية المقررات", self._text(page, "#plbRulesDialog"))
-        self.assertIn("تعديل", self._text(page, "#plbEditRules"))
+        self.assertIn("قواعد أخرى", self._text(page, "#plbEditRules"))
         page.fill("#plbRuleMax", "x")
         page.click("#plbRulesApply")
         expect(page.locator("#plbRuleMaxErr")).to_have_text("أدخل عددًا صحيحًا من 1 إلى 99.")

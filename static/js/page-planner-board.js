@@ -629,16 +629,46 @@
   function changedRuleKeys() {
     return Object.keys(DEFAULT_RULES).filter((key) => state.rules[key] !== state.defaults[key]);
   }
+  // The cap's hint ("advisory 18 · regulatory 19"), as the dialog shows it.
+  function maxHintText() {
+    const cap = state.student ? finitePositive(state.student.credit_cap) : null;
+    const reg = state.student ? finitePositive(state.student.regulatory_max_credits) : null;
+    return T.maxHint(cap, reg);
+  }
   function renderRules() {
     const r = state.rules;
+    // The first line is a hidden full summary kept for the record; the controls say the same.
     $('plbRules1').textContent = [T.ruleMode[r.mode], T.ruleElig[r.eligibility], T.ruleMax(r.maxCredits)].join(' · ');
     $('plbRules2').textContent = [T.ruleProg[r.programOnly], T.ruleFull[r.allowFull], T.ruleSwap[r.swap]].join(' · ');
+    // The controls on the board show the rules in force.
+    $('plbRegKeep').checked = r.mode === 'keep';
+    $('plbRegIgnore').checked = r.mode === 'ignore';
+    $('plbEligStrict').checked = r.eligibility === 'strict';
+    $('plbEligRelaxed').checked = r.eligibility === 'relaxed';
+    const field = $('plbMaxIn');
+    if (document.activeElement !== field) {
+      field.value = r.maxCredits === null ? '' : String(r.maxCredits);
+      field.removeAttribute('aria-invalid');
+      $('plbMaxInErr').hidden = true;
+      $('plbMaxInErr').textContent = '';
+    }
+    $('plbMaxInHint').textContent = maxHintText();
     const changed = changedRuleKeys().length;
     const badge = $('plbRulesChanged');
     badge.hidden = changed === 0;
     badge.textContent = changed ? T.rulesChanged(changed) : '';
   }
   const regulatoryMax = () => (state.student && finitePositive(state.student.regulatory_max_credits)) || 99;
+  // Max credits as typed: '' is "not set" (null); a whole number from 1 to the regulatory maximum;
+  // anything else is refused. One reading for the dialog and for the field on the board.
+  function parseMaxCredits(raw) {
+    const text = raw.trim();
+    if (text === '') return { ok: true, value: null };
+    const ceiling = regulatoryMax();
+    const value = /^\d{1,2}$/.test(text) ? Number(text) : NaN;
+    if (!Number.isInteger(value) || value < 1 || value > ceiling) return { ok: false, ceiling };
+    return { ok: true, value };
+  }
 
   function fillRulesDialog(rules) {
     $('plbRuleMode').value = rules.mode;
@@ -650,15 +680,16 @@
     $('plbRuleMaxErr').hidden = true;
     $('plbRuleMaxErr').textContent = '';
   }
-  function openRulesDialog() {
-    const cap = state.student ? finitePositive(state.student.credit_cap) : null;
-    const reg = state.student ? finitePositive(state.student.regulatory_max_credits) : null;
-    $('plbRuleMaxHint').textContent = T.maxHint(cap, reg);
-    fillRulesDialog(state.rules);
+  // `preset` ({eligibility}) opens the dialog with that change already chosen, for Apply rules to confirm.
+  function openRulesDialog(preset) {
+    $('plbRuleMaxHint').textContent = maxHintText();
+    fillRulesDialog({ ...state.rules, ...(preset || {}) });
+    const note = $('plbRuleEligNote');
+    if (preset && preset.eligibility) note.dataset.flag = 'true'; else delete note.dataset.flag;
     const dialog = $('plbRulesDialog');
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
-    $('plbRuleMode').focus();
+    (preset && preset.eligibility ? $('plbRuleElig') : $('plbRuleMode')).focus();
   }
   function closeRulesDialog() {
     const dialog = $('plbRulesDialog');
@@ -666,31 +697,30 @@
     else dialog.removeAttribute('open');
   }
   function applyRulesDialog() {
-    const raw = $('plbRuleMax').value.trim();
-    let maxCredits = null;
-    if (raw !== '') {
-      const ceiling = regulatoryMax();
-      maxCredits = /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
-      if (!Number.isInteger(maxCredits) || maxCredits < 1 || maxCredits > ceiling) {
-        const err = $('plbRuleMaxErr');
-        err.textContent = T.maxError(ceiling);
-        err.hidden = false;
-        $('plbRuleMax').setAttribute('aria-invalid', 'true');
-        $('plbRuleMax').focus();
-        return;
-      }
+    const max = parseMaxCredits($('plbRuleMax').value);
+    if (!max.ok) {
+      const err = $('plbRuleMaxErr');
+      err.textContent = T.maxError(max.ceiling);
+      err.hidden = false;
+      $('plbRuleMax').setAttribute('aria-invalid', 'true');
+      $('plbRuleMax').focus();
+      return;
     }
     $('plbRuleMax').removeAttribute('aria-invalid');
-    const before = { ...state.rules };
-    state.rules = {
+    closeRulesDialog();
+    commitRules({
       mode: $('plbRuleMode').value === 'ignore' ? 'ignore' : 'keep',
       eligibility: $('plbRuleElig').value === 'relaxed' ? 'relaxed' : 'strict',
-      maxCredits,
+      maxCredits: max.value,
       programOnly: $('plbRuleProg').checked,
       allowFull: $('plbRuleFull').checked,
       swap: $('plbRuleSwap').checked,
-    };
-    closeRulesDialog();
+    });
+  }
+  // What a change of rules does, for the dialog and for the controls on the board alike.
+  function commitRules(next) {
+    const before = { ...state.rules };
+    state.rules = next;
     renderRules();
     // Options built under other rules are not options for these: they stay, marked out of date.
     if (Object.keys(DEFAULT_RULES).some((key) => state.rules[key] !== before[key])) planChanged();
@@ -702,6 +732,33 @@
     // The suggestions depend on eligibility: reload them, as the current page does. If no reload
     // lands, loadStudent puts back the eligibility the page was loaded with.
     if (state.ctx && state.rules.eligibility !== before.eligibility) loadStudent({ reuse: true });
+  }
+  // A switch on the board.
+  function changeRuleInPlace(key, value) {
+    if (state.rules[key] === value) return;
+    // The reload would replace a course list the adviser has changed: the dialog says so and asks.
+    // The switch goes back to the rule in force; Apply rules makes the change, Cancel leaves it.
+    if (key === 'eligibility' && state.ctx && !isSuggested()) {
+      renderRules();
+      openRulesDialog({ eligibility: value });
+      return;
+    }
+    commitRules({ ...state.rules, [key]: value });
+  }
+  function commitMaxInPlace() {
+    const field = $('plbMaxIn');
+    const max = parseMaxCredits(field.value);
+    const err = $('plbMaxInErr');
+    if (!max.ok) {
+      err.textContent = T.maxError(max.ceiling);
+      err.hidden = false;
+      field.setAttribute('aria-invalid', 'true');
+      return;
+    }
+    field.removeAttribute('aria-invalid');
+    err.hidden = true;
+    err.textContent = '';
+    if (max.value !== state.rules.maxCredits) commitRules({ ...state.rules, maxCredits: max.value });
   }
 
   /* ── Student ───────────────────────────────────────────────────────────── */
@@ -1436,7 +1493,7 @@
     const said = nameOf(first);
     const rows = [row('', T.suggested, [
       el('b', 'plb-gt', bdi(first.name), ...(said ? [' ', said] : [])),
-      el('div', 'plb-gv-row',
+      el('div', 'plb-gv-row plb-gv-row--own',
         el('span', 'plb-gx', ...whySuggested(first, ranked)),
         state.selected === first.name ? null : viewButton(first.name, 'plbGuideView')),
     ])];
@@ -1547,10 +1604,13 @@
     button.setAttribute('aria-controls', 'plbDetail');
     return button;
   }
-  function groupBody(name, left, right) {
+  // `lead` (a node) closes the title cell, right before the end cell: "Reset to suggestions" before "Must-take".
+  function groupBody(name, left, right, lead) {
     const body = el('tbody', 'plb-group');
     body.dataset.group = name;
-    body.append(el('tr', 'plb-grp', el('th', 'plb-mic', left), el('td', 'plb-mic plb-grp-end', right || '')));
+    const title = lead ? el('th', 'plb-mic', el('span', 'plb-grp-in', el('span', 'plb-grp-l', left), lead))
+      : el('th', 'plb-mic', left);
+    body.append(el('tr', 'plb-grp', title, el('td', 'plb-mic plb-grp-end', right || '')));
     body.firstChild.firstChild.colSpan = 2;
     body.firstChild.lastChild.colSpan = 2;
     body.firstChild.firstChild.scope = 'rowgroup';
@@ -1584,6 +1644,8 @@
   }
   function renderCourses() {
     const table = $('plbTable');
+    // The reset link lives in the "New in this plan" header; it is parked while the rows are rebuilt.
+    $('plbResetHome').append($('plbReset'));
     table.querySelectorAll('tbody').forEach((n) => n.remove());
     const addInput = $('plbAdd');
     addInput.disabled = !state.ctx;
@@ -1618,7 +1680,7 @@
     table.append(regBody);
 
     // New in this plan
-    const newBody = groupBody('new', `${T.newInPlan} · ${T.credits(planCredits())}`, T.mustTake);
+    const newBody = groupBody('new', `${T.newInPlan} · ${T.credits(planCredits())}`, T.mustTake, $('plbReset'));
     if (!state.shortlist.length) newBody.append(emptyRow(T.nothingAdded));
     for (const item of state.shortlist) {
       const code = item.course_code;
@@ -3160,7 +3222,15 @@
     $('plbReset').addEventListener('click', resetToSuggestions);
     // A click anywhere during a load means the user has moved on: Fetch does not take the keyboard back.
     document.addEventListener('pointerdown', () => { state.fetchKeyboard = false; }, true);
-    $('plbEditRules').addEventListener('click', openRulesDialog);
+    $('plbEditRules').addEventListener('click', () => openRulesDialog());
+    for (const [id, key, value] of [
+      ['plbRegKeep', 'mode', 'keep'], ['plbRegIgnore', 'mode', 'ignore'],
+      ['plbEligStrict', 'eligibility', 'strict'], ['plbEligRelaxed', 'eligibility', 'relaxed'],
+    ]) $(id).addEventListener('change', (event) => { if (event.target.checked) changeRuleInPlace(key, value); });
+    $('plbMaxIn').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); commitMaxInPlace(); }
+    });
+    $('plbMaxIn').addEventListener('blur', commitMaxInPlace);
     $('plbRulesCancel').addEventListener('click', closeRulesDialog);
     $('plbRulesReset').addEventListener('click', () => fillRulesDialog(state.defaults));
     $('plbRulesForm').addEventListener('submit', (event) => { event.preventDefault(); applyRulesDialog(); });
@@ -3359,6 +3429,9 @@
       if (year) $('plbYear').value = year;
       if (paramTerm && [...$('plbTerm').options].some((o) => o.value === paramTerm)) $('plbTerm').value = paramTerm;
       loadStudent();
+    } else if (document.activeElement === document.body || !document.activeElement) {
+      // An empty screen starts where the work starts. Once, here: nothing takes it back later.
+      $('plbStudentId').focus();
     }
   }
   init();
