@@ -1651,9 +1651,14 @@
     renderCourses();
     loadCatalog(run);
     // A build that was forecast before these rows were known is asked once more, now naming them.
+    // The question is settled here: a later reload of the plan never asks. Only a forecast that
+    // offers a retry is left open, so that the retry names the rows.
     const build = state.build;
-    if (state.planState === 'ready' && build && build.token && !build.addCodes && build.projection
-      && ['loading', 'ready'].includes(build.projection.state) && planPool().length) loadProjection(build);
+    if (build && build.token && !build.addCodes && build.projection) {
+      const live = ['loading', 'ready'].includes(build.projection.state);
+      if (state.planState === 'ready' && live && planPool().length) loadProjection(build, true);
+      else if (state.planState !== 'ready' || live) build.addCodes = [];
+    }
   }
   async function loadCatalog(run) {
     if (!state.ctx) return;
@@ -2386,10 +2391,15 @@
   // A reply is believed only if its build is still on screen and it answers the newest request for
   // it. It is NOT tied to buildGen: a plan or rule change only marks the build out of date, and the
   // forecast of the options still shown must still arrive.
-  async function loadProjection(build) {
+  // `quiet` is the second request of a build first forecast before its "Could be added" rows were
+  // known: a forecast already on screen stays there and is replaced only by a good reply.
+  async function loadProjection(build, quiet) {
     const run = (build.projRun += 1);
-    build.projection = { state: 'loading' };
-    renderGrad();
+    const kept = quiet && build.projection && build.projection.state === 'ready' ? build.projection : null;
+    if (!kept) {
+      build.projection = { state: 'loading' };
+      renderGrad();
+    }
     // "What if" the first six "Could be added" rows, in the table's order, were added. Fixed when the
     // build is first forecast: a later change to the list does not re-ask, a retry asks the same.
     // While the plan is still loading there are no rows to name: loadPlan() asks again once it has them.
@@ -2416,6 +2426,7 @@
         };
       }
     }
+    if (kept && next.state !== 'ready') return;   // the forecast on screen is still good
     build.projection = next;
     keepingFocus(() => {
       renderStrip();

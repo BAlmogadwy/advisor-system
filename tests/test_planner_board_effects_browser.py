@@ -193,6 +193,85 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
                 expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
                 expect(page.locator(selector)).to_be_focused()
 
+    def _built_before_the_plan(self, fake):
+        """A build whose forecast was asked while the plan request is still held back."""
+        fake.hold_plan = 1
+        page = self._open(fake, load=False)
+        self._fetch(page, STUDENT_ID)
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        page.click("#plbBuild")
+        self._wait_until(page, lambda: len(fake.projection_bodies) == 1)
+        return page
+
+    def test_the_forecast_on_screen_stays_while_asked_again_and_survives_a_refusal(self) -> None:
+        fake = BuildFake()
+        # As the server answers a request that names no rows: nothing about adding a course.
+        first = with_effects(effects({"AI331": effect(5, 1), "AI342": effect(4, 0)}))
+        fake.projection_answer = lambda body: (200, first)
+        page = self._built_before_the_plan(fake)
+        self._start(page)
+        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+        fake.hold_projection = 1
+        fake.pending_plan.pop().fulfill(json=fake.plan_payload)
+        self._wait_until(page, lambda: len(fake.pending_projection) == 1)
+        # Asked again, and the first answer is still what the page shows.
+        expect(page.locator("#plbGrad")).to_have_attribute("data-state", "ready")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
+        fake.pending_projection.pop().fulfill(status=429, json={})
+        page.wait_for_timeout(300)
+        expect(page.locator("#plbGrad")).to_have_attribute("data-state", "ready")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
+        self.assertEqual(page.locator(COULD.format("CS351")).count(), 0)
+
+    def test_a_plan_that_failed_first_never_asks_on_a_later_reload(self) -> None:
+        fake = BuildFake()
+        fake.projection_answer = lambda body: (200, STANDARD)
+        page = self._built_before_the_plan(fake)
+        fake.pending_plan.pop().fulfill(status=500, json={"error": "plan failed"})
+        page.wait_for_timeout(200)
+        self._rules(page, elig="relaxed")  # reloads the student and, this time, the plan
+        self._wait_until(page, lambda: len(fake.context_bodies) == 2)
+        expect(
+            page.locator("#plbTable tbody[data-group='could'] tr[data-code='CS351']")
+        ).to_be_visible()
+        page.wait_for_timeout(300)
+        self.assertEqual(len(fake.projection_bodies), 1)
+
+    def test_a_plan_that_failed_first_settles_a_later_retry_too(self) -> None:
+        fake = BuildFake()
+        fake.projection_raw = lambda route: route.fulfill(status=500, json={})
+        page = self._built_before_the_plan(fake)
+        expect(page.locator("#plbGrad")).to_have_attribute("data-state", "unavailable")
+        fake.pending_plan.pop().fulfill(status=500, json={"error": "plan failed"})
+        page.wait_for_timeout(200)
+        self._rules(page, elig="relaxed")  # the plan arrives now, for a build that is out of date
+        self._wait_until(page, lambda: len(fake.context_bodies) == 2)
+        expect(
+            page.locator("#plbTable tbody[data-group='could'] tr[data-code='CS351']")
+        ).to_be_visible()
+        fake.projection_raw = None
+        fake.projection_answer = lambda body: (200, STANDARD)
+        page.click("#plbGradRetry")
+        self._wait_until(page, lambda: len(fake.projection_bodies) == 2)
+        self.assertEqual(fake.projection_bodies[1], {"token": "token"})
+
+    def test_a_retry_after_the_plan_arrived_names_the_rows(self) -> None:
+        fake = BuildFake()
+        fake.projection_raw = lambda route: route.fulfill(status=500, json={})
+        page = self._built_before_the_plan(fake)
+        expect(page.locator("#plbGrad")).to_have_attribute("data-state", "unavailable")
+        fake.pending_plan.pop().fulfill(json=fake.plan_payload)
+        expect(
+            page.locator("#plbTable tbody[data-group='could'] tr[data-code='CS351']")
+        ).to_be_visible()
+        page.wait_for_timeout(200)
+        self.assertEqual(len(fake.projection_bodies), 1)
+        fake.projection_raw = None
+        fake.projection_answer = lambda body: (200, STANDARD)
+        page.click("#plbGradRetry")
+        self._wait_until(page, lambda: len(fake.projection_bodies) == 2)
+        self.assertEqual(fake.projection_bodies[1], {"token": "token", "add": ["STAT305", "CS351"]})
+
     # ── the rows ─────────────────────────────────────────────────────────────
     def test_each_text_of_a_row_in_english(self) -> None:
         page, _fake = self._projected(STANDARD)
