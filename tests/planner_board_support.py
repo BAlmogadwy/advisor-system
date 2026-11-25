@@ -207,6 +207,8 @@ class Fake:
             context_for(str(body["student_id"]), eligibility_mode=body["eligibility_mode"]),
         )
         self.plan_status = 200
+        self.plan_payload = STUDENT_PLAN
+        self.catalog_payload = SECTIONS_CATALOG
         self.catalog_status = 200
         self.hold_catalog = 0  # how many of the next catalogue requests to hold back
         self.pending_catalog: list = []
@@ -230,7 +232,7 @@ class Fake:
         if self.plan_status != 200:
             route.fulfill(status=self.plan_status, json={"error": "plan failed"})
             return
-        route.fulfill(json=STUDENT_PLAN)
+        route.fulfill(json=self.plan_payload)
 
     def catalog(self, route) -> None:
         self.catalog_bodies.append(route.request.post_data_json)
@@ -241,7 +243,198 @@ class Fake:
         if self.catalog_status != 200:
             route.fulfill(status=self.catalog_status, json={"error": "catalog failed"})
             return
-        route.fulfill(json=SECTIONS_CATALOG)
+        route.fulfill(json=self.catalog_payload)
+
+
+def _mapping(code, section, tsid, days, start, end):
+    return {
+        "course_code": code,
+        "course_key": code,
+        "course_number": "",
+        "section": section,
+        "term_section_id": tsid,
+        "meetings": [{"day": d, "start_time": start, "end_time": end} for d in days],
+        "meeting_issue_codes": [],
+    }
+
+
+def _option(name, mappings, unscheduled=()):
+    return {
+        "name": name,
+        "method": name[0],
+        "rank": int(name[1]),
+        "scheduled": len(mappings),
+        "target": 2,
+        "mappings": mappings,
+        "unscheduled": list(unscheduled),
+    }
+
+
+# Each option with what its tab must say (registered week included, three credits a course):
+#   B1  15 cr  4 days, Thu free   ends 14:15  longest gap 1 h 45 min
+#   B2  12 cr  4 days, Thu free   ends 14:00  longest gap 45 min, one course not scheduled
+#   B3  15 cr  5 days, no free    ends 16:15  longest gap 1 h
+#   C1  15 cr  4 days, Thu free   ends 14:00  longest gap 2 h 30 min
+#   C2  15 cr  5 days, no free    ends 14:00  longest gap 3 h 30 min
+B1 = _option(
+    "B1",
+    [
+        _mapping("AI331", "M2", 12, ["MON", "WED"], "10:00", "11:15"),
+        _mapping("AI342", "M1", 15, ["SUN"], "13:00", "14:15"),
+    ],
+)
+B2 = _option(
+    "B2",
+    [_mapping("AI331", "M1", 11, ["SUN", "TUE"], "11:30", "12:45")],
+    unscheduled=[{"course_code": "AI342", "reason_code": "ALL_SECTIONS_CLASH"}],
+)
+B3 = _option(
+    "B3",
+    [
+        _mapping("AI331", "M2", 12, ["MON", "WED"], "15:00", "16:15"),
+        _mapping("AI342", "M1", 15, ["THU"], "09:00", "10:15"),
+    ],
+)
+C1 = _option(
+    "C1",
+    [
+        _mapping("AI331", "M1", 11, ["SUN", "TUE"], "12:00", "13:15"),
+        _mapping("AI342", "M1", 15, ["MON"], "09:00", "10:15"),
+    ],
+)
+C2 = _option(
+    "C2",
+    [
+        _mapping("AI331", "M2", 12, ["MON", "WED"], "08:00", "09:15"),
+        _mapping("AI342", "M1", 15, ["THU"], "08:00", "09:15"),
+    ],
+)
+
+
+def build_reply(options):
+    return {
+        "ok": True,
+        "summary": {
+            "scheduled": 2,
+            "target": 2,
+            "conflicts": 0,
+            "swaps_required": 0,
+            "best_feasible": bool(options),
+            "hard_constraint_failures": [],
+        },
+        "options": options,
+        "unscheduled": [],
+        "swap_suggestions": [],
+        "mode": "keep",
+        "eligibility_mode": "strict",
+        "constraints": {"program_sections_only": True, "allow_full_sections": False},
+        "graduation_projection_token": "token",
+    }
+
+
+FIVE = build_reply([B1, B2, B3, C1, C2])
+SAVED = {
+    "ok": True,
+    "inserted": 2,
+    "removed": [],
+    "removed_count": 0,
+    "clashes_with_registered": [],
+}
+SAVED_ROWS = [
+    _row("AI331", "Machine Learning", "M2", 3, "MON", "10:00", "11:15", 12),
+    _row("AI331", "Machine Learning", "M2", 3, "WED", "10:00", "11:15", 12),
+    _row("AI342", "Computer Vision", "M1", 3, "SUN", "13:00", "14:15", 15),
+]
+
+EXPECTED_BUILD_BODY = {
+    "student_id": STUDENT_ID,
+    "academic_year": "1448",
+    "term": "1",
+    "mode": "keep",
+    "eligibility_mode": "strict",
+    "swap": False,
+    "program_sections_only": True,
+    "allow_full_sections": False,
+    "max_credits": 18,
+    "shortlist": [
+        {
+            "course_code": "AI331",
+            "course_name": "Machine Learning",
+            "credits": 3,
+            "priority": "High",
+            "status": "Eligible",
+            "missing_prerequisites": [],
+            "must_take": False,
+            "score": 90,
+        },
+        {
+            "course_code": "AI342",
+            "course_name": "Computer Vision",
+            "credits": 3,
+            "priority": "High",
+            "status": "Eligible",
+            "missing_prerequisites": [],
+            "must_take": False,
+            "score": 90,
+        },
+    ],
+    "baseline": BASELINE,
+}
+EXPECTED_SAVE_BODY = {
+    "student_id": STUDENT_ID,
+    "academic_year": "1448",
+    "term": "1",
+    "term_section_ids": [12, 15],
+    "confirm_replace": True,
+}
+
+
+class BuildFake(Fake):
+    """Fake with the build and the save endpoints, and a student who changes once saved."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.build_bodies: list[dict] = []
+        self.save_bodies: list[dict] = []
+        self.build_answer = lambda body: (200, FIVE)
+        self.save_answer = lambda body: (200, SAVED)
+        self.hold_build = 0
+        self.pending_build: list = []
+        self.hold_save = 0
+        self.pending_save: list = []
+        self.saved = False
+        self.build_raw = None  # a callable(route) that answers the next build itself
+        self.context_answer = self._context
+
+    def _context(self, body):
+        payload = context_for(str(body["student_id"]), eligibility_mode=body["eligibility_mode"])
+        if self.saved:
+            payload["baseline"] = [*BASELINE, *SAVED_ROWS]
+        return 200, payload
+
+    def build(self, route) -> None:
+        self.build_bodies.append(route.request.post_data_json)
+        if self.build_raw is not None:
+            self.build_raw(route)
+            return
+        if self.hold_build:
+            self.hold_build -= 1
+            self.pending_build.append(route)
+            return
+        status, payload = self.build_answer(route.request.post_data_json)
+        route.fulfill(status=status, json=payload)
+
+    def save(self, route) -> None:
+        body = route.request.post_data_json
+        self.save_bodies.append(body)
+        if self.hold_save:
+            self.hold_save -= 1
+            self.pending_save.append(route)
+            return
+        status, payload = self.save_answer(body)
+        if status == 200:
+            self.saved = True
+        route.fulfill(status=status, json=payload)
 
 
 class PlannerBoardCase(StaticLiveServerTestCase):
@@ -271,7 +464,9 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         self.page_errors: list[str] = []
         self.addCleanup(lambda: self.assertEqual(self.page_errors, [], "the page threw"))
 
-    def _open(self, fake: Fake, language="en", width=1440, height=900, font="app", load=True):
+    def _open(
+        self, fake: Fake, language="en", width=1440, height=900, font="app", load=True, clock=False
+    ):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             extra_http_headers={"Accept-Language": language},
@@ -304,6 +499,8 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             context.route("**/ops/planner/save-student-sections/", fake.save)
         page = context.new_page()
         page.on("pageerror", lambda error: self.page_errors.append(str(error)))
+        if clock:
+            page.clock.install()  # the test moves time itself (the 30 minute rule)
         page.goto(f"{self.live_server_url}/planner/?layout=board")
         page.add_style_tag(content=NO_MOTION)
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
@@ -322,6 +519,39 @@ class PlannerBoardCase(StaticLiveServerTestCase):
     def _fetch(page, student_id: str) -> None:
         page.fill("#plbStudentId", student_id)
         page.click("#plbFetch")
+
+    def _built(self, fake=None, **kwargs):
+        fake = fake or BuildFake()
+        page = self._open(fake, **kwargs)
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_have_text(
+            "Rebuild" if kwargs.get("language", "en") == "en" else "أعد البناء"
+        )
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        return page, fake
+
+    @staticmethod
+    def _tab_names(page) -> list[str]:
+        return page.eval_on_selector_all(
+            "#plbTabs [role='tab']", "tabs => tabs.map(t => t.dataset.opt || '(registered)')"
+        )
+
+    @staticmethod
+    def _tab_lines(page, name: str) -> list[str]:
+        return page.eval_on_selector_all(
+            f"#plbTabs [data-opt='{name}'] > span",
+            "spans => spans.map(s => s.textContent.replace(/\\s+/g, ' ').trim())",
+        )
+
+    @staticmethod
+    def _blocks(page, kind: str | None = None) -> list[str]:
+        selector = "#plbWeek .plb-b" + (f"[data-kind='{kind}']" if kind else "")
+        return page.eval_on_selector_all(
+            selector, "bs => bs.map(b => b.dataset.code + ' ' + b.dataset.kind)"
+        )
+
+    def _cell(self, page, code: str) -> str:
+        return self._text(page, f"#plbTable tbody[data-group='new'] tr[data-code='{code}'] .plb-sc")
 
     @staticmethod
     def _rows(page, group: str) -> list[str]:

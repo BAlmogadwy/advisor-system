@@ -77,7 +77,7 @@ class TestSwitch:
         self, staff_client: Client
     ) -> None:
         html = staff_client.get("/planner/?layout=board&student=4500000").content.decode()
-        assert "js/page-planner-board.js?v=2" in html
+        assert "js/page-planner-board.js?v=3" in html
         assert "js/page-planner.js" not in html
 
     @override_settings(PLANNER_BOARD_ENABLED=False)

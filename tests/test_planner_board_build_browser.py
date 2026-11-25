@@ -11,243 +11,26 @@ wait, last class ends 14:00) and two courses in the plan, AI331 and AI342.
 from __future__ import annotations
 
 from tests.planner_board_support import (
-    BASELINE,
+    C1,
+    C2,
+    EXPECTED_BUILD_BODY,
+    EXPECTED_SAVE_BODY,
+    FIVE,
     OTHER_ID,
     OVERFLOWS,
+    SAVED,
     STUDENT_ID,
-    Fake,
+    BuildFake,
     PlannerBoardCase,
-    _row,
+    _mapping,
+    _option,
+    build_reply,
     context_for,
     expect,
 )
 
 
-def _mapping(code, section, tsid, days, start, end):
-    return {
-        "course_code": code,
-        "course_key": code,
-        "course_number": "",
-        "section": section,
-        "term_section_id": tsid,
-        "meetings": [{"day": d, "start_time": start, "end_time": end} for d in days],
-        "meeting_issue_codes": [],
-    }
-
-
-def _option(name, mappings, unscheduled=()):
-    return {
-        "name": name,
-        "method": name[0],
-        "rank": int(name[1]),
-        "scheduled": len(mappings),
-        "target": 2,
-        "mappings": mappings,
-        "unscheduled": list(unscheduled),
-    }
-
-
-# Each option with what its tab must say (registered week included, three credits a course):
-#   B1  15 cr  4 days, Thu free   ends 14:15  longest gap 1 h 45 min
-#   B2  12 cr  4 days, Thu free   ends 14:00  longest gap 45 min, one course not scheduled
-#   B3  15 cr  5 days, no free    ends 16:15  longest gap 1 h
-#   C1  15 cr  4 days, Thu free   ends 14:00  longest gap 2 h 30 min
-#   C2  15 cr  5 days, no free    ends 14:00  longest gap 3 h 30 min
-B1 = _option(
-    "B1",
-    [
-        _mapping("AI331", "M2", 12, ["MON", "WED"], "10:00", "11:15"),
-        _mapping("AI342", "M1", 15, ["SUN"], "13:00", "14:15"),
-    ],
-)
-B2 = _option(
-    "B2",
-    [_mapping("AI331", "M1", 11, ["SUN", "TUE"], "11:30", "12:45")],
-    unscheduled=[{"course_code": "AI342", "reason_code": "ALL_SECTIONS_CLASH"}],
-)
-B3 = _option(
-    "B3",
-    [
-        _mapping("AI331", "M2", 12, ["MON", "WED"], "15:00", "16:15"),
-        _mapping("AI342", "M1", 15, ["THU"], "09:00", "10:15"),
-    ],
-)
-C1 = _option(
-    "C1",
-    [
-        _mapping("AI331", "M1", 11, ["SUN", "TUE"], "12:00", "13:15"),
-        _mapping("AI342", "M1", 15, ["MON"], "09:00", "10:15"),
-    ],
-)
-C2 = _option(
-    "C2",
-    [
-        _mapping("AI331", "M2", 12, ["MON", "WED"], "08:00", "09:15"),
-        _mapping("AI342", "M1", 15, ["THU"], "08:00", "09:15"),
-    ],
-)
-
-
-def build_reply(options):
-    return {
-        "ok": True,
-        "summary": {
-            "scheduled": 2,
-            "target": 2,
-            "conflicts": 0,
-            "swaps_required": 0,
-            "best_feasible": bool(options),
-            "hard_constraint_failures": [],
-        },
-        "options": options,
-        "unscheduled": [],
-        "swap_suggestions": [],
-        "mode": "keep",
-        "eligibility_mode": "strict",
-        "constraints": {"program_sections_only": True, "allow_full_sections": False},
-        "graduation_projection_token": "token",
-    }
-
-
-FIVE = build_reply([B1, B2, B3, C1, C2])
-SAVED = {
-    "ok": True,
-    "inserted": 2,
-    "removed": [],
-    "removed_count": 0,
-    "clashes_with_registered": [],
-}
-SAVED_ROWS = [
-    _row("AI331", "Machine Learning", "M2", 3, "MON", "10:00", "11:15", 12),
-    _row("AI331", "Machine Learning", "M2", 3, "WED", "10:00", "11:15", 12),
-    _row("AI342", "Computer Vision", "M1", 3, "SUN", "13:00", "14:15", 15),
-]
-
-EXPECTED_BUILD_BODY = {
-    "student_id": STUDENT_ID,
-    "academic_year": "1448",
-    "term": "1",
-    "mode": "keep",
-    "eligibility_mode": "strict",
-    "swap": False,
-    "program_sections_only": True,
-    "allow_full_sections": False,
-    "max_credits": 18,
-    "shortlist": [
-        {
-            "course_code": "AI331",
-            "course_name": "Machine Learning",
-            "credits": 3,
-            "priority": "High",
-            "status": "Eligible",
-            "missing_prerequisites": [],
-            "must_take": False,
-            "score": 90,
-        },
-        {
-            "course_code": "AI342",
-            "course_name": "Computer Vision",
-            "credits": 3,
-            "priority": "High",
-            "status": "Eligible",
-            "missing_prerequisites": [],
-            "must_take": False,
-            "score": 90,
-        },
-    ],
-    "baseline": BASELINE,
-}
-EXPECTED_SAVE_BODY = {
-    "student_id": STUDENT_ID,
-    "academic_year": "1448",
-    "term": "1",
-    "term_section_ids": [12, 15],
-    "confirm_replace": True,
-}
-
-
-class BuildFake(Fake):
-    """Fake with the build and the save endpoints, and a student who changes once saved."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.build_bodies: list[dict] = []
-        self.save_bodies: list[dict] = []
-        self.build_answer = lambda body: (200, FIVE)
-        self.save_answer = lambda body: (200, SAVED)
-        self.hold_build = 0
-        self.pending_build: list = []
-        self.hold_save = 0
-        self.pending_save: list = []
-        self.saved = False
-        self.build_raw = None  # a callable(route) that answers the next build itself
-        self.context_answer = self._context
-
-    def _context(self, body):
-        payload = context_for(str(body["student_id"]), eligibility_mode=body["eligibility_mode"])
-        if self.saved:
-            payload["baseline"] = [*BASELINE, *SAVED_ROWS]
-        return 200, payload
-
-    def build(self, route) -> None:
-        self.build_bodies.append(route.request.post_data_json)
-        if self.build_raw is not None:
-            self.build_raw(route)
-            return
-        if self.hold_build:
-            self.hold_build -= 1
-            self.pending_build.append(route)
-            return
-        status, payload = self.build_answer(route.request.post_data_json)
-        route.fulfill(status=status, json=payload)
-
-    def save(self, route) -> None:
-        body = route.request.post_data_json
-        self.save_bodies.append(body)
-        if self.hold_save:
-            self.hold_save -= 1
-            self.pending_save.append(route)
-            return
-        status, payload = self.save_answer(body)
-        if status == 200:
-            self.saved = True
-        route.fulfill(status=status, json=payload)
-
-
 class PlannerBoardBuildBrowserTests(PlannerBoardCase):
-    def _built(self, fake=None, **kwargs):
-        fake = fake or BuildFake()
-        page = self._open(fake, **kwargs)
-        page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text(
-            "Rebuild" if kwargs.get("language", "en") == "en" else "أعد البناء"
-        )
-        expect(page.locator("#plbBuild")).to_be_enabled()
-        return page, fake
-
-    @staticmethod
-    def _tab_names(page) -> list[str]:
-        return page.eval_on_selector_all(
-            "#plbTabs [role='tab']", "tabs => tabs.map(t => t.dataset.opt || '(registered)')"
-        )
-
-    @staticmethod
-    def _tab_lines(page, name: str) -> list[str]:
-        return page.eval_on_selector_all(
-            f"#plbTabs [data-opt='{name}'] > span",
-            "spans => spans.map(s => s.textContent.replace(/\\s+/g, ' ').trim())",
-        )
-
-    @staticmethod
-    def _blocks(page, kind: str | None = None) -> list[str]:
-        selector = "#plbWeek .plb-b" + (f"[data-kind='{kind}']" if kind else "")
-        return page.eval_on_selector_all(
-            selector, "bs => bs.map(b => b.dataset.code + ' ' + b.dataset.kind)"
-        )
-
-    def _cell(self, page, code: str) -> str:
-        return self._text(page, f"#plbTable tbody[data-group='new'] tr[data-code='{code}'] .plb-sc")
-
     def _assert_options_gone(self, page) -> None:
         expect(page.locator("#plbBuild")).to_have_text("Build options")
         expect(page.locator("#plbBuildLine")).to_have_text(
@@ -515,7 +298,10 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         fake.saved = True
         fake.pending_save.pop().fulfill(json=SAVED)
         expect(page.locator("#plbApplyDialog")).not_to_be_visible()
-        expect(page.locator("#plbBuildLine")).to_have_text("Saved")
+        expect(page.locator("#plbBuildLine")).to_have_text(
+            "Saved 2 sections as this student's planned timetable for 1448/1."
+            " Registered courses are unchanged."
+        )
         self.assertEqual(self._text(page, "#plbStatus"), "Saved")
         self.assertEqual(len(fake.save_bodies), 1)
         # The student was loaded again: the registered week holds the saved sections.
@@ -549,7 +335,9 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         page, _ = self._built(fake)
         page.click("#plbReview")
         page.click("#plbApplyGo")
-        expect(page.locator("#plbBuildLine")).to_contain_text("Saved. 1 previously saved planned")
+        expect(page.locator("#plbBuildLine")).to_contain_text(
+            "Registered courses are unchanged. 1 previously saved planned"
+        )
         line = self._text(page, "#plbBuildLine")
         self.assertIn("AI100 M1", line)
         self.assertIn("1 class clashes with the registered timetable", line)
@@ -786,24 +574,14 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._text(page, "#plbBuildLine"), "")
 
     # ── A build goes out of date ─────────────────────────────────────────────
-    def test_changing_the_plan_or_the_rules_removes_the_options(self) -> None:
-        for change in ("add", "remove", "must", "rule", "student"):
-            with self.subTest(change=change):
-                page, _ = self._built()
-                self.assertEqual(self._tab_names(page)[0], "B1")
-                if change == "add":
-                    page.click("#plbTable button[data-act='add'][data-code='CS351']")
-                elif change == "remove":
-                    page.click("#plbTable button[data-act='remove'][data-code='AI342']")
-                elif change == "must":
-                    page.check("#plbTable input[data-act='must'][data-code='AI331']")
-                elif change == "rule":
-                    self._rules(page, full=True)
-                else:
-                    self._fetch(page, OTHER_ID)
-                self._assert_options_gone(page)
-                self.assertEqual(self._cell(page, "AI331"), "any section")
-                page.context.close()
+    def test_loading_another_student_removes_the_options(self) -> None:
+        # A change to the plan or a rule now keeps the options, marked out of date
+        # (tests/test_planner_board_detail_browser.py); another student still removes them.
+        page, _ = self._built()
+        self.assertEqual(self._tab_names(page)[0], "B1")
+        self._fetch(page, OTHER_ID)
+        self._assert_options_gone(page)
+        self.assertEqual(self._cell(page, "AI331"), "any section")
 
     def test_applying_the_rules_dialog_with_nothing_changed_keeps_the_options(self) -> None:
         page, _ = self._built()
