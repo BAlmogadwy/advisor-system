@@ -1414,6 +1414,39 @@ def _cp_build_option(
     return selected, unscheduled
 
 
+def _allowed_section_ids_by_code(shortlist: list[dict[str, Any]]) -> dict[str, set[int]]:
+    """The sections each course may be placed in, by course code without spaces.
+
+    A shortlist item's ``pinned_sections`` is the set the course may use ("only
+    these"): the build places it in exactly one of them. One entry is the
+    historical exact pin. A course without usable entries is not restricted.
+
+    Two items can name one course: the build view tells "AI 221" from "AI221",
+    this module does not. The later item's sections replace the earlier one's,
+    as a single pin always did. They are never added together, which would also
+    let one course pass the view's limit per item.
+    """
+    allowed: dict[str, set[int]] = {}
+    for item in shortlist:
+        code = str(item.get("course_code", "")).replace(" ", "").upper()
+        pinned_raw = item.get("pinned_sections") or []
+        if not code or not isinstance(pinned_raw, list):
+            continue
+        item_ids: set[int] = set()
+        for pinned in pinned_raw:
+            if not isinstance(pinned, dict):
+                continue
+            try:
+                term_section_id = int(pinned.get("term_section_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if term_section_id > 0:
+                item_ids.add(term_section_id)
+        if item_ids:
+            allowed[code] = item_ids
+    return allowed
+
+
 def build_plans(
     year: str,
     term: str,
@@ -1443,24 +1476,7 @@ def build_plans(
         if item.get("must_take") and str(item.get("course_code", "")).strip()
     }
 
-    # A pin is singular: the last valid value is the exact section allowed for
-    # that course.  The list-shaped payload is retained for API compatibility
-    # with older clients, but it is not an "acceptable alternatives" list.
-    pinned_id_by_code: dict[str, int] = {}
-    for item in shortlist:
-        code = str(item.get("course_code", "")).replace(" ", "").upper()
-        pinned_raw = item.get("pinned_sections") or []
-        if not code or not isinstance(pinned_raw, list):
-            continue
-        for pinned in pinned_raw:
-            if not isinstance(pinned, dict):
-                continue
-            try:
-                term_section_id = int(pinned.get("term_section_id") or 0)
-            except (TypeError, ValueError):
-                continue
-            if term_section_id > 0:
-                pinned_id_by_code[code] = term_section_id
+    allowed_ids_by_code = _allowed_section_ids_by_code(shortlist)
 
     codes = sorted(
         {
@@ -1474,14 +1490,14 @@ def build_plans(
     if require_complete_meetings:
         catalog, incomplete_meetings = _complete_catalogue(catalog)
 
-    # A pinned section is an exact hard constraint. Other sections for the
-    # course are removed before any solver or alternative-generation pass.
-    for code, pinned_id in pinned_id_by_code.items():
+    # The allowed sections are a hard constraint. Every other section of the
+    # course is removed before any solver or alternative-generation pass.
+    for code, allowed_ids in allowed_ids_by_code.items():
         if code in catalog:
             catalog[code] = [
                 s
                 for s in catalog[code]
-                if int(s.get("term_section_id") or 0) == pinned_id  # type: ignore[call-overload]
+                if int(s.get("term_section_id") or 0) in allowed_ids  # type: ignore[call-overload]
             ]
 
     # Capacity is a hard eligibility rule unless the caller explicitly allows
@@ -1528,20 +1544,34 @@ def build_plans(
                 }
             )
 
-        for code, pinned_id in sorted(pinned_id_by_code.items()):
+        for code, allowed_ids in sorted(allowed_ids_by_code.items()):
             selected_item = selected_by_code.get(code)
             if selected_item is None:
                 continue
             selected_id = int(selected_item.get("term_section_id") or 0)
-            if selected_id != pinned_id:
-                failures.append(
-                    {
-                        "kind": "pinned_section",
-                        "course_code": code,
-                        "reason": "The generated option did not use the exact pinned section",
-                        "term_section_id": pinned_id,
-                    }
-                )
+            if selected_id not in allowed_ids:
+                if len(allowed_ids) == 1:
+                    (only_id,) = allowed_ids
+                    failures.append(
+                        {
+                            "kind": "pinned_section",
+                            "course_code": code,
+                            "reason": "The generated option did not use the exact pinned section",
+                            "term_section_id": only_id,
+                        }
+                    )
+                else:
+                    failures.append(
+                        {
+                            "kind": "pinned_section",
+                            "course_code": code,
+                            "reason": (
+                                "The generated option did not use any of the "
+                                f"{len(allowed_ids)} allowed sections"
+                            ),
+                            "term_section_ids": sorted(allowed_ids),
+                        }
+                    )
 
         if max_credits and max_credits > 0:
             scheduled_credits = sum(credits_map.get(code, 0) for code in selected_by_code)

@@ -1197,10 +1197,7 @@ def test_planner_build_preserves_boolean_must_take_and_one_exact_pin(
         ("false", [], "VALIDATION_MUST_TAKE"),
         (
             False,
-            [
-                {"term_section_id": 123, "section": "M2"},
-                {"term_section_id": 124, "section": "M3"},
-            ],
+            [{"term_section_id": 123 + n, "section": f"M{n}"} for n in range(7)],
             "VALIDATION_PINNED_SECTION_COUNT",
         ),
     ],

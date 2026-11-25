@@ -56,6 +56,8 @@ logger = logging.getLogger(__name__)
 #: A shortlist is a term's worth of courses for one student. Anything past
 #: this is a malformed or hostile caller, not an adviser planning a term.
 MAX_SHORTLIST_COURSES = 40
+#: How many sections of one course the adviser may allow ("only these").
+MAX_PINNED_SECTIONS_PER_COURSE = 6
 ELIGIBILITY_MODES = {"strict", "relaxed"}
 _PROJECTION_TOKEN_SALT = "core.planner.graduation-projection.v1"
 _PROJECTION_TOKEN_MAX_AGE = 30 * 60
@@ -917,10 +919,16 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                     "section": str(ps.get("section", "")),
                 }
             )
-        if len(pinned_sections) > 1:
+        if len(pinned_sections) > MAX_PINNED_SECTIONS_PER_COURSE:
             return _err(
-                "Only one exact section may be pinned per course",
+                f"At most {MAX_PINNED_SECTIONS_PER_COURSE} sections may be allowed per course",
                 code="VALIDATION_PINNED_SECTION_COUNT",
+                status=400,
+            )
+        if len({ps["term_section_id"] for ps in pinned_sections}) != len(pinned_sections):
+            return _err(
+                "The same section may not be listed twice for one course",
+                code="VALIDATION_PINNED_SECTION_DUPLICATE",
                 status=400,
             )
 
