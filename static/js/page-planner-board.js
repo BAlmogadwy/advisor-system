@@ -149,6 +149,26 @@
     failMust: IS_AR ? 'تعذر إدراج المقرر الإلزامي ضمن القيود الحالية.' : 'The must-take course could not be placed under the current constraints.',
     failPinned: IS_AR ? 'تعذر استخدام الشُعب المحدَّدة.' : 'The chosen sections could not be used.',
     failCredits: IS_AR ? 'يتعارض حد الساعات مع القيود المطلوبة.' : 'The credit limit conflicts with the required constraints.',
+    // In keep mode the limit covers the registered courses too. A course that only lacks room is
+    // said so with the numbers, or it reads as a clash (the old page's sentences, #287).
+    noRoomUnderLimit: IS_AR
+      ? 'لا يمكن إضافة مقررات: المقررات المسجلة تستنفد حد الساعات كاملًا.'
+      : 'Nothing can be added: the registered courses use the whole credit limit.',
+    overLimit: (credits, limit) => (IS_AR
+      ? `${credits} ساعات، أعلى من حد ${limit} ساعة لهذا البناء`
+      : `${credits} credits, above the ${limit}-credit limit of this build`),
+    noRoom: (limit, kept) => (IS_AR
+      ? `لا متّسع ضمن حد ${limit} ساعة: الساعات المسجلة ${kept}`
+      : `No room left under the ${limit}-credit limit: ${kept} credits are registered`),
+    aboveRoom: (credits, room, limit, kept) => (IS_AR
+      ? `${credits} ساعات، والمتبقي من حد ${limit} ساعة ${room} فقط (المسجّل ${kept})`
+      : `${credits} credits, above the ${room} left of the ${limit}-credit limit (${kept} registered)`),
+    besideOthers: (limit, kept) => (IS_AR
+      ? `تعذّر إدراجه ضمن حد ${limit} ساعة (المسجّل منها ${kept})، أو أن شُعبه متعارضة`
+      : `Could not fit within the ${limit}-credit limit (${kept} of it registered), or its sections clash`),
+    withinLimit: (limit) => (IS_AR
+      ? `تعذّر إدراجه ضمن حد ${limit} ساعة، أو أن شُعبه متعارضة`
+      : `Could not fit within the ${limit}-credit limit, or its sections clash`),
     notScheduledList: (codes) => [IS_AR ? 'غير مجدولة: ' : 'Not scheduled: ', ...codes.flatMap((c, i) => (i ? [', ', bdi(c)] : [bdi(c)]))],
     reason: {
       DID_NOT_FIT: IS_AR ? 'تعذّر إدراجه ضمن حد الساعات، أو أن شُعبه متعارضة' : 'Could not fit within the credit limit, or its sections clash',
@@ -2057,9 +2077,32 @@
     return true;
   }
 
+  // Why a course was not scheduled. DID_NOT_FIT names the limit and, in keep mode, how much of it the
+  // registered courses use (the reply's details since #287); a reply without them reads as before.
+  function whyNotScheduled(u) {
+    const code = String(u.reason_code || '');
+    const detail = Array.isArray(u.details) && isObj(u.details[0]) ? u.details[0] : {};
+    const limit = Number(detail.credit_limit);
+    if (code === 'DID_NOT_FIT' && Number.isFinite(limit) && limit > 0) {
+      const credits = Number(detail.course_credits);
+      const kept = Number(detail.registered_credits);
+      if (Number.isFinite(credits) && credits > limit) return T.overLimit(credits, limit);
+      if (Number.isFinite(kept) && kept > 0) {
+        const room = Math.max(0, limit - kept);
+        if (room === 0) return T.noRoom(limit, kept);
+        if (Number.isFinite(credits) && credits > room) return T.aboveRoom(credits, room, limit, kept);
+        return T.besideOthers(limit, kept);
+      }
+      return T.withinLimit(limit);
+    }
+    return T.reason[code] || String(u.reason || '') || T.noReason;
+  }
   function reasonLines(build) {
     const lines = [];
+    // With no room left at all, the lead and the courses' own line say it, with the numbers.
+    const noRoom = build.constraints.credit_room === 0;
     for (const f of build.failures) {
+      if (noRoom && f.kind === 'max_credits') continue;
       const code = String(f.course_code || '');
       let reason;
       if (IS_AR) reason = f.kind === 'must_take' ? T.failMust : (f.kind === 'pinned_section' ? T.failPinned : T.failCredits);
@@ -2068,12 +2111,12 @@
     }
     const groups = new Map();
     for (const u of build.unscheduled) {
-      const why = T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+      const why = whyNotScheduled(u);
       if (!groups.has(why)) groups.set(why, []);
       if (u.course_code) groups.get(why).push(String(u.course_code));
     }
     for (const [why, codes] of groups) lines.push(codes.length ? [...T.notScheduledList(codes), ' — ', why] : [why]);
-    if (!lines.length) lines.push([T.noFeasible]);
+    if (!lines.length && !noRoom) lines.push([T.noFeasible]);
     return lines;
   }
   function applicability() {
@@ -2122,7 +2165,7 @@
     const note = $('plbBuildNote');
     if (state.build && !state.build.options.length) {
       note.replaceChildren(
-        el('p', 'plb-buildnote-lead', T.noOption),
+        el('p', 'plb-buildnote-lead', state.build.constraints.credit_room === 0 ? T.noRoomUnderLimit : T.noOption),
         el('ul', 'plb-buildnote-list', ...reasonLines(state.build).map((parts) => el('li', '', ...parts))));
       note.hidden = false;
     } else {
@@ -2143,7 +2186,7 @@
     panel.hidden = !build || !state.whyOpen;
     if (panel.hidden) { panel.replaceChildren(); return; }
     const lines = [];
-    const reasonOf = (u) => T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+    const reasonOf = whyNotScheduled;
     // What the build as a whole left out is said once, below: not again under every option.
     const everywhere = new Set(build.unscheduled.map((u) => `${String(u.course_code || '')}|${reasonOf(u)}`));
     for (const opt of build.options) {
@@ -2698,6 +2741,7 @@
         at: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
         failures: Array.isArray(summary.hard_constraint_failures) ? summary.hard_constraint_failures : [],
         unscheduled: Array.isArray(data.unscheduled) ? data.unscheduled : [],
+        constraints: isObj(data.constraints) ? data.constraints : {},
         token: typeof data.graduation_projection_token === 'string' ? data.graduation_projection_token : '',
         projection: null,
         projRun: 0,
