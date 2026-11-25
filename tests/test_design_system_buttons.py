@@ -89,6 +89,9 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/planner_board.html", "plbFetch"),
     ("core/templates/core/planner_board.html", "plbRulesReset"),
     ("core/templates/core/planner_board.html", "plbRulesCancel"),
+    # ... and "Review and apply" beside the primary Rebuild, and the review dialog's Cancel.
+    ("core/templates/core/planner_board.html", "plbReview"),
+    ("core/templates/core/planner_board.html", "plbApplyCancel"),
     ("core/templates/core/section_planning.html", "spDeptFilterClear"),
     ("core/templates/core/student_advisor.html", "saHistoryToggle"),
     ("core/templates/core/student_graduation.html", "link:student_advisor"),

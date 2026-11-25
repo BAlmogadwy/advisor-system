@@ -58,13 +58,28 @@
 
         <!-- ═══ Option strip: only the registered week until a build exists ═══ -->
         <div class="plb-opts">
-          <div class="plb-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}الجدول المعروض{% else %}Timetable to show{% endif %}">
+          <div class="plb-tabs" id="plbStrip">
+            <div class="plb-tablist" id="plbTabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}الجدول المعروض{% else %}Timetable to show{% endif %}">
             <button type="button" class="plb-tab" id="plbTabRegistered" role="tab" aria-selected="true" aria-controls="plbWeekPanel">
               <span class="plb-tab-n"><span id="plbTabName">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span><span class="plb-tab-lock" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="plb-tab-cr" id="plbTabCredits"></span></span>
               <span class="plb-tab-x" id="plbTabFacts1">—</span>
               <span class="plb-tab-x" id="plbTabFacts2"></span>
             </button>
+            </div>
           </div>
+
+          <div class="plb-acts" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات وتطبيقها{% else %}Build and apply{% endif %}">
+            <div class="plb-acts-row">
+              <button type="button" class="btn btn-primary" id="plbBuild" disabled>{% if LANGUAGE_CODE == 'ar' %}ابنِ الخيارات{% else %}Build options{% endif %}</button>
+              <button type="button" class="btn btn-neutral" id="plbReview" aria-haspopup="dialog" disabled>{% if LANGUAGE_CODE == 'ar' %}مراجعة وتطبيق{% else %}Review and apply{% endif %}</button>
+            </div>
+            <p class="plb-acts-note plb-acts-why" id="plbApplyWhy" hidden></p>
+            <p class="plb-acts-note" id="plbBuildLine" role="status" aria-live="polite"></p>
+            <p class="plb-acts-note" id="plbLastBuild" hidden></p>
+            <p class="plb-acts-note plb-acts-safe">{% if LANGUAGE_CODE == 'ar' %}لا يُحفظ شيء ولا يُحجز أي مقعد حتى تضغط تطبيق.{% else %}Nothing is saved and no seat is held until you apply.{% endif %}</p>
+          </div>
+
+          <div class="plb-buildnote" id="plbBuildNote" hidden></div>
         </div>
 
         <!-- ═══ Panes: courses | week | detail (later) ═══ -->
@@ -82,8 +97,7 @@
             <table class="plb-tbl" id="plbTable">
               <thead>
                 <tr>
-                  <th scope="col" colspan="2" class="plb-mic">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
-                  <th scope="col" class="plb-mic">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</th>
+                  <th scope="col" colspan="2" class="plb-mic">{% if LANGUAGE_CODE == 'ar' %}المقرر والشعبة{% else %}Course and section{% endif %}</th>
                   <th scope="col" class="plb-mic"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إلزامي{% else %}Must-take{% endif %}</span></th>
                   <th scope="col" class="plb-mic"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إجراء{% else %}Action{% endif %}</span></th>
                 </tr>
@@ -94,8 +108,8 @@
           <section class="plb-week" id="plbWeekPanel" role="tabpanel" aria-labelledby="plbTabRegistered">
             <div class="plb-ph">
               <h2 class="plb-h2">{% if LANGUAGE_CODE == 'ar' %}الأسبوع{% else %}Week{% endif %}</h2>
-              <span class="plb-phn">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span>
-              <span class="plb-lg"><i class="plb-k" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span>
+              <span class="plb-phn" id="plbWeekName">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span>
+              <span class="plb-lg" id="plbLegend"><span class="plb-lg-i"><i class="plb-k" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span></span>
             </div>
             <div id="plbWeek"></div>
           </section>
@@ -155,8 +169,33 @@
           </div>
         </form>
       </dialog>
+
+      <!-- ═══ Review and apply ═══ -->
+      <dialog id="plbApplyDialog" class="ux-dialog plb-dialog" aria-labelledby="plbApplyTitle">
+        <form method="dialog" id="plbApplyForm" novalidate>
+          <div class="ux-dialog-head">
+            <div>
+              <h2 class="ux-dialog-title" id="plbApplyTitle"></h2>
+              <p class="ux-dialog-sub" id="plbApplySub"></p>
+            </div>
+          </div>
+          <div class="ux-dialog-body">
+            <div class="ux-field">
+              <span class="ux-field-label">{% if LANGUAGE_CODE == 'ar' %}الشُعب التي ستُحفظ{% else %}Sections to save{% endif %}</span>
+              <ul class="plb-apply-list" id="plbApplyList"></ul>
+            </div>
+            <p class="plb-apply-p" id="plbApplyReg"></p>
+            <p class="plb-apply-p" id="plbApplyWarn"></p>
+            <p class="plb-err" id="plbApplyErr" role="alert" hidden></p>
+          </div>
+          <div class="ux-dialog-foot">
+            <button type="button" class="btn btn-neutral" id="plbApplyCancel">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+            <button type="submit" class="btn btn-primary" id="plbApplyGo">{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
+          </div>
+        </form>
+      </dialog>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=1"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=2"></script>
 {% endblock %}
