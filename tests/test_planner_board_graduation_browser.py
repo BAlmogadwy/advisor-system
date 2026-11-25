@@ -221,6 +221,11 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(won.evaluate("n => getComputedStyle(n).fontWeight"), "600")
         self.assertLess(float(won.evaluate(size)[:-2]), float(sooner[0][:-2]))
         self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-land b"), ["Term 1, 1450"])
+        # A screen reader hears the line alone: its sentence says which term is meant.
+        self.assertIn(
+            "completes Term 1, 1450, the same term as registered. Credits per term:",
+            self._text(page, "#plbGrad .plb-rwl--opt .sr-only"),
+        )
 
     def test_a_null_difference_shows_no_result(self) -> None:
         page, _fake = self._projected(_reply(B1=forecast([15, 18, 18, 15], delta=None)))
@@ -740,7 +745,11 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         page.click("#plbTab_B3")
         self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["أبعد بفصل واحد"])
         page.click("#plbTab_B2")
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["الفصل نفسه"])
+        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["نفس الفصل"])
+        # A screen reader hears the line alone: its sentence says which term is meant.
+        self.assertIn(
+            "، نفس فصل التسجيل الحالي.", self._text(page, "#plbGrad .plb-rwl--opt .sr-only")
+        )
 
     def test_data_span_and_the_every_other_label_rule(self) -> None:
         for columns, span in ((5, "s"), (6, "m"), (8, "m"), (9, "l"), (14, "l"), (15, "xl")):

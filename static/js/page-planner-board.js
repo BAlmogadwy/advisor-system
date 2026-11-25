@@ -238,7 +238,9 @@
     gradUnresolved: IS_AR ? 'تعذّر تحديد فصل الإكمال' : 'Completion term unresolved',
     gradNoReg: IS_AR ? 'لا يوجد تسجيل رسمي لهذا الفصل' : 'No registrar registration for this term',
     // Shorter than the current page's sentence: here it sits beside the registered line's own term.
-    gradSame: IS_AR ? 'الفصل نفسه' : 'Same term',
+    // A screen reader hears the line on its own, so there the sentence says which term is meant.
+    gradSame: IS_AR ? 'نفس الفصل' : 'Same term',
+    gradSameSaid: IS_AR ? 'نفس فصل التسجيل الحالي' : 'the same term as registered',
     gradAsRegistered: IS_AR ? 'كما هو مسجّل' : 'As registered',
     gradPerTerm: IS_AR ? 'الساعات في كل فصل' : 'Credits per term',
     gradReasons: IS_AR ? 'أسباب على مستوى المقررات' : 'Course-level reasons',
@@ -1627,7 +1629,7 @@
     ? T.gradTerm(row.completion_academic_year, row.completion_term) : []);
   function resultOf(delta) {
     if (!Number.isInteger(delta)) return null;
-    if (delta === 0) return { kind: 'same', text: T.gradSame };
+    if (delta === 0) return { kind: 'same', text: T.gradSame, said: T.gradSameSaid };
     return { kind: delta < 0 ? 'sooner' : 'later', text: T.gradTiming(delta) };
   }
 
@@ -1723,7 +1725,7 @@
   // The whole line as one sentence for a screen reader; the ticks and the axis are hidden from it.
   function gradSentence(labelParts, row, result, list) {
     const parts = [...labelParts, ': ', T.gradTermCount(row.terms_including_planning_term), T.gradCompletes, ...completionParts(row)];
-    if (result) parts.push(T.gradSep, result.text);
+    if (result) parts.push(T.gradSep, result.said || result.text);
     parts.push('. ', T.gradPerTerm, ': ');
     list.forEach((entry, i) => {
       if (i) parts.push(T.gradSep);
