@@ -156,10 +156,30 @@ def _summarize(report: dict, names: dict[str, str], planning_term: dict) -> dict
     elif report.get("simulation_completed") is False:
         status = "unresolved"
 
+    credits_by_term: list[dict] = []
+    if status == "complete":
+        credits_by_term = [
+            {
+                **planning_term,
+                "credits": int(report.get("planning_baseline_credits") or 0),
+                "waiting": False,
+            }
+        ]
+        credits_by_term += [
+            {
+                "academic_year": row["academic_year"],
+                "term": row["term"],
+                "credits": int(row.get("credits") or 0),
+                "waiting": bool(row.get("waiting_term")),
+            }
+            for row in report.get("term_plan") or []
+        ]
+
     return {
         "status": status,
         "course_codes": sorted(names),
         "terms_including_planning_term": count,
+        "credits_by_term": credits_by_term,
         "completion_academic_year": completion.get("academic_year"),
         "completion_term": completion.get("term"),
         "unresolved_requirements": [
