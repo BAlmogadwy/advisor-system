@@ -44,6 +44,9 @@ const T = {
   noFeasibleHardConstraints: IS_AR
     ? 'لا توجد نتيجة صالحة تحقق جميع المقررات الإلزامية والشُعب المثبّتة ضمن القيود الحالية.'
     : 'No valid result satisfies every must-take course and exact pinned section under the current constraints.',
+  noRoomUnderLimit: IS_AR
+    ? 'لا يمكن إضافة مقررات: المقررات المسجلة تستنفد حد الساعات كاملًا.'
+    : 'Nothing can be added: the registered courses use the whole credit limit.',
   builderRunning: IS_AR ? 'جارٍ بناء خيارات الجدول...' : 'Building timetable options...',
   building: IS_AR ? 'جارٍ البناء…' : 'Building…',
   sourceRegistered: IS_AR ? 'المسجّل' : 'Registered',
@@ -281,6 +284,26 @@ function reasonHtml(u){
           return IS_AR
             ? safeHtml`${n(credits)} ساعات، أعلى من حد ${n(limit)} ساعة لهذا البناء`
             : safeHtml`${n(credits)} credits, above the ${n(limit)}-credit limit of this build`;
+        }
+        /* Keep registered: the limit is the whole load, so the hours already
+           registered use part of it. Said here, or a course that only lacks room
+           reads "or its sections clash" and the adviser looks for a clash. */
+        const kept=Number(detail.registered_credits);
+        if(Number.isFinite(kept) && kept>0){
+          const room=Math.max(0, limit-kept);
+          if(room===0){
+            return IS_AR
+              ? safeHtml`لا متّسع ضمن حد ${n(limit)} ساعة: الساعات المسجلة ${n(kept)}`
+              : safeHtml`No room left under the ${n(limit)}-credit limit: ${n(kept)} credits are registered`;
+          }
+          if(Number.isFinite(credits) && credits>room){
+            return IS_AR
+              ? safeHtml`${n(credits)} ساعات، والمتبقي من حد ${n(limit)} ساعة ${n(room)} فقط (المسجّل ${n(kept)})`
+              : safeHtml`${n(credits)} credits, above the ${n(room)} left of the ${n(limit)}-credit limit (${n(kept)} registered)`;
+          }
+          return IS_AR
+            ? safeHtml`تعذّر إدراجه ضمن حد ${n(limit)} ساعة (المسجّل منها ${n(kept)})، أو أن شُعبه متعارضة`
+            : safeHtml`Could not fit within the ${n(limit)}-credit limit (${n(kept)} of it registered), or its sections clash`;
         }
         return IS_AR
           ? safeHtml`تعذّر إدراجه ضمن حد ${n(limit)} ساعة، أو أن شُعبه متعارضة`
@@ -1472,7 +1495,7 @@ async function runBuilderRequest(runGeneration){
           ? 'تعذر استخدام الشعبة المثبّتة بالضبط.'
           : 'يتعارض حد الساعات مع القيود المطلوبة.'))
       : escapeHtml(f.reason||T.noFeasibleHardConstraints);
-    return `<div class="mt-1">• ${code?`<strong>${code}</strong>: `:''}${reason}</div>`;
+    return `<div class="mt-1 w-100">• ${code?`<strong>${code}</strong>: `:''}${reason}</div>`;
   }).join('');
   /* The per-course reasons the server computed. They were only ever rendered
      INSIDE an option card, so when a build produced no options — the exact
@@ -1481,12 +1504,15 @@ async function runBuilderRequest(runGeneration){
      "nothing found" cannot act. */
   const blocked=Array.isArray(data.unscheduled)?data.unscheduled:[];
   const blockedHtml=(!feasible && blocked.length)
-    ? `<div class="mt-2"><strong>${IS_AR?'المقررات التي تعذّرت جدولتها':'Courses that could not be scheduled'}:</strong></div>`
-      + `<div class="opt-diag">${safeHtml`${unscheduledByReasonHtml(blocked)}`}</div>`
+    ? `<div class="mt-2 w-100"><strong>${IS_AR?'المقررات التي تعذّرت جدولتها':'Courses that could not be scheduled'}:</strong></div>`
+      + `<div class="opt-diag w-100">${safeHtml`${unscheduledByReasonHtml(blocked)}`}</div>`
     : '';
 
+  /* The banner is one flex row. With no result it also holds the failures and
+     the per-course reasons, which were squeezed into columns a few words wide:
+     let it wrap, and give each of those lines the full width. */
   const summaryEl=q('builderSummary');
-  summaryEl.className=`planner-banner planner-banner-${feasible?'ok':'warn'}`;
+  summaryEl.className=`planner-banner planner-banner-${feasible?'ok':'warn flex-wrap'}`;
   summaryEl.innerHTML=`
     <div><strong>${IS_AR ? 'تمت الجدولة' : 'Scheduled'}:</strong> ${s.scheduled||0}/${s.target||0}</div>
     <div><strong>${IS_AR ? 'التعارضات' : 'Conflicts'}:</strong> ${s.conflicts||0}</div>
@@ -1494,11 +1520,15 @@ async function runBuilderRequest(runGeneration){
     <div><strong>${IS_AR ? 'الحالة' : 'Status'}:</strong> ${feasible?(IS_AR?'تم العثور على أفضل خطة ممكنة':'Best feasible plan found'):(IS_AR?'لا توجد خطة تحقق جميع القيود الإلزامية':'No plan satisfies all hard constraints')}</div>
     ${failureHtml}${blockedHtml}`;
 
+  /* Keep registered, and the kept load already fills the limit: say that. The
+     must-take sentence would send the adviser to the wrong control. */
+  const noRoom=!feasible && Boolean(data.constraints) && data.constraints.credit_room===0;
+  const noResult=noRoom ? T.noRoomUnderLimit : T.noFeasibleHardConstraints;
   setBanner(
     feasible?'success':'warning',
     feasible
       ? (IS_AR ? 'اكتمل تشغيل المُنشئ. راجع الخيارات أدناه.' : 'Builder run completed. Review options below.')
-      : T.noFeasibleHardConstraints
+      : noResult
   );
 
   setLastBuildAt(T.lastBuildAt, true);
@@ -1510,7 +1540,13 @@ async function runBuilderRequest(runGeneration){
   const cards=q('optionCards');
   cards.innerHTML='';
   if(!feasible){
-    cards.innerHTML=`<div class="col-12"><div class="planner-banner planner-banner-warn">${T.noFeasibleHardConstraints}</div></div>`;
+    const col=document.createElement('div');
+    col.className='col-12';
+    const box=document.createElement('div');
+    box.className='planner-banner planner-banner-warn';
+    box.textContent=noResult;
+    col.appendChild(box);
+    cards.appendChild(col);
   }
 
   const vs=q('visualSource');

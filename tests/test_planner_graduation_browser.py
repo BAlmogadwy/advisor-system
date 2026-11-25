@@ -28,7 +28,9 @@ def test_option_cards_and_reasons_follow_the_selected_schedule(
         page = context.new_page()
         page.goto(f"{live_server.url}/planner/?student_id={STUDENT_ID}&year={YEAR}&term={TERM}")
         page.locator("#step2").click()
-        page.locator("#maxCredits").fill("3")
+        # The limit is the whole load: the 3 hours the student keeps (CS301) and
+        # room for one more 3-hour course, so each option adds exactly one.
+        page.locator("#maxCredits").fill("6")
         page.locator("#runBuilder").click()
         panel = page.locator("#graduationProjection")
         cards = page.locator("#optionCards .option-card")

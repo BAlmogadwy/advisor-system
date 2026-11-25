@@ -1436,6 +1436,11 @@ def build_plans(
     # course with no real slot. A safety gate that must be opted into is a gate
     # that gets forgotten; the permissive behaviour is now the thing you ask for.
     require_complete_meetings: bool = True,
+    # The credit hours the kept registered timetable already holds. The cap is
+    # the student's whole load, so in keep mode the shortlist gets only what
+    # these leave of ``max_credits``. A caller that has made that room itself
+    # (``student_planner`` subtracts before it calls) leaves this at 0.
+    kept_credits: int = 0,
 ) -> dict[str, Any]:
     must_take_codes = {
         str(item.get("course_code", "")).replace(" ", "").upper()
@@ -1502,6 +1507,54 @@ def build_plans(
         if cr > 0:
             credits_map[code] = cr
 
+    # THE CAP IS THE STUDENT'S WHOLE LOAD: what is kept plus what is added. The
+    # solvers below count the shortlist alone and use the kept timetable only as
+    # busy time, so the kept hours come off the cap here, once, for all of them.
+    # Only in keep mode and only under a cap (0 is "no limit" to every solver,
+    # which is why a cap with no room left must stop here and not reach them).
+    kept = (
+        max(0, int(kept_credits or 0)) if keep_registered and max_credits and max_credits > 0 else 0
+    )
+    credit_room = max_credits - kept if kept else max_credits
+    if kept and credit_room <= 0:
+        # One sentence for a load at the limit and for one above it (21 against 18).
+        no_room = (
+            f"No room left under the {max_credits}-credit limit: {kept} credits are registered"
+        )
+        return {
+            "summary": {
+                "scheduled": 0,
+                "target": len(shortlist),
+                "conflicts": len(codes),
+                "swaps_required": 0,
+                "best_feasible": False,
+                "hard_constraint_failures": [
+                    {"kind": "max_credits", "course_code": "", "reason": no_room}
+                ],
+            },
+            "options": [],
+            "unscheduled": [
+                {
+                    "course_code": code,
+                    "reason": no_room,
+                    "reason_code": "DID_NOT_FIT",
+                    "details": [
+                        {
+                            "course_credits": int(credits_map.get(code, 0) or 0),
+                            "credit_limit": max_credits,
+                            "registered_credits": kept,
+                        }
+                    ],
+                }
+                for code in codes
+            ],
+            "swap_suggestions": [],
+        }
+    # Said beside the limit wherever a reason names it, so "the 18-credit limit"
+    # is not read as 18 hours of room.
+    kept_note = f" ({kept} of it registered)" if kept else ""
+    kept_detail = {"registered_credits": kept} if kept else {}
+
     rejected_unscheduled: list[list[dict[str, Any]]] = []
     rejected_hard_failures: list[dict[str, Any]] = []
 
@@ -1545,14 +1598,14 @@ def build_plans(
 
         if max_credits and max_credits > 0:
             scheduled_credits = sum(credits_map.get(code, 0) for code in selected_by_code)
-            if scheduled_credits > max_credits:
+            if scheduled_credits > credit_room:
                 failures.append(
                     {
                         "kind": "max_credits",
                         "course_code": "",
                         "reason": (
                             f"Generated option has {scheduled_credits} credits, "
-                            f"above the {max_credits}-credit limit"
+                            f"above the {max_credits}-credit limit{kept_note}"
                         ),
                     }
                 )
@@ -1609,7 +1662,7 @@ def build_plans(
                 profile="A",
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
-                max_credits=max_credits,
+                max_credits=credit_room,
                 target_credits=target_credits,
                 credits_map=credits_map,
                 deadline=solver_deadline,
@@ -1622,7 +1675,7 @@ def build_plans(
                 keep_registered,
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
-                max_credits=max_credits,
+                max_credits=credit_room,
                 target_credits=target_credits,
                 credits_map=credits_map,
                 deadline=solver_deadline,
@@ -1633,7 +1686,7 @@ def build_plans(
             baseline,
             keep_registered,
             strict_per_course=strict_per_course,
-            max_credits=max_credits,
+            max_credits=credit_room,
             target_credits=target_credits,
             credits_map=credits_map,
             deadline=solver_deadline,
@@ -1673,25 +1726,30 @@ def build_plans(
                 # smallest gaps") - true, and of no use to an adviser deciding
                 # what to change. Name the binding constraint instead.
                 course_credits = int(credits_map.get(code, 0) or 0)
-                if max_credits and course_credits > max_credits:
+                if max_credits and course_credits > credit_room:
                     item["reason"] = (
                         f"{code} is {course_credits} credits, above the "
-                        f"{max_credits}-credit limit set for this build"
-                    )
-                    item["reason_code"] = "DID_NOT_FIT"
-                    item["details"] = [
-                        {"course_credits": course_credits, "credit_limit": max_credits}
-                    ]
-                elif max_credits:
-                    item["reason"] = (
-                        "Could not fit alongside the other courses within the "
-                        f"{max_credits}-credit limit, or its sections clash"
+                        f"{max_credits}-credit limit set for this build{kept_note}"
                     )
                     item["reason_code"] = "DID_NOT_FIT"
                     item["details"] = [
                         {
                             "course_credits": course_credits,
                             "credit_limit": max_credits,
+                            **kept_detail,
+                        }
+                    ]
+                elif max_credits:
+                    item["reason"] = (
+                        "Could not fit alongside the other courses within the "
+                        f"{max_credits}-credit limit{kept_note}, or its sections clash"
+                    )
+                    item["reason_code"] = "DID_NOT_FIT"
+                    item["details"] = [
+                        {
+                            "course_credits": course_credits,
+                            "credit_limit": max_credits,
+                            **kept_detail,
                             "sections_considered": len(catalog.get(code) or []),
                         }
                     ]
