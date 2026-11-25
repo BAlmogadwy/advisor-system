@@ -8712,6 +8712,7 @@ html[data-theme="dark"] .plb {
   border: 0; background: none; cursor: pointer;
   font-size: var(--text-xs); font-weight: 600; line-height: 16px; color: var(--text-brand); white-space: nowrap;
 }
+.plb-lk:disabled { color: var(--t3); cursor: default; }
 
 /* one three-column grid shared by the band, the option strip and the panes */
 .plb-band, .plb-opts, .plb-body {

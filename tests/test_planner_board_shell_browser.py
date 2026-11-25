@@ -112,7 +112,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         page = self._open(fake, load=False)
         self._fetch(page, STUDENT_ID)  # the slow one, held
         expect(page.locator("#plbStatus")).to_have_text("Loading student…")
-        self._fetch(page, OTHER_ID)  # the newer one answers at once
+        self._fetch_forced(page, OTHER_ID)  # the newer one answers at once
         expect(page.locator("#plbStudent")).to_contain_text("Newer Student")
         # Now the slow one answers, with a different name.
         _body, route = fake.pending.pop()
@@ -345,7 +345,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbStatus")).to_have_text("Loading student…")
         # ... and a newer fetch overtakes it, then fails.
         fake.context_answer = lambda body: (404, {"error": {"code": "STUDENT_NOT_FOUND"}})
-        self._fetch(page, "4999999")
+        self._fetch_forced(page, "4999999")
         expect(page.locator("#plbStatus")).to_have_text("No student found with that ID.")
         expect(page.locator("#plbRules1")).to_contain_text("Strict eligibility")
         # The overtaken reload then answers: it is too late to change anything.
@@ -418,8 +418,10 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertEqual(self._text(page, f"{row} .plb-sc"), "Any section")
         self.assertFalse(page.is_checked(f"{row} input[type='checkbox']"))
         # Could be added: the sections, and a seat warning when one section is nearly full.
-        self.assertEqual(self._text(page, "tr[data-code='STAT305'] .plb-sc"), "Mon Wed")
-        self.assertEqual(self._text(page, "tr[data-code='CS351'] .plb-sc"), "Thu · 3 seats left")
+        self.assertEqual(self._text(page, "tr[data-code='STAT305'] .plb-sc"), "Mon Wed 08:00-09:15")
+        self.assertEqual(
+            self._text(page, "tr[data-code='CS351'] .plb-sc"), "Thu 09:00-11:30 · 3 seats left"
+        )
         # Blocked: the reason; waiting for a course in the plan says so, for one outside it does not.
         self.assertIn("Missing: AI331 (in this plan)", self._text(page, "tr[data-code='AI431']"))
         self.assertIn("Missing: CS999", self._text(page, "tr[data-code='AI450']"))
@@ -508,7 +510,9 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
     def test_a_slow_earlier_section_reply_cannot_paint_over_a_newer_one(self) -> None:
         fake = Fake()
         page = self._open(fake)
-        self.assertEqual(self._text(page, "tr[data-code='CS351'] .plb-sc"), "Thu · 3 seats left")
+        self.assertEqual(
+            self._text(page, "tr[data-code='CS351'] .plb-sc"), "Thu 09:00-11:30 · 3 seats left"
+        )
         # A rule change asks for the sections again; that reply is slow ...
         fake.hold_catalog = 1
         self._rules(page, prog=False)
@@ -523,7 +527,9 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         # The slow reply then arrives, saying there are no sections at all.
         fake.pending_catalog.pop().fulfill(json={"ok": True, "sections": []})
         page.wait_for_timeout(400)
-        self.assertEqual(self._text(page, "tr[data-code='CS351'] .plb-sc"), "Thu · 3 seats left")
+        self.assertEqual(
+            self._text(page, "tr[data-code='CS351'] .plb-sc"), "Thu 09:00-11:30 · 3 seats left"
+        )
 
     # ── The registered week ──────────────────────────────────────────────────
     def test_the_registered_week_has_the_right_blocks_footers_and_facts(self) -> None:
@@ -603,7 +609,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         page = self._open(fake, load=False)
         self._fetch(page, STUDENT_ID)
         expect(page.locator("#plbWeek .plb-note")).to_have_text(
-            "2 registered courses have no timetable slots."
+            "2 registered courses have no timetable slots (CS340, CS341)."
         )
         self.assertEqual(page.locator("#plbWeek .plb-b").count(), 6)
         # CS340's credits are unknown: they add nothing and nothing shows "0 cr" for it.

@@ -100,6 +100,7 @@
             <div class="plb-ph">
               <h2 class="plb-h2" id="plbCoursesTitle">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</h2>
               <span class="plb-phn" id="plbCredits"></span>
+              <button type="button" class="plb-lk" id="plbReset" disabled>{% if LANGUAGE_CODE == 'ar' %}العودة إلى المقترح{% else %}Reset to suggestions{% endif %}</button>
               <div class="plb-addwrap">
                 <label class="plb-cap plb-add"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><input id="plbAdd" type="text" role="combobox" aria-expanded="false" aria-controls="plbAddList" aria-autocomplete="list" autocomplete="off" placeholder="{% if LANGUAGE_CODE == 'ar' %}إضافة مقرر{% else %}Add a course{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}إضافة مقرر من خطة الطالب{% else %}Add a course from the plan{% endif %}" disabled></label>
                 <ul class="plb-list" id="plbAddList" role="listbox" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المطابقة{% else %}Matching courses{% endif %}" hidden></ul>
@@ -208,5 +209,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=8"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=9"></script>
 {% endblock %}

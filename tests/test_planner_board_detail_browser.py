@@ -142,7 +142,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertIn("Not available: it clashes with a registered class", m1)
         self.assertEqual(page.locator("#plbDetail [data-tsid='11'] .plb-flag--bad").count(), 0)
         m2 = self._section_text(page, 12)
-        self.assertIn("§M2 Mon Wed 10:00-11:15 20 of 40 taken", m2)
+        self.assertIn("§M2 Mon Wed 10:00-11:15 For AI · 20 of 40 taken", m2)
         self.assertNotIn("clashes", m2.lower())
         self.assertIn("Not available: full sections are off", self._section_text(page, 16))
         self.assertEqual(page.locator("#plbDetail [data-tsid='16'] .plb-flag--bad").count(), 0)
