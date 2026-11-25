@@ -101,7 +101,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         button = page.locator(self._button("AI331"))
         self.assertEqual(button.get_attribute("aria-expanded"), "false")
         self.assertEqual(button.get_attribute("aria-controls"), "plbDetail")
-        self.assertEqual(self._text(page, self._button("AI331")), "any section")
+        self.assertEqual(self._text(page, self._button("AI331")), "Any section")
         self.assertTrue(page.locator("#plbDetail").is_hidden())
         self.assertTrue(
             page.evaluate(
@@ -208,7 +208,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page.keyboard.press("Space")
         expect(page.locator("#plbDetail input[value='12']")).to_be_checked()
         expect(page.locator("#plbDetail input[value='12']")).to_be_focused()
-        self.assertEqual(self._cell(page, "AI331"), "pinned §M2")
+        self.assertEqual(self._cell(page, "AI331"), "Only §M2")
 
     def test_the_panel_closes_when_its_course_goes_or_another_student_loads(self) -> None:
         fake = _fake()
@@ -235,8 +235,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page = self._open(fake)
         self._open_panel(page, "AI331")
         page.check("#plbDetail input[value='12']")
-        self.assertEqual(self._cell(page, "AI331"), "pinned §M2")
-        self.assertIn("Pinned AI331 §M2.", self._text(page, "#plbStatus"))
+        self.assertEqual(self._cell(page, "AI331"), "Only §M2")
+        self.assertIn("AI331: only §M2 may be used.", self._text(page, "#plbStatus"))
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild")
         item = [c for c in fake.build_bodies[0]["shortlist"] if c["course_code"] == "AI331"][0]
@@ -248,8 +248,9 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
             encoding="utf-8"
         )
         self.assertIn("pinned_sections:[{term_section_id:tsid, section:secLabel}]", old)
-        # A pin is exact and single: choosing another section replaces it.
+        # Moving the allowance to another section: tick it, then untick the first.
         page.check("#plbDetail input[value='17']")
+        page.uncheck("#plbDetail input[value='12']")
         page.click("#plbBuild")
         expect(page.locator("#plbBuildLine")).to_have_text("")
         item = [c for c in fake.build_bodies[1]["shortlist"] if c["course_code"] == "AI331"][0]
@@ -261,8 +262,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self._open_panel(page, "AI331")
         page.check("#plbDetail input[value='12']")
         page.check("#plbDetail input[value='any']")
-        self.assertEqual(self._cell(page, "AI331"), "any section")
-        self.assertIn("AI331: any section.", self._text(page, "#plbStatus"))
+        self.assertEqual(self._cell(page, "AI331"), "Any section")
+        self.assertIn("AI331: any section may be used.", self._text(page, "#plbStatus"))
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild")
         item = [c for c in fake.build_bodies[0]["shortlist"] if c["course_code"] == "AI331"][0]
@@ -284,12 +285,12 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page.check("#plbDetail input[value='16']")
         page.check("#plbDetail input[value='11']")
         self._rules(page, full=False, mode="keep")
-        for tsid in (11,):
+        for tsid in (11, 16):
             self.assertTrue(page.locator(f"#plbDetail input[value='{tsid}']").is_checked())
-            self.assertIn("Pinned, but it can no longer be used.", self._section_text(page, tsid))
-            self.assertIn("clashes with a registered class", self._section_text(page, tsid))
-        # The unusable pin is still in the plan: nothing dropped it.
-        self.assertEqual(self._cell(page, "AI331"), "pinned §M1")
+            self.assertIn("Ticked, but it can no longer be used.", self._section_text(page, tsid))
+        self.assertIn("clashes with a registered class", self._section_text(page, 11))
+        # The unusable ticks are still in the plan: nothing dropped them.
+        self.assertEqual(self._cell(page, "AI331"), "Only §M1 or §M3")
         fake_item = page.evaluate(
             "() => document.querySelector(\"#plbDetail input[value='11']\").checked"
         )
@@ -308,9 +309,9 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbDetail [data-tsid='12']")).to_contain_text("not in the current")
         self.assertTrue(page.locator("#plbDetail input[value='12']").is_checked())
         self.assertIn(
-            "Pinned, but it is not in the current section list.", self._section_text(page, 12)
+            "Ticked, but it is not in the current section list.", self._section_text(page, 12)
         )
-        self.assertEqual(self._cell(page, "AI331"), "pinned §M2")
+        self.assertEqual(self._cell(page, "AI331"), "Only §M2")
 
     def test_the_panel_names_the_options_that_chose_each_section(self) -> None:
         page, _ = self._built(_fake())

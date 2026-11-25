@@ -43,8 +43,7 @@
     missing: IS_AR ? 'ناقص:' : 'Missing:',
     inThisPlan: IS_AR ? '(ضمن هذه الخطة)' : '(in this plan)',
     prereqNotMet: IS_AR ? 'المتطلبات غير مستوفاة' : 'Prerequisites not met',
-    anySection: IS_AR ? 'أي شعبة' : 'any section',
-    pinned: IS_AR ? 'مثبّتة' : 'pinned',
+    anySection: IS_AR ? 'أي شعبة' : 'Any section',
     noRegistered: IS_AR ? 'لا مقررات مسجلة في هذا الفصل.' : 'No registered courses this term.',
     nothingAdded: IS_AR ? 'لم تُضف مقررات بعد.' : 'No courses added yet.',
     loadFirstCourses: IS_AR ? 'حمّل طالبًا لعرض مقرراته.' : 'Load a student to see their courses.',
@@ -127,10 +126,10 @@
     requestFailed: IS_AR ? 'فشل الطلب' : 'Request failed',
     noOption: IS_AR ? 'لم يُعثر على خيار يحقق القيود الحالية.' : 'No option could be built under the current constraints.',
     noFeasible: IS_AR
-      ? 'لا توجد نتيجة صالحة تحقق جميع المقررات الإلزامية والشُعب المثبّتة ضمن القيود الحالية.'
-      : 'No valid result satisfies every must-take course and exact pinned section under the current constraints.',
+      ? 'لا توجد نتيجة صالحة تحقق جميع المقررات الإلزامية والشُعب المحدَّدة ضمن القيود الحالية.'
+      : 'No valid result satisfies every must-take course and the sections chosen under the current constraints.',
     failMust: IS_AR ? 'تعذر إدراج المقرر الإلزامي ضمن القيود الحالية.' : 'The must-take course could not be placed under the current constraints.',
-    failPinned: IS_AR ? 'تعذر استخدام الشعبة المثبّتة بالضبط.' : 'The exact pinned section could not be used.',
+    failPinned: IS_AR ? 'تعذر استخدام الشُعب المحدَّدة.' : 'The chosen sections could not be used.',
     failCredits: IS_AR ? 'يتعارض حد الساعات مع القيود المطلوبة.' : 'The credit limit conflicts with the required constraints.',
     notScheduledList: (codes) => [IS_AR ? 'غير مجدولة: ' : 'Not scheduled: ', ...codes.flatMap((c, i) => (i ? [', ', bdi(c)] : [bdi(c)]))],
     reason: {
@@ -207,14 +206,50 @@
     inOptions: (names) => [IS_AR ? 'في ' : 'in ', ...names.flatMap((n, i) => (i ? [IS_AR ? '، ' : ', ', bdi(n)] : [bdi(n)]))],
     cannotFull: IS_AR ? 'غير متاحة: الشُعب الممتلئة غير مسموحة في القواعد.' : 'Not available: full sections are off in the rules.',
     cannotClash: IS_AR ? 'غير متاحة: تتعارض مع مقرر مسجّل، والمسجّل مُبقى عليه.' : 'Not available: it clashes with a registered class, and registered courses are kept.',
-    pinBroken: IS_AR ? 'مثبّتة، لكن لم يعد استخدامها ممكنًا. ' : 'Pinned, but it can no longer be used. ',
-    pinGone: IS_AR ? 'مثبّتة، لكنها ليست في قائمة الشُعب الحالية.' : 'Pinned, but it is not in the current section list.',
+    tickBroken: IS_AR ? 'محدَّدة، لكن لم يعد استخدامها ممكنًا. ' : 'Ticked, but it can no longer be used. ',
+    tickGone: IS_AR ? 'محدَّدة، لكنها ليست في قائمة الشُعب الحالية.' : 'Ticked, but it is not in the current section list.',
     noCatalog: IS_AR ? 'بيانات الشُعب غير متاحة.' : 'Section data is not available.',
-    readOnlyHint: IS_AR ? 'هذا المقرر ليس في الخطة بعد. أضفه لتثبيت شعبة.' : 'This course is not in the plan yet. Add it to pin a section.',
+    readOnlyHint: IS_AR ? 'هذا المقرر ليس في الخطة بعد. أضفه لاختيار شُعبه.' : 'This course is not in the plan yet. Add it to choose its sections.',
     removeFromPlan: IS_AR ? 'إزالة من الخطة' : 'Remove from plan',
     addToPlan: IS_AR ? 'إضافة إلى الخطة' : 'Add to plan',
-    pinnedSet: (code, section) => (IS_AR ? ['ثُبّتت الشعبة ', bdi(`${code} §${section}`), '.'] : ['Pinned ', bdi(`${code} §${section}`), '.']),
-    pinnedCleared: (code) => (IS_AR ? [bdi(code), ': أي شعبة.'] : [bdi(code), ': any section.']),
+    // "Only these": several allowed sections for a course.
+    onlyOpt: IS_AR ? 'هذه فقط' : 'Only these',
+    onlyNone: IS_AR
+      ? 'حدِّد الشُعب التي يجوز للبناء استخدامها. ما لم تُحدَّد شعبة، تُستخدم أي شعبة.'
+      : 'Tick the sections the build may use. Until one is ticked, any section may be used.',
+    onlyPicks: IS_AR ? 'يختار البناء إحدى الشُعب المحدَّدة.' : 'The build picks one of the ticked sections.',
+    sixMax: IS_AR ? 'ست شُعب على الأكثر.' : 'Six sections at most.',
+    // The table's line: "Only §3", "Only §3 or §4", "Only 3 sections".
+    onlyLine: (labels) => {
+      const tag = (l) => bdi(`§${l}`);
+      if (labels.length === 1) return [IS_AR ? 'فقط ' : 'Only ', tag(labels[0])];
+      if (labels.length === 2) return [IS_AR ? 'فقط ' : 'Only ', tag(labels[0]), IS_AR ? ' أو ' : ' or ', tag(labels[1])];
+      return [`${IS_AR ? 'فقط ' : 'Only '}${T.sectionWord(labels.length)}`];
+    },
+    // On an option's tab, the other ticked sections: " · or §4", " · or 2 others".
+    orOthers: (labels) => {
+      if (labels.length === 1) return [' · ', IS_AR ? 'أو ' : 'or ', bdi(`§${labels[0]}`)];
+      const n = labels.length;
+      return [' · ', IS_AR
+        ? `أو ${pluralAr(n, forms('شعبة أخرى', 'شعبتان أخريان', '{n} شعب أخرى', '{n} شعبة أخرى'))}`
+        : `or ${n} others`];
+    },
+    // The status line after a change to the allowed sections.
+    onlyStatus: (code, labels) => {
+      const tag = (l) => bdi(`§${l}`);
+      if (!labels.length) return [bdi(code), IS_AR ? ': يجوز استخدام أي شعبة.' : ': any section may be used.'];
+      if (labels.length === 1) {
+        return IS_AR ? [bdi(code), ': يجوز استخدام ', tag(labels[0]), ' فقط.'] : [bdi(code), ': only ', tag(labels[0]), ' may be used.'];
+      }
+      if (labels.length === 2) {
+        return IS_AR ? [bdi(code), ': يجوز استخدام ', tag(labels[0]), ' أو ', tag(labels[1]), ' فقط.']
+          : [bdi(code), ': only ', tag(labels[0]), ' or ', tag(labels[1]), ' may be used.'];
+      }
+      return [bdi(code), IS_AR ? `: يجوز استخدام ${T.sectionWord(labels.length)} فقط.` : `: only ${T.sectionWord(labels.length)} may be used.`];
+    },
+    // The week's dashed blocks.
+    altTag: (label) => [el('span', 'plb-alt-w', IS_AR ? 'بديل ' : 'alt '), bdi(`§${label}`)],
+    legendAlt: IS_AR ? 'بديل' : 'Alternative',
     // Why these options.
     whyButton: IS_AR ? 'لماذا هذه الخيارات' : 'Why these options',
     whyMethod: {
@@ -395,7 +430,8 @@
     inflight: 0,       // build requests not yet answered: the button waits for all of them
     applying: false,   // a save request is in flight
     moreOpen: false,   // the "More options" disclosure
-    detail: null,      // {code, name, credits}: the course whose detail panel is open
+    detail: null,      // {code, name, credits, only}: the course whose detail panel is open
+    altShown: null,    // what the week drew as dashed blocks last (see syncAlt)
     whyOpen: false,    // the "Why these options" disclosure
     gradWhy: false,    // the "Course-level reasons" disclosure of the projection band
   };
@@ -797,11 +833,57 @@
       el('span', 'plb-bt', bdi(range))));
     return block;
   }
-  function renderLegend(opt) {
+  // While the panel of a course in the plan is open, each ticked section of it that the week does not
+  // already draw solid is drawn dashed (an alternative). A list of its own: it is never part of a
+  // week's facts, a day's count, an option's name or the order of the tabs.
+  function altMeetings(opt) {
+    const d = state.detail;
+    if (!d || !state.ctx) return [];
+    const item = state.shortlist.find((c) => norm(c.course_code) === d.code);
+    if (!item) return [];
+    const used = opt ? mappingFor(opt, item.course_code) : null;
+    const usedId = used ? String(used.term_section_id) : null;
+    const out = [];
+    for (const pin of pinsOf(item)) {
+      const id = String(pin.term_section_id);
+      if (id === usedId) continue;
+      const section = findSection(id);
+      if (!section) continue;
+      for (const mm of section.meetings || []) {
+        const day = normDay(mm.day);
+        const st = toMins(mm.start_time);
+        const en = toMins(mm.end_time);
+        if (!day || st === null || en === null || en <= st) continue;
+        out.push({ day, st, en, code: String(item.course_code), key: d.code, section: String(section.section || pinLabel(pin)).trim() });
+      }
+    }
+    return out;
+  }
+  const altSignature = (opt, list) => `${opt ? opt.name : ''}|${list.map((m) => `${m.key}:${m.section}:${m.day}:${m.st}:${m.en}`).join(',')}`;
+  // The week is drawn again only when what the open panel adds to it changed.
+  function syncAlt() {
+    if (!state.ctx) return;
+    const opt = currentOption();
+    if (altSignature(opt, altMeetings(opt)) !== state.altShown) renderWeek();
+  }
+  function altBlock(m, rowStart, rowEnd, col) {
+    const block = el('div', 'plb-gb',
+      el('span', 'plb-cd', bdi(m.code)),
+      el('span', 'plb-bs', ...T.altTag(m.section)),
+      el('span', 'plb-bt', bdi(`${hhmm(m.st)}-${hhmm(m.en)}`)));
+    block.style.gridColumn = String(col);
+    block.style.gridRow = `${rowStart} / ${rowEnd}`;
+    block.dataset.alt = 'true';
+    block.dataset.code = m.key;
+    block.setAttribute('aria-hidden', 'true');
+    return block;
+  }
+  function renderLegend(opt, alt) {
     const showRegistered = !opt || state.build.rules.mode === 'keep';
     const parts = [];
     if (showRegistered) parts.push(el('span', 'plb-lg-i', el('i', 'plb-k'), T.legendRegistered));
     if (opt) parts.push(...(parts.length ? [' '] : []), el('span', 'plb-lg-i', el('i', 'plb-k plb-k--new'), T.planned));
+    if (alt) parts.push(...(parts.length ? [' '] : []), el('span', 'plb-lg-i', el('i', 'plb-k plb-k--alt'), T.legendAlt));
     $('plbLegend').replaceChildren(...parts);
     for (const mark of $('plbLegend').querySelectorAll('i')) mark.setAttribute('aria-hidden', 'true');
   }
@@ -810,7 +892,9 @@
     const regModel = weekModel(registeredMeetings());
     renderTab(regModel);
     const opt = currentOption();
-    renderLegend(opt);
+    const alts = altMeetings(opt);
+    state.altShown = altSignature(opt, alts);
+    renderLegend(opt, alts.length > 0);
     const name = $('plbWeekName');
     if (opt) {
       const said = optionNames().get(opt.name);
@@ -826,16 +910,18 @@
       clashes ? el('p', 'plb-note', T.clashNote(clashes)) : null,
     ].filter(Boolean);
     const model = opt ? weekModel(weekMeetings(opt)) : regModel;
-    if (!model.meetings.length) {
+    if (!model.meetings.length && !alts.length) {
       host.replaceChildren(...[el('p', 'plb-empty', T.noClassesAtAll), ...notes]);
       return;
     }
-    const rows = (model.endMin - model.startMin) / 15;
+    // The grid's hours and days make room for the alternatives; every count and fact stays the solid week's.
+    const geo = alts.length ? weekModel([...model.meetings, ...alts]) : model;
+    const rows = (geo.endMin - geo.startMin) / 15;
     const footRow = rows + 2;
     const grid = el('div', 'plb-wk');
-    grid.style.setProperty('--plb-days', String(model.days.length));
+    grid.style.setProperty('--plb-days', String(geo.days.length));
     grid.style.setProperty('--plb-rows', String(rows));
-    model.days.forEach((day, i) => {
+    geo.days.forEach((day, i) => {
       const head = el('div', 'plb-dh', DAY_SHORT[day]);
       head.style.gridColumn = String(i + 2);
       head.style.gridRow = '1';
@@ -844,28 +930,33 @@
       line.style.gridColumn = String(i + 2);
       grid.append(line);
     });
-    for (let mins = model.startMin; mins <= model.endMin; mins += 60) {
-      const row = 2 + (mins - model.startMin) / 15;
+    for (let mins = geo.startMin; mins <= geo.endMin; mins += 60) {
+      const row = 2 + (mins - geo.startMin) / 15;
       const rule = el('div', 'plb-hl');
       rule.style.gridRow = String(row);
       grid.append(rule);
-      if (mins < model.endMin) {
+      if (mins < geo.endMin) {
         const label = el('div', 'plb-tm', bdi(hhmm(mins)));
         label.style.gridRow = String(row);
         grid.append(label);
       }
     }
-    model.days.forEach((day, i) => {
-      const list = model.byDay[day];
+    geo.days.forEach((day, i) => {
+      const list = model.byDay[day] || [];
       if (ACADEMIC_DAYS.includes(day) && !list.length) {
         const wash = el('div', 'plb-free', T.free);
         wash.style.gridColumn = String(i + 2);
         wash.style.gridRow = `2 / ${footRow}`;
         grid.append(wash);
       }
+      // The dashed ones go first: where a solid block shares their time it paints over them.
+      for (const m of alts.filter((a) => a.day === day)) {
+        const rowStart = 2 + Math.floor((m.st - geo.startMin) / 15);
+        grid.append(altBlock(m, rowStart, Math.max(rowStart + 1, 2 + Math.ceil((m.en - geo.startMin) / 15)), i + 2));
+      }
       for (const m of list) {
-        const rowStart = 2 + Math.floor((m.st - model.startMin) / 15);
-        const rowEnd = Math.max(rowStart + 1, 2 + Math.ceil((m.en - model.startMin) / 15));
+        const rowStart = 2 + Math.floor((m.st - geo.startMin) / 15);
+        const rowEnd = Math.max(rowStart + 1, 2 + Math.ceil((m.en - geo.startMin) / 15));
         grid.append(weekBlock(m, rowStart, rowEnd, i + 2));
       }
       const foot = list.length
@@ -1445,7 +1536,7 @@
     if (!state.shortlist.length) newBody.append(emptyRow(T.nothingAdded));
     for (const item of state.shortlist) {
       const code = item.course_code;
-      const pin = item.pinned_sections && item.pinned_sections.length ? item.pinned_sections[0] : null;
+      const pins = pinsOf(item);
       const parts = [];
       let miss = false;
       const chosen = opt ? mappingFor(opt, code) : null;
@@ -1456,10 +1547,16 @@
           const section = findSection(chosen.term_section_id);
           const cap = section ? sectionCapacity(section) : null;
           if (cap && fewSeats(cap)) parts.push(' · ', el('span', 'plb-few', T.seatsLeft(cap.remaining)));
+          // The other sections the adviser allowed, when the one this option used is among them.
+          const used = String(chosen.term_section_id);
+          if (pins.length > 1 && pins.some((p) => String(p.term_section_id) === used)) {
+            const others = pins.filter((p) => String(p.term_section_id) !== used).map(pinLabel);
+            parts.push(el('span', 'plb-or', ...T.orOthers(others)));
+          }
         } else if (!state.build.shortlist.some((c) => norm(c.course_code) === norm(code))) {
           parts.push(T.notInBuild);       // added after this build was made
         } else { miss = true; parts.push(T.notScheduledHere); }
-      } else if (pin && pin.section) parts.push(`${T.pinned} `, bdi(`§${pin.section}`));
+      } else if (pins.length) parts.push(...T.onlyLine(pins.map(pinLabel)));
       else parts.push(T.anySection);
       const sectionCell = sectionButton(code, parts, miss);
       const box = el('input', 'plb-tick');
@@ -1547,6 +1644,8 @@
     const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
     if (at < 0) return;
     const [gone] = state.shortlist.splice(at, 1);
+    // "Only these" with nothing ticked belonged to the course that has just gone, not to the panel.
+    if (state.detail && state.detail.code === norm(code)) delete state.detail.only;
     planChanged();
     state.focus = keepFocus ? null : { kind: 'add', code: gone.course_code };
     setStatus('ok', ...T.removed(gone.course_code));
@@ -2683,17 +2782,27 @@
       days: days.map((d) => DAY_SHORT[d]).join(' '), times: times.join(' / '), options,
     };
   }
-  function sectionRow(model, mode, pinned) {
+  // The allowed sections of a course: [{term_section_id, section}], at most MAX_ONLY.
+  const MAX_ONLY = 6;
+  const pinsOf = (item) => (item && Array.isArray(item.pinned_sections) ? item.pinned_sections : []);
+  const pinLabel = (pin) => String(pin.section || '').trim() || '?';
+  // A course's sections as the panel lists them (and as a request keeps them).
+  function sortedSections(code) {
+    const list = state.catalog ? state.catalog.get(code) || [] : [];
+    return list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
+  }
+  // `ticked`: this section is one of the allowed ones; `atMax`: six are ticked already.
+  function sectionRow(model, mode, ticked, atMax) {
     const inPlan = mode !== 'read';
     const row = el(inPlan ? 'label' : 'div', 'plb-dt-sec');
     const usable = !model.reasons.length;
     const input = el('input', 'plb-dt-radio');
-    input.type = 'radio';
-    input.name = 'plbPin';
+    input.type = 'checkbox';
+    input.name = 'plbOnly';
     input.value = model.id;
     input.dataset.fk = `sec-${model.id}`;
-    input.checked = pinned;
-    input.disabled = !usable && !pinned;       // a pin that became unusable stays selected, flagged
+    input.checked = ticked;
+    input.disabled = !ticked && (!usable || atMax);   // a tick that became unusable stays, flagged
     const flags = [];
     // A section that cannot be used says why in a sentence below: a chip saying the same is noise.
     if (usable && model.cap.known && model.cap.full) flags.push(el('span', 'plb-flag plb-flag--bad', T.seatsFull));
@@ -2709,7 +2818,19 @@
           model.days || model.times ? ' ' : null, model.days, model.days && model.times ? ' ' : null, model.times ? bdi(model.times) : null),
         el('span', 'plb-dt-sec-seats', model.seats),
         flags.length ? el('span', 'plb-dt-flags', ...flags) : null,
-        !usable ? el('span', 'plb-dt-why', pinned ? T.pinBroken : null, model.reasons.join(' ')) : null)));
+        !usable ? el('span', 'plb-dt-why', ticked ? T.tickBroken : null, model.reasons.join(' ')) : null)));
+    return row;
+  }
+  // One of the two mode radios: "Any section" and "Only these".
+  function modeRow(value, label, hint, checked) {
+    const row = el('label', 'plb-dt-sec');
+    const input = el('input', 'plb-dt-radio');
+    input.type = 'radio';
+    input.name = 'plbMode';
+    input.value = value;
+    input.checked = checked;
+    input.dataset.fk = value;
+    row.append(input, el('span', 'plb-dt-sec-body', el('span', 'plb-dt-sec-main', label), hint ? el('span', 'plb-dt-sec-seats', hint) : null));
     return row;
   }
   function renderDetail() {
@@ -2724,14 +2845,18 @@
       aside.replaceChildren();
       body.classList.add('plb-body--nodetail');
       markOpenBlocks();
+      syncAlt();
       // Focus was inside a panel that has gone: put it on the field that adds a course.
       if (inside && !$('plbAdd').disabled) $('plbAdd').focus();
       return;
     }
     const code = state.detail.code;
     const item = info.item || null;
-    const pin = item && item.pinned_sections && item.pinned_sections.length ? item.pinned_sections[0] : null;
-    const pinnedId = pin ? String(pin.term_section_id) : null;
+    const pins = pinsOf(item);
+    const tickedIds = new Set(pins.map((p) => String(p.term_section_id)));
+    const atMax = pins.length >= MAX_ONLY;
+    // "Only these" shows once a section is ticked, or once the adviser asked for it in this opening.
+    const only = !!item && (pins.length > 0 || state.detail.only === true);
     const title = el('h3', 'plb-dt-title', bdi(code), info.name ? ' ' : null, info.name ? isolate(info.name) : null,
       el('span', 'plb-dt-cr', ` · ${T.credits(info.credits)}`));
     title.id = 'plbDetailTitle';
@@ -2750,39 +2875,48 @@
     if (info.inPlan) group.append(el('legend', 'plb-mic', T.detailSections));
     else group.append(el('p', 'plb-mic', T.detailSections));
     if (info.inPlan) {
-      const any = el('label', 'plb-dt-sec');
-      const input = el('input', 'plb-dt-radio');
-      input.type = 'radio';
-      input.name = 'plbPin';
-      input.value = 'any';
-      input.checked = !pin;
-      input.dataset.fk = 'any';
-      any.append(input, el('span', 'plb-dt-sec-body',
-        el('span', 'plb-dt-sec-main', T.anySectionOpt), el('span', 'plb-dt-sec-seats', T.anySectionHint)));
-      group.append(any);
+      group.append(modeRow('any', T.anySectionOpt, T.anySectionHint, !only), modeRow('only', T.onlyOpt, null, only));
     } else {
       group.append(el('p', 'plb-dt-hint', T.readOnlyHint));
     }
     if (list === null) group.append(el('p', 'plb-dt-hint', T.noCatalog));
     else if (!list.length) group.append(el('p', 'plb-dt-hint', T.noSections));
     else {
-      const sorted = list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
-      for (const section of sorted) group.append(sectionRow(sectionModel(section), info.inPlan ? 'pick' : 'read', pinnedId === String(section.term_section_id)));
+      for (const section of sortedSections(code)) {
+        group.append(sectionRow(sectionModel(section), info.inPlan ? 'pick' : 'read', tickedIds.has(String(section.term_section_id)), atMax));
+      }
     }
-    // A pin whose section is not in the list any more is flagged, never silently dropped.
-    if (pin && !(list || []).some((section) => String(section.term_section_id) === pinnedId)) {
+    // A ticked section that is not in the list any more is flagged, never silently dropped.
+    const listed = new Set((list || []).map((section) => String(section.term_section_id)));
+    for (const pin of pins) {
+      const id = String(pin.term_section_id);
+      if (listed.has(id)) continue;
       const gone = el('label', 'plb-dt-sec');
       gone.dataset.unusable = 'true';
-      gone.dataset.tsid = pinnedId;
+      gone.dataset.tsid = id;
       const input = el('input', 'plb-dt-radio');
-      input.type = 'radio';
-      input.name = 'plbPin';
-      input.value = pinnedId;
+      input.type = 'checkbox';
+      input.name = 'plbOnly';
+      input.value = id;
       input.checked = true;
-      input.dataset.fk = `sec-${pinnedId}`;
+      input.dataset.fk = `sec-${id}`;
       gone.append(input, el('span', 'plb-dt-sec-body',
-        el('span', 'plb-dt-sec-main', bdi(`§${pin.section || '?'}`)), el('span', 'plb-dt-why', T.pinGone)));
+        el('span', 'plb-dt-sec-main', bdi(`§${pinLabel(pin)}`)), el('span', 'plb-dt-why', T.tickGone)));
       group.append(gone);
+    }
+    if (info.inPlan && only) {
+      // What "Only these" means right now is said with the radio, not only printed under the list.
+      const note = el('p', 'plb-dt-hint plb-dt-note', pins.length ? T.onlyPicks : T.onlyNone);
+      note.id = 'plbOnlyNote';
+      group.append(note);
+      const said = [note.id];
+      if (atMax) {
+        const most = el('p', 'plb-dt-hint plb-dt-note', T.sixMax);
+        most.id = 'plbOnlyMax';
+        group.append(most);
+        said.push(most.id);
+      }
+      group.querySelector("input[name='plbMode'][value='only']").setAttribute('aria-describedby', said.join(' '));
     }
     parts.push(group);
 
@@ -2811,9 +2945,13 @@
     aside.hidden = false;
     body.classList.remove('plb-body--nodetail');
     markOpenBlocks();
+    syncAlt();
     if (focusKey) {
-      const target = [...aside.querySelectorAll('[data-fk]')].find((n) => n.dataset.fk === focusKey && !n.disabled) || title;
-      target.focus();
+      const nodes = [...aside.querySelectorAll('[data-fk]')];
+      let target = nodes.find((n) => n.dataset.fk === focusKey && !n.disabled);
+      // A box that became disabled (or went) hands the keyboard to the mode radio.
+      if (!target && focusKey.startsWith('sec-')) target = nodes.find((n) => n.dataset.fk === (only ? 'only' : 'any'));
+      (target || title).focus();
     }
   }
   // `fromBlock` is the week block that opened the panel, when one did: closing returns there.
@@ -2842,16 +2980,43 @@
     const button = block || document.querySelector(`#plbTable [data-act="detail"][data-code="${CSS.escape(was.code)}"]`);
     if (button) button.focus();
   }
-  // Exactly the shape the current page pins a section in (page-planner.js, the section row click).
-  function setPin(code, section) {
-    const item = state.shortlist.find((c) => norm(c.course_code) === norm(code));
-    if (!item) return;
-    if (section) item.pinned_sections = [{ term_section_id: Number(section.term_section_id), section: String(section.section || '').trim() }];
+  // Write the allowed sections of a course: the shape the build endpoint takes (`pinned_sections`,
+  // one to six {term_section_id, section}, in the list's section order). None: the key goes.
+  function writeOnly(item, entries) {
+    if (entries.length) item.pinned_sections = entries;
     else delete item.pinned_sections;
     planChanged();
-    if (section) setStatus('ok', ...T.pinnedSet(item.course_code, String(section.section || '').trim()));
-    else setStatus('ok', ...T.pinnedCleared(item.course_code));
+    setStatus('ok', ...T.onlyStatus(item.course_code, entries.map(pinLabel)));
     renderCourses();
+  }
+  function toggleSection(code, id, on) {
+    const item = state.shortlist.find((c) => norm(c.course_code) === norm(code));
+    if (!item) return;
+    const have = new Map(pinsOf(item).map((p) => [String(p.term_section_id), p]));
+    if (on) {
+      const section = sortedSections(norm(code)).find((x) => String(x.term_section_id) === id);
+      // A seventh can never reach the request; a section the list does not have cannot be ticked.
+      if (!section || (!have.has(id) && have.size >= MAX_ONLY) || (!have.has(id) && sectionModel(section).reasons.length)) {
+        renderCourses();
+        return;
+      }
+      have.set(id, { term_section_id: Number(section.term_section_id), section: String(section.section || '').trim() });
+      state.detail.only = true;
+    } else have.delete(id);
+    const entries = [];
+    for (const section of sortedSections(norm(code))) {
+      const key = String(section.term_section_id);
+      if (have.has(key)) { entries.push(have.get(key)); have.delete(key); }
+    }
+    entries.push(...have.values());           // ticked, but no longer in the list
+    writeOnly(item, entries);
+  }
+  function chooseAny(code) {
+    const item = state.shortlist.find((c) => norm(c.course_code) === norm(code));
+    if (!item) return;
+    state.detail.only = false;
+    if (pinsOf(item).length) writeOnly(item, []);
+    else renderCourses();
   }
 
   /* ── Wiring ────────────────────────────────────────────────────────────── */
@@ -2911,11 +3076,11 @@
         item.must_take = target.checked;
         planChanged();
         renderCourses();
-      } else if (target.name === 'plbPin') {
-        if (target.value === 'any') { setPin(code, null); return; }
-        const list = state.catalog ? state.catalog.get(code) || [] : [];
-        const section = list.find((x) => String(x.term_section_id) === target.value);
-        if (section) setPin(code, section);
+      } else if (target.name === 'plbMode') {
+        if (target.value === 'any') chooseAny(code);
+        else { state.detail.only = true; renderCourses(); }
+      } else if (target.name === 'plbOnly') {
+        toggleSection(code, String(target.value), target.checked);
       }
     });
     $('plbWeek').addEventListener('click', (event) => {
