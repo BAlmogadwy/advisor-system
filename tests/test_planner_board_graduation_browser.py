@@ -1098,10 +1098,13 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(self._tab_lines(page, "A1")[1][:7], "4 terms")
         self.assertIn("Option A1: 4 terms", self._text(page, "#plbGrad .plb-rwl--opt .sr-only"))
 
-    # ── nothing wraps, nothing collides ─────────────────────────────────────
-    def test_the_result_stays_on_one_line_clear_of_the_ticks(self) -> None:
-        # The result never wraps, so its size steps down with the room its line leaves. Every step
-        # is checked at its own threshold, where the room is tightest, in both languages.
+    # ── the result's size, and where it may go ──────────────────────────────
+    def test_the_result_steps_its_size_and_never_leaves_the_band(self) -> None:
+        # The result is the largest text of the page only where its line leaves room for it. The
+        # steps were measured with the real fonts, which this server does not load, so what is
+        # pinned here holds in any font: the size at each step, on both sides of its threshold,
+        # and that the text stays inside the band and clear of the ticks even where a wider font
+        # makes it wrap. "wide" stands in for the fonts of the CI machines.
         def sooner(registered: int) -> dict:
             reply = _reply(B1=forecast([15] + [18] * (registered - 3) + [12], delta=-1))
             reply["baseline"] = forecast(
@@ -1115,13 +1118,13 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             " g.style.width = w === null ? '' : w + 'px';"
             " g.style.justifySelf = w === null ? '' : 'start'; }"
         )
-        # (tab, the band's width or None for the page's own, layout, the result's size)
+        # (tab, the band's width or None for the page's own, layout, the result's size in English)
         short = (
             ("B1", None, "grid", "22px"),
-            ("B1", 680, "grid", "22px"),
-            ("B1", 679, "grid", "18px"),
-            ("B1", 540, "grid", "18px"),
-            ("B1", 539, "grid", "15px"),
+            ("B1", 640, "grid", "22px"),
+            ("B1", 639, "grid", "18px"),
+            ("B1", 560, "grid", "18px"),
+            ("B1", 559, "grid", "15px"),
             ("B1", 440, "grid", "15px"),
             ("B3", None, "grid", "15px"),
             ("B3", 580, "grid", "15px"),
@@ -1129,28 +1132,28 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             ("B2", 440, "grid", "13px"),
         )
         middle = (
-            ("B1", 980, "grid", "22px"),
-            ("B1", 979, "grid", "18px"),
-            ("B1", 760, "grid", "18px"),
-            ("B1", 759, "grid", "15px"),
+            ("B1", 850, "grid", "22px"),
+            ("B1", 849, "grid", "18px"),
+            ("B1", 730, "grid", "18px"),
+            ("B1", 729, "grid", "15px"),
             ("B1", 580, "grid", "15px"),
         )
         long = (
-            ("B1", 900, "grid", "18px"),
-            ("B1", 899, "grid", "15px"),
+            ("B1", 1050, "grid", "18px"),
+            ("B1", 1049, "grid", "15px"),
             ("B1", 620, "grid", "15px"),
         )
-        longest = (("B1", 900, "grid", "15px"),)
+        longest = (("B1", 1100, "grid", "15px"), ("B1", 900, "grid", "15px"))
         for reply, cases in (
             (READY, short),
             (sooner(8), middle),
-            (sooner(12), long),
+            (sooner(14), long),
             (sooner(16), longest),
         ):
-            for language in ("en", "ar"):
-                page, _fake = self._projected(reply, language=language)
+            for language, font in (("en", "app"), ("ar", "app"), ("en", "wide"), ("ar", "wide")):
+                page, _fake = self._projected(reply, language=language, font=font)
                 for tab, width, layout, expected in cases:
-                    where = (language, tab, width)
+                    where = (language, font, tab, width)
                     page.click(f"#plbTab_{tab}")
                     page.evaluate(resize, width)
                     self.assertEqual(
@@ -1161,11 +1164,14 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
                         where,
                     )
                     won = page.locator("#plbGrad .plb-rwl--opt .plb-won")
-                    if language == "en":  # Arabic type is a step larger: only its fit is checked
+                    if language == "en":  # Arabic type is a step larger
                         self.assertEqual(won.evaluate(size), expected, where)
+                    grad = self._boxes(page, "#plbGrad")[0]
                     box = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-won")[0]
-                    line_height = float(won.evaluate("n => getComputedStyle(n).lineHeight")[:-2])
-                    self.assertLess(box["bottom"] - box["top"], line_height * 1.5, where)
+                    completion = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-land b")[0]
+                    for part in (box, completion):
+                        self.assertLessEqual(part["right"], grad["right"] + 1, where)
+                        self.assertGreaterEqual(part["left"], grad["left"] - 1, where)
                     for tick in self._boxes(page, "#plbGrad .plb-rwl--opt .plb-tk"):
                         apart = (
                             box["left"] >= tick["right"] - 1
@@ -1174,12 +1180,12 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
                             or box["top"] >= tick["bottom"] - 1
                         )
                         self.assertTrue(apart, (where, box, tick))
-                    grad = self._boxes(page, "#plbGrad")[0]
-                    self.assertLessEqual(box["right"], grad["right"] + 1, where)
-                    self.assertGreaterEqual(box["left"], grad["left"] - 1, where)
-                    completion = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-land b")[0]
-                    self.assertLessEqual(completion["right"], grad["right"] + 1, where)
-                    self.assertGreaterEqual(completion["left"], grad["left"] - 1, where)
+                    if width is None and font == "app":
+                        # With room to spare it is one line, whatever the font.
+                        line_height = float(
+                            won.evaluate("n => getComputedStyle(n).lineHeight")[:-2]
+                        )
+                        self.assertLess(box["bottom"] - box["top"], line_height * 1.5, where)
 
     def test_stacked_ticks_stay_on_one_row_for_any_number_of_columns(self) -> None:
         for columns in (6, 7, 11, 13, 16):
