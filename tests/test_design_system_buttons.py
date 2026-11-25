@@ -77,14 +77,6 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/advisor_inbox_case.html", "add_note"),
     ("core/templates/core/db_admin.html", "elecRefreshBtn"),
     ("core/templates/core/instructor_management.html", "imModalCancel"),
-    # The staff planner: the step buttons, Reset, Add selected, and the three it builds.
-    ("core/templates/core/planner.html", "prevStep"),
-    ("core/templates/core/planner.html", "nextStep"),
-    ("core/templates/core/planner.html", "resetShortlist"),
-    ("core/templates/core/planner.html", "addSelectedPlan"),
-    ("static/js/page-planner.js", "add-suggested"),
-    ("static/js/page-planner.js", "add-plan"),
-    ("static/js/page-planner.js", "select-option"),
     # The new planner screen (planner_board.html): Fetch and the Edit rules dialog.
     ("core/templates/core/planner_board.html", "plbFetch"),
     ("core/templates/core/planner_board.html", "plbRulesReset"),
@@ -152,8 +144,6 @@ NEUTRAL_TEMPLATE_SITES = {
     # row's Edit, Times and Deactivate/Activate (built by the page script).
     ("core/templates/core/instructor_management.html", "imRefresh"),
     ("core/templates/core/instructor_management.html", "data-dialog-close"),
-    # The planner shortlist's icon-only Remove, one per row.
-    ("static/js/page-planner.js", "data-sl-remove"),
     ("static/js/page-instructor-management.js", "data-im-edit"),
     ("static/js/page-instructor-management.js", "data-im-rules"),
     ("static/js/page-instructor-management.js", "data-im-active"),

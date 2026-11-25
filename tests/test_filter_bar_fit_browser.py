@@ -55,7 +55,7 @@ WIDTHS = (390, 1440)
 SCREENS = {
     "advisor portfolio": ("/advisor-portfolio/", "main .filter-bar"),
     "instructor management": ("/instructor-management/", "main .filter-bar"),
-    "planner": ("/planner/", "main .filter-bar"),
+    "planner": ("/planner/", "#plbLoad"),
     "timetable workspace": ("/timetable-workspace/", "#twGenBar"),
     "dashboard: student": ("/#student", "#student > .filter-bar"),
     "dashboard: batch": ("/#batch", "#batch > .filter-bar"),

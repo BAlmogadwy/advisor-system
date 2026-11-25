@@ -212,14 +212,12 @@ def test_builder_propagates_eligibility_mode_without_overloading_registration_mo
 
 def test_planner_ui_and_both_student_plan_consumers_carry_the_selected_mode() -> None:
     root = Path(__file__).resolve().parents[1]
-    template = (root / "core/templates/core/planner.html").read_text(encoding="utf-8")
-    script = (root / "static/js/page-planner.js").read_text(encoding="utf-8")
+    template = (root / "core/templates/core/planner_board.html").read_text(encoding="utf-8")
+    script = (root / "static/js/page-planner-board.js").read_text(encoding="utf-8")
 
-    assert 'id="eligibilityMode"' in template
-    assert '<option value="strict" selected>' in template
-    assert "Strict eligibility is the default" in template
-    assert "&eligibility_mode=${encodeURIComponent(eligibilityMode)}" in script
-    assert script.count("fetch(studentPlanUrl(") == 2
-    assert "_planCache.eligibilityMode===eligibilityMode" in script
-    assert "eligibility_mode:selectedEligibilityMode()" in script
-    assert "eligibility_mode:currentCtx.eligibility_mode || selectedEligibilityMode()" in script
+    assert 'id="plbRuleElig"' in template
+    assert '<option value="strict">' in template
+    assert "mode: 'keep', eligibility: 'strict'" in script
+    assert "&eligibility_mode=${encodeURIComponent(state.rules.eligibility)}" in script
+    assert "term, eligibility_mode: state.rules.eligibility," in script
+    assert "eligibility_mode: state.rules.eligibility," in script

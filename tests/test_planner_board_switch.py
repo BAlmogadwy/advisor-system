@@ -1,25 +1,23 @@
-"""The new planner screen is reachable only through a switch.
+"""/planner/ always renders the board.
 
-`PLANNER_BOARD_ENABLED` (default off; on for the live site through render.yaml) picks
-which template /planner/ renders;
-`?layout=board` and `?layout=classic` let staff open either one while both
-exist. The staff rule is the same for both.
+The old page was retired on 2026-11-25; there is no switch and `?layout=` changes
+nothing. The staff rule, the deep link and the Arabic page are pinned here.
 """
 
 from __future__ import annotations
 
-import re
+import subprocess
 from pathlib import Path
 
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.test import Client, override_settings
+from django.test import Client
 
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ensure_role_groups
 
 BOARD = "core/planner_board.html"
-CLASSIC = "core/planner.html"
 
 
 @pytest.fixture
@@ -37,82 +35,31 @@ def _templates(response) -> list[str]:
 
 
 @pytest.mark.django_db
-class TestSwitch:
-    @override_settings(PLANNER_BOARD_ENABLED=False)
-    def test_off_serves_the_current_page(self, staff_client: Client) -> None:
-        response = staff_client.get("/planner/")
-        assert response.status_code == 200
-        assert CLASSIC in _templates(response)
-        assert BOARD not in _templates(response)
-
-    @override_settings(PLANNER_BOARD_ENABLED=True)
-    def test_on_serves_the_new_page(self, staff_client: Client) -> None:
+class TestBoardIsThePage:
+    def test_planner_renders_the_board_for_staff(self, staff_client: Client) -> None:
         response = staff_client.get("/planner/")
         assert response.status_code == 200
         assert BOARD in _templates(response)
-        assert CLASSIC not in _templates(response)
 
-    @override_settings(PLANNER_BOARD_ENABLED=False)
-    def test_layout_board_opens_the_new_page_when_off(self, staff_client: Client) -> None:
-        response = staff_client.get("/planner/?layout=board")
-        assert BOARD in _templates(response)
+    @pytest.mark.parametrize("query", ["?layout=classic", "?layout=board", "?layout=nonsense"])
+    def test_the_layout_query_changes_nothing(self, staff_client: Client, query: str) -> None:
+        response = staff_client.get(f"/planner/{query}")
+        assert response.status_code == 200
+        assert _templates(response).count(BOARD) == 1
+        assert not [name for name in _templates(response) if name == "core/planner" + ".html"]
 
-    @override_settings(PLANNER_BOARD_ENABLED=True)
-    def test_layout_classic_opens_the_current_page_when_on(self, staff_client: Client) -> None:
-        response = staff_client.get("/planner/?layout=classic")
-        assert CLASSIC in _templates(response)
-        assert BOARD not in _templates(response)
-
-    @override_settings(PLANNER_BOARD_ENABLED=False)
-    def test_an_unknown_layout_value_changes_nothing(self, staff_client: Client) -> None:
-        assert CLASSIC in _templates(staff_client.get("/planner/?layout=nonsense"))
-
-    @override_settings(PLANNER_BOARD_ENABLED=True)
-    def test_an_unknown_layout_value_keeps_the_default_when_on(self, staff_client: Client) -> None:
-        assert BOARD in _templates(staff_client.get("/planner/?layout=nonsense"))
-
-    def test_production_turns_the_board_on_and_nothing_else_does(self) -> None:
-        # The live site serves the board: render.yaml sets it for the web service and for no
-        # other service. The setting's default stays off, so local runs and the tests keep the
-        # old page until it is retired.
-        from django.conf import settings
-
-        from scripts.validate_render_blueprint import load_blueprint
-
-        base = Path(settings.BASE_DIR)
-        services = {
-            service["name"]: {env["key"]: env for env in service.get("envVars") or []}
-            for service in load_blueprint(base / "render.yaml")["services"]
-        }
-        assert services["advisor-system"]["PLANNER_BOARD_ENABLED"] == {
-            "key": "PLANNER_BOARD_ENABLED",
-            "value": "true",
-        }
-        assert [name for name, env in services.items() if "PLANNER_BOARD_ENABLED" in env] == [
-            "advisor-system"
-        ]
-        source = (base / "config" / "settings.py").read_text(encoding="utf-8")
-        assert re.search(r'os\.getenv\("PLANNER_BOARD_ENABLED", "false"\)', source)
-
-    def test_the_setting_defaults_to_off(self) -> None:
-        from django.conf import settings
-
-        assert settings.PLANNER_BOARD_ENABLED is False
-
-    @override_settings(PLANNER_BOARD_ENABLED=False)
-    def test_the_new_page_loads_its_own_script_and_the_deep_link_keeps_working(
+    def test_the_page_loads_its_own_script_and_the_deep_link_keeps_working(
         self, staff_client: Client
     ) -> None:
-        html = staff_client.get("/planner/?layout=board&student=4500000").content.decode()
+        html = staff_client.get("/planner/?student=4500000").content.decode()
         assert "js/page-planner-board.js?v=9" in html
         assert "js/page-planner.js" not in html
 
-    @override_settings(PLANNER_BOARD_ENABLED=False)
-    def test_the_new_page_has_arabic_and_right_to_left_from_the_server(
+    def test_the_page_has_arabic_and_right_to_left_from_the_server(
         self, staff_client: Client
     ) -> None:
         staff_client.cookies["advisor_language"] = "ar"
-        html = staff_client.get("/planner/?layout=board").content.decode()
+        html = staff_client.get("/planner/").content.decode()
         assert 'lang="ar"' in html
         assert 'dir="rtl"' in html
         assert "التخرّج المتوقع" in html
@@ -122,7 +69,7 @@ class TestSwitch:
 @pytest.mark.django_db
 class TestStaffRule:
     @pytest.mark.parametrize("query", ["", "?layout=board", "?layout=classic"])
-    def test_a_non_staff_role_is_refused_on_either_page(self, query: str) -> None:
+    def test_a_non_staff_role_is_refused(self, query: str) -> None:
         user = get_user_model().objects.create_user(
             username="board-committee", email="board-committee@example.test", password="unused"
         )
@@ -138,3 +85,26 @@ class TestStaffRule:
         response = Client().get(f"/planner/{query}")
         assert response.status_code == 302
         assert "login" in response["Location"]
+
+
+def test_nothing_still_names_the_retired_switch_or_page() -> None:
+    # Built from pieces so this file does not name them itself.
+    needles = ["PLANNER_BOARD" + "_ENABLED", "core/planner" + ".html"]
+    base = Path(settings.BASE_DIR)
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.py", "*.html", "*.js", "*.cjs", "render.yaml"],
+        cwd=base,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    hits = []
+    for name in tracked:
+        path = base / name
+        if not path.is_file() or "node_modules" in name:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for needle in needles:
+            if needle in text:
+                hits.append(f"{name}: {needle}")
+    assert hits == []

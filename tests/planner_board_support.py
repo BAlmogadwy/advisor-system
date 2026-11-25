@@ -2,9 +2,9 @@
 
 Part one: shell, student, rules, courses, week.
 
-/planner/?layout=board, answered from a synthetic student made up below (no
-database rows, no real data), the three data requests mocked exactly as
-tests/test_planner_layout_browser.py does. Nothing leaves the machine
+/planner/, answered from a synthetic student made up below (no
+database rows, no real data), the three data requests mocked the way the retired
+page's tests did (2026-11-25). Nothing leaves the machine
 (tests/browser_isolation.py).
 
 The student: three registered courses (nine credits) on four days with a Thursday
@@ -638,7 +638,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         page.on("pageerror", lambda error: self.page_errors.append(str(error)))
         if clock:
             page.clock.install()  # the test moves time itself (the 30 minute rule)
-        page.goto(f"{self.live_server_url}/planner/?layout=board")
+        page.goto(f"{self.live_server_url}/planner/")
         page.add_style_tag(content=NO_MOTION)
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
         if load:

@@ -2367,7 +2367,7 @@ def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[di
     """Add `prerequisites_satisfied` beside `can_register`, without renaming it.
 
     `can_register` is `report_views._build_student_plan_payload`'s field and it is
-    read by name in fifteen places across `page-dashboard.js` and `page-planner.js`,
+    read by name in fifteen places across `page-dashboard.js` and `page-planner-board.js`,
     plus `report_views` itself, which filters and counts on it. Renaming it there to
     fix a description the MODEL reads would break two screens for no gain to either.
 
