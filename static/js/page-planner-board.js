@@ -1511,10 +1511,14 @@
     panel.hidden = !build || !state.whyOpen;
     if (panel.hidden) { panel.replaceChildren(); return; }
     const lines = [];
+    const reasonOf = (u) => T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+    // What the build as a whole left out is said once, below: not again under every option.
+    const everywhere = new Set(build.unscheduled.map((u) => `${String(u.course_code || '')}|${reasonOf(u)}`));
     for (const opt of build.options) {
       const groups = new Map();
       for (const u of opt.unscheduled || []) {
-        const why = T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+        const why = reasonOf(u);
+        if (everywhere.has(`${String(u.course_code || '')}|${why}`)) continue;
         if (!groups.has(why)) groups.set(why, []);
         if (u.course_code) groups.get(why).push(String(u.course_code));
       }

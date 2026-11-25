@@ -633,6 +633,35 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbBuild")).to_be_enabled()
         self.assertTrue(page.locator("#plbWhy").is_hidden())
 
+    def test_why_says_once_what_the_whole_build_left_out(self) -> None:
+        # A course no option could place is in the reply's own list AND under every option:
+        # on real data the same sentence was printed for each of them.
+        nowhere = {"course_code": "AI342", "reason_code": "ALL_SECTIONS_CLASH"}
+        reply = build_reply(
+            [
+                _option(
+                    "A1",
+                    [_mapping("AI331", "M2", 12, ["MON", "WED"], "10:00", "11:15")],
+                    unscheduled=[nowhere],
+                ),
+                _option(
+                    "B1",
+                    [_mapping("AI331", "M4", 17, ["THU"], "08:00", "09:15")],
+                    unscheduled=[nowhere],
+                ),
+            ]
+        )
+        reply["unscheduled"] = [nowhere]
+        fake = _fake()
+        fake.build_answer = lambda body: (200, reply)
+        page = self._open(fake)
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        page.click("#plbWhyBtn")
+        why = self._text(page, "#plbWhy")
+        self.assertEqual(why.count("Not scheduled: AI342"), 1)
+        self.assertNotIn("A1: Not scheduled", why)
+
     def test_why_says_when_every_course_was_placed(self) -> None:
         fake = _fake()
         fake.build_answer = lambda body: (
