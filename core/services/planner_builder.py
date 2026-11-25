@@ -1414,6 +1414,39 @@ def _cp_build_option(
     return selected, unscheduled
 
 
+def _allowed_section_ids_by_code(shortlist: list[dict[str, Any]]) -> dict[str, set[int]]:
+    """The sections each course may be placed in, by course code without spaces.
+
+    A shortlist item's ``pinned_sections`` is the set the course may use ("only
+    these"): the build places it in exactly one of them. One entry is the
+    historical exact pin. A course without usable entries is not restricted.
+
+    Two items can name one course: the build view tells "AI 221" from "AI221",
+    this module does not. The later item's sections replace the earlier one's,
+    as a single pin always did. They are never added together, which would also
+    let one course pass the view's limit per item.
+    """
+    allowed: dict[str, set[int]] = {}
+    for item in shortlist:
+        code = str(item.get("course_code", "")).replace(" ", "").upper()
+        pinned_raw = item.get("pinned_sections") or []
+        if not code or not isinstance(pinned_raw, list):
+            continue
+        item_ids: set[int] = set()
+        for pinned in pinned_raw:
+            if not isinstance(pinned, dict):
+                continue
+            try:
+                term_section_id = int(pinned.get("term_section_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if term_section_id > 0:
+                item_ids.add(term_section_id)
+        if item_ids:
+            allowed[code] = item_ids
+    return allowed
+
+
 def build_plans(
     year: str,
     term: str,
@@ -1443,24 +1476,7 @@ def build_plans(
         if item.get("must_take") and str(item.get("course_code", "")).strip()
     }
 
-    # The ``pinned_sections`` list of a shortlist item is the set of sections the
-    # course may be placed in ("only these"): the build uses exactly one of them.
-    # A single entry is the historical exact pin and behaves as it always did.
-    allowed_ids_by_code: dict[str, set[int]] = {}
-    for item in shortlist:
-        code = str(item.get("course_code", "")).replace(" ", "").upper()
-        pinned_raw = item.get("pinned_sections") or []
-        if not code or not isinstance(pinned_raw, list):
-            continue
-        for pinned in pinned_raw:
-            if not isinstance(pinned, dict):
-                continue
-            try:
-                term_section_id = int(pinned.get("term_section_id") or 0)
-            except (TypeError, ValueError):
-                continue
-            if term_section_id > 0:
-                allowed_ids_by_code.setdefault(code, set()).add(term_section_id)
+    allowed_ids_by_code = _allowed_section_ids_by_code(shortlist)
 
     codes = sorted(
         {

@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from core.models import Student, TermSection, TermSectionMeeting
-from core.services.planner_builder import build_plans
+from core.services.planner_builder import _allowed_section_ids_by_code, build_plans
 
 # --------------------------------------------------------------------------
 # fixtures
@@ -402,4 +402,63 @@ def test_a_listed_section_of_another_course_never_places_that_course() -> None:
     assert result["options"]
     for option in result["options"]:
         assert _ids(option)["ENGL214"] == mine.id
-        assert _ids(option).get("FE1", foreign.id) == foreign.id
+    # Listing FE1's section under ENGL214 takes nothing away from FE1 itself.
+    assert any(_ids(option).get("FE1") == foreign.id for option in result["options"])
+
+
+def test_the_allowed_sections_of_a_course_named_twice_are_the_later_items() -> None:
+    # The view tells "ENGL 214" from "ENGL214"; the builder does not. The later item's sections
+    # replace the earlier one's, as a single pin always did. Added together they would let one
+    # course pass the limit of six.
+    assert _allowed_section_ids_by_code(
+        [
+            {"course_code": "ENGL 214", "pinned_sections": [{"term_section_id": 1}]},
+            {
+                "course_code": "engl214",
+                "pinned_sections": [{"term_section_id": "2"}, {"term_section_id": 3}],
+            },
+            {"course_code": "FE1", "pinned_sections": []},
+            {"course_code": "FE2"},
+            {
+                "course_code": "FE3",
+                "pinned_sections": [{"term_section_id": 0}, "junk", {"term_section_id": "x"}],
+            },
+            {"course_code": "", "pinned_sections": [{"term_section_id": 9}]},
+        ]
+    ) == {"ENGL214": {2, 3}}
+    # An item that carries no usable entry does not lift an earlier item's restriction either.
+    assert _allowed_section_ids_by_code(
+        [
+            {"course_code": "ENGL214", "pinned_sections": [{"term_section_id": 5}]},
+            {"course_code": "ENGL 214", "pinned_sections": []},
+        ]
+    ) == {"ENGL214": {5}}
+
+
+@pytest.mark.django_db
+def test_naming_a_course_twice_builds_what_the_later_pin_alone_builds() -> None:
+    # A shortlist that names one course twice is two items competing for its sections; with
+    # one allowed section they cannot both be placed. That was so before and stays so: the
+    # reply is the one for the later pin alone, not a build over both items' sections.
+    first = _section("ENGL214", "M1", day="MON")
+    second = _section("ENGL214", "M2", day="TUE")
+    both = _build(
+        [
+            _base("ENGL 214", pinned_sections=_pins(first)),
+            _base("ENGL214", must_take=True, pinned_sections=_pins(second)),
+        ]
+    )
+    later_only = _build(
+        [
+            _base("ENGL 214"),
+            _base("ENGL214", must_take=True, pinned_sections=_pins(second)),
+        ]
+    )
+    assert both["summary"] == later_only["summary"]
+    assert both["options"] == later_only["options"]
+    assert both["unscheduled"] == later_only["unscheduled"]
+    assert not any(
+        int(mapping["term_section_id"]) == first.id
+        for option in both["options"]
+        for mapping in option["mappings"]
+    )
