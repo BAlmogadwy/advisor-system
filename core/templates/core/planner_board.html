@@ -33,9 +33,18 @@
 
         <!-- ═══ Band: projection, guidance, student and rules ═══ -->
         <div class="plb-band">
-          <section class="plb-grad" aria-labelledby="plbGradTitle">
-            <h2 class="plb-h2" id="plbGradTitle">{% if LANGUAGE_CODE == 'ar' %}التخرّج المتوقع{% else %}Projected graduation{% endif %}</h2>
-            <p class="plb-empty">{% if LANGUAGE_CODE == 'ar' %}ابنِ الخيارات لعرض التوقع.{% else %}Build options to see the projection.{% endif %}</p>
+          <section class="plb-grad" id="plbGrad" aria-labelledby="plbGradTitle" tabindex="-1">
+            <div class="plb-gh">
+              <h2 class="plb-h2" id="plbGradTitle">{% if LANGUAGE_CODE == 'ar' %}التخرّج المتوقع{% else %}Projected graduation{% endif %}</h2>
+              <button type="button" class="plb-lk" id="plbGradWhyBtn" aria-expanded="false" aria-controls="plbGradWhy" hidden></button>
+            </div>
+            <p class="plb-empty" id="plbGradLine" role="status" aria-live="polite" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}ابنِ الخيارات لعرض التوقع.{% else %}Build options to see the projection.{% endif %}</p>
+            <button type="button" class="plb-lk" id="plbGradRetry" hidden></button>
+            <div class="plb-rwwrap" id="plbGradRunway"></div>
+            <p class="plb-asm" id="plbGradAsm" hidden></p>
+            <p class="plb-asm" id="plbGradRetained" hidden></p>
+            <p class="plb-asm plb-asm--warn" id="plbGradStale" hidden></p>
+            <ul class="plb-gwhy" id="plbGradWhy" hidden></ul>
           </section>
 
           <section class="plb-guide" id="plbGuide" aria-label="{% if LANGUAGE_CODE == 'ar' %}إرشادات هذا البناء{% else %}Guidance for this build{% endif %}" hidden></section>
@@ -199,5 +208,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=3"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=4"></script>
 {% endblock %}
