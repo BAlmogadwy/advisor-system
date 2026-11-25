@@ -285,6 +285,16 @@
     // The guidance column.
     gWatch: IS_AR ? 'انتبه' : 'Watch',
     gStatus: IS_AR ? 'الحالة' : 'Status',
+    gDepends: IS_AR ? 'يعتمد على' : 'Depends on',
+    // What one course does to the forecast: "If postponed: 5 terms" / "Still 4 terms" / "3 terms, 1 sooner".
+    ifPostponed: (n, still) => (IS_AR
+      ? `إن أُجِّل: ${still ? 'ما زال ' : ''}${T.gradTermCount(n)}`
+      : `If postponed: ${still ? 'still ' : ''}${T.gradTermCount(n)}`),
+    ifAdded: (n, delta) => {
+      if (delta === 0) return IS_AR ? `ما زال ${T.gradTermCount(n)}` : `Still ${T.gradTermCount(n)}`;
+      if (IS_AR) return `${T.gradTermCount(n)}${T.gradSep}${T.gradTiming(delta)}`;
+      return `${T.gradTermCount(n)}${T.gradSep}${Math.abs(delta)} ${delta < 0 ? 'sooner' : 'later'}`;
+    },
     viewOption: (name) => (IS_AR ? ['عرض ', bdi(name)] : ['View ', bdi(name)]),
     whyOnly: IS_AR ? 'الجدول الوحيد الذي وجده هذا البناء.' : 'The only timetable this build found.',
     whyAllCourses: IS_AR ? 'الخيار الوحيد الذي يجدول كل المقررات.' : 'The only option that schedules every course.',
@@ -1262,6 +1272,15 @@
       ]));
     }
 
+    const depends = dependsOn();
+    if (depends.length) {
+      rows.push(row('depends', T.gDepends, depends.map((entry) => {
+        const line = el('span', 'plb-gx plb-dep', bdi(entry.code), ' · ', entry.effect.text.replace(/^[A-Z]/, (c) => c.toLowerCase()));
+        line.dataset.code = entry.code;
+        return line;
+      })));
+    }
+
     const status = statusRow();
     rows.push(row('', T.gStatus, [
       el('span', 'plb-okl', svg(status.kind === 'ok' ? ICONS.tick : ICONS.warn, 14), el('span', '', ...status.parts)),
@@ -1367,11 +1386,13 @@
   // A course row is: code | name over its section line | must-take | action. The name and the
   // section share one cell so the name has the width of the pane: real course titles are long
   // Arabic phrases, and in a column of their own they wrapped onto four or five lines.
-  function courseRow(code, name, section, cells, off) {
+  function courseRow(code, name, section, cells, off, effect) {
     const row = el('tr', 'plb-tr');
     row.dataset.code = norm(code);
     const title = el('span', off ? 'plb-name plb-name--off' : 'plb-name', name ? isolate(name) : '');
-    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-main', title, section), ...cells);
+    // The effect of the course on graduation shares the section line, and wraps under it when short of room.
+    const line = effect ? el('span', 'plb-sl', section, effect) : section;
+    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-main', title, line), ...cells);
     return row;
   }
   function blockedReason(rec) {
@@ -1448,7 +1469,8 @@
       box.dataset.code = norm(code);
       const remove = iconButton('x', T.removeCourse(code), 'remove', code);
       const row = courseRow(code, item.course_name, sectionCell,
-        [el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)]);
+        [el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)], false,
+        opt ? effectNode(code, 'new') : null);
       if (state.detail && state.detail.code === norm(code)) row.dataset.open = 'true';
       newBody.append(row);
     }
@@ -1468,7 +1490,8 @@
       for (const course of pool) {
         const add = iconButton('plus', T.addCourse(course.code), 'add', course.code, 'plb-ib--add');
         const row = courseRow(course.code, course.name,
-          sectionButton(course.code, [sectionInfo(course.code)]), [el('td'), el('td', 'plb-act', add)]);
+          sectionButton(course.code, [sectionInfo(course.code)]), [el('td'), el('td', 'plb-act', add)], false,
+          opt ? effectNode(course.code, 'could') : null);
         if (state.detail && state.detail.code === course.code) row.dataset.open = 'true';
         body.append(row);
       }
@@ -1968,6 +1991,41 @@
   function termsNode(row) {
     return isComplete(row) ? el('b', 'plb-tab-terms', T.gradTermCount(row.terms_including_planning_term)) : null;
   }
+  // What one course does to the SELECTED option's forecast, from the projection's `course_effects`.
+  // group 'new' reads what postponing a planned course costs; 'could' what adding one would do.
+  // null for anything the reply has no usable effect for (also on Registered, while loading, unavailable).
+  function effectFor(code, group) {
+    const opt = currentOption();
+    const row = opt ? forecastFor(opt.name) : null;
+    if (!isComplete(row) || !isObj(row.course_effects)) return null;
+    const map = row.course_effects[group === 'new' ? 'postponed' : 'added'];
+    const effect = isObj(map) ? map[norm(code)] : null;
+    if (!isComplete(effect) || !Number.isInteger(effect.delta_terms)) return null;
+    const count = effect.terms_including_planning_term;
+    const delta = effect.delta_terms;
+    if (group === 'new') {
+      return delta > 0
+        ? { text: T.ifPostponed(count, false), tone: 'strong', delta }
+        : { text: T.ifPostponed(count, delta === 0), tone: 'muted', delta };
+    }
+    return { text: T.ifAdded(count, delta), tone: delta < 0 ? 'brand' : 'muted', delta };
+  }
+  function effectNode(code, group) {
+    const effect = effectFor(code, group);
+    if (!effect) return null;
+    const node = el('span', `plb-fxt plb-fxt--${effect.tone}`, effect.text);
+    node.dataset.fx = group;
+    if (state.build && state.build.stale) node.dataset.stale = state.build.stale;
+    return node;
+  }
+  // The planned courses whose postponement costs the most terms (at most two): "AI331 · if postponed: 5 terms".
+  function dependsOn() {
+    return state.shortlist
+      .map((item) => ({ code: norm(item.course_code), effect: effectFor(item.course_code, 'new') }))
+      .filter((entry) => entry.effect && entry.effect.delta > 0)
+      .sort((a, b) => b.effect.delta - a.effect.delta || (a.code < b.code ? -1 : 1))
+      .slice(0, 2);
+  }
   const creditList = (row) => (Array.isArray(row.credits_by_term) ? row.credits_by_term.filter(isObj) : []);
   const completionParts = (row) => (row.completion_academic_year && row.completion_term
     ? T.gradTerm(row.completion_academic_year, row.completion_term) : []);
@@ -2327,8 +2385,13 @@
     const run = (build.projRun += 1);
     build.projection = { state: 'loading' };
     renderGrad();
+    // "What if" the first six "Could be added" rows, in the table's order, were added. Fixed when the
+    // build is first forecast: a later change to the list does not re-ask, a retry asks the same.
+    if (!build.addCodes) build.addCodes = state.planState === 'loading' ? [] : planPool().slice(0, 6).map((c) => c.code);
+    const body = { token: build.token };
+    if (build.addCodes.length) body.add = build.addCodes;
     let result = null;
-    try { result = await postJson('/ops/planner/graduation-projection/', { token: build.token }); } catch (err) { result = null; }
+    try { result = await postJson('/ops/planner/graduation-projection/', body); } catch (err) { result = null; }
     if (state.build !== build || run !== build.projRun) return;
     let next = { state: 'unavailable' };
     if (result) {
@@ -2351,6 +2414,7 @@
     keepingFocus(() => {
       renderStrip();
       renderTab(weekModel(registeredMeetings()));
+      renderCourses();
       renderActions();
     });
   }
@@ -2660,6 +2724,8 @@
     close.dataset.act = 'dt-close';
     close.dataset.fk = 'close';
     const parts = [el('div', 'plb-dt-head', title, close)];
+    const effect = effectNode(code, info.inPlan ? 'new' : 'could');
+    if (effect) parts.push(el('p', 'plb-dt-fx', effect));
 
     const list = (state.catalog ? state.catalog.get(code) || [] : null);
     const group = el(info.inPlan ? 'fieldset' : 'div', 'plb-dt-group');

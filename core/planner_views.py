@@ -59,6 +59,7 @@ MAX_SHORTLIST_COURSES = 40
 ELIGIBILITY_MODES = {"strict", "relaxed"}
 _PROJECTION_TOKEN_SALT = "core.planner.graduation-projection.v1"
 _PROJECTION_TOKEN_MAX_AGE = 30 * 60
+_PROJECTION_MAX_ADD = 6
 
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
@@ -1099,6 +1100,18 @@ def planner_graduation_projection_view(request: HttpRequest) -> JsonResponse:
 
     from core.services.planner_graduation import compare_planner_graduation
 
+    # "What if" codes for the student the token already scopes; never signed.
+    add = payload.get("add", [])
+    if (
+        not isinstance(add, list)
+        or len(add) > _PROJECTION_MAX_ADD
+        or not all(isinstance(code, str) and 0 < len(code) <= 20 for code in add)
+    ):
+        return _err(
+            f"add must list at most {_PROJECTION_MAX_ADD} course codes of 1 to 20 characters",
+            code="PROJECTION_ADD_INVALID",
+        )
+
     year, term = build["year"], build["term"]
     try:
         kept = None
@@ -1119,6 +1132,7 @@ def planner_graduation_projection_view(request: HttpRequest) -> JsonResponse:
                 term=int(term),
                 options=build["options"],
                 retained_baseline=kept,
+                add=add,
             )
         )
     except Exception as exc:

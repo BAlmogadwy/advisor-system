@@ -242,3 +242,145 @@ def test_credits_by_term_is_empty_when_unresolved_or_unavailable():
     assert summer["baseline"]["status"] == "unavailable"
     assert summer["baseline"]["credits_by_term"] == []
     assert summer["options"]["A1"]["credits_by_term"] == []
+
+
+def _effects(result, name):
+    return result["options"][name]["course_effects"]
+
+
+def _compare_adding(options, add, keep=True):
+    from core.services.planner_graduation import compare_planner_graduation
+
+    retained = (
+        get_student_term_baseline(STUDENT_ID, str(YEAR), str(TERM), snapshot=Snapshot.EFFECTIVE)
+        if keep
+        else None
+    )
+    return compare_planner_graduation(
+        student_id=STUDENT_ID,
+        year=YEAR,
+        term=TERM,
+        options=options,
+        retained_baseline=retained,
+        add=add,
+    )
+
+
+def test_postponing_the_gateway_costs_a_term_and_postponing_a_filler_costs_nothing():
+    sections = _seed_curriculum()
+    result = _compare([_option("AB", sections["AI331", "M1"], sections["STAT305", "M1"])])
+    assert result["options"]["AB"]["terms_including_planning_term"] == 4
+    assert _effects(result, "AB") == {
+        "postponed": {
+            "AI331": {"status": "complete", "terms_including_planning_term": 5, "delta_terms": 1},
+            "STAT305": {"status": "complete", "terms_including_planning_term": 4, "delta_terms": 0},
+        },
+        "added": {},
+    }
+
+
+def test_adding_a_course_reports_its_forecast_and_what_cannot_be_forecast():
+    sections = _seed_curriculum()
+    result = _compare_adding(
+        [_option("B1", sections["STAT305", "M1"])], ["AI331", "CS301", "AI451", "ZZZ999"]
+    )
+    added = _effects(result, "B1")["added"]
+    # Registered CS301 is already in the option's course set: nothing to add.
+    assert set(added) == {"AI331", "AI451", "ZZZ999"}
+    assert added["AI331"] == {
+        "status": "complete",
+        "terms_including_planning_term": 4,
+        "delta_terms": -1,
+    }
+    assert added["AI451"] == {"status": "unavailable", "reason_code": "unmet_course_prerequisites"}
+    assert added["ZZZ999"] == {
+        "status": "unavailable",
+        "reason_code": "section_metadata_unavailable",
+    }
+
+
+def test_an_added_course_that_changes_nothing_has_a_zero_delta():
+    sections = _seed_curriculum()
+    result = _compare_adding([_option("A1", sections["AI331", "M1"])], ["STAT305"])
+    assert _effects(result, "A1")["added"] == {
+        "STAT305": {"status": "complete", "terms_including_planning_term": 4, "delta_terms": 0}
+    }
+
+
+def test_a_request_without_add_has_empty_added_effects():
+    sections = _seed_curriculum()
+    result = _compare([_option("A1", sections["AI331", "M1"])])
+    assert _effects(result, "A1")["added"] == {}
+    assert list(_effects(result, "A1")["postponed"]) == ["AI331"]
+
+
+def test_a_registered_course_is_never_postponed():
+    sections = _seed_curriculum()
+    # Ignoring the registered week, an option may still contain the registered course itself.
+    result = _compare([_option("R", sections["CS301", "M1"], sections["AI331", "M1"])], keep=False)
+    assert list(_effects(result, "R")["postponed"]) == ["AI331"]
+
+
+def test_an_option_that_did_not_finish_has_no_effects():
+    sections = _seed_curriculum()
+    Prerequisite.objects.create(
+        program="PLN", course_code="AI480", prerequisite_course_code="NEVER100"
+    )
+    result = _compare_adding([_option("A1", sections["AI331", "M1"])], ["STAT305"])
+    assert result["options"]["A1"]["status"] == "unresolved"
+    assert _effects(result, "A1") == {"postponed": {}, "added": {}}
+
+
+def test_at_most_eight_postponed_courses_in_code_order():
+    _seed_curriculum()
+    extra = []
+    for number in range(1, 10):
+        code = f"ELX{number}00"
+        Course.objects.create(course_code=code, description=f"Extra {number}", credit_hours=3)
+        ProgrammeRequirement.objects.create(
+            program="PLN",
+            course_code=code,
+            course_name=f"Extra {number}",
+            programme_term=8,
+            credit_hours=3,
+            type="Mandatory",
+        )
+        section = TermSection.objects.create(
+            course_key=code,
+            course_code=code[:3],
+            course_number=code[3:],
+            course_name=f"Extra {number}",
+            section="M1",
+            available_capacity=30,
+            registered_count=3,
+        )
+        TermSectionProgram.objects.create(term_section=section, program="PLN")
+        extra.append(section)
+    result = _compare([_option("BIG", *extra)])
+    assert list(_effects(result, "BIG")["postponed"]) == [f"ELX{n}00" for n in range(1, 9)]
+
+
+def test_options_with_the_same_course_set_forecast_once(monkeypatch):
+    from core.services import planner_graduation
+
+    sections = _seed_curriculum()
+    real = planner_graduation.build_graduation_report
+    calls = []
+
+    def counting(*args, **kwargs):
+        calls.append(sorted(c["code"] for c in kwargs["_current_courses_override"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(planner_graduation, "build_graduation_report", counting)
+    one = _compare_adding([_option("A1", sections["AI331", "M1"])], ["STAT305"])
+    single = list(calls)
+    calls.clear()
+    two = _compare_adding(
+        [_option("A1", sections["AI331", "M1"]), _option("A2", sections["AI331", "M2"])],
+        ["STAT305"],
+    )
+    # baseline {CS301}, the option, and the one added course; postponing the gateway
+    # is the baseline's own set, so it is served from the cache.
+    assert single == [["CS301"], ["AI331", "CS301"], ["AI331", "CS301", "STAT305"]]
+    assert calls == single
+    assert _effects(one, "A1") == _effects(two, "A1") == _effects(two, "A2")

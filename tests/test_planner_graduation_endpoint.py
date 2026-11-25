@@ -110,6 +110,7 @@ def test_projects_all_server_built_variants_and_only_keeps_the_effective_baselin
         "year": int(YEAR),
         "term": int(TERM),
         "options": built_options,
+        "add": [],
     }
     if mode == "keep":
         assert [row["term_section_id"] for row in kept] == [retained_section.term_section_id]
@@ -190,3 +191,30 @@ def test_infeasible_builds_issue_no_projection_token(
     )
     assert response.status_code == 200
     assert "graduation_projection_token" not in response.json()
+
+
+def test_add_reaches_the_service_and_defaults_to_empty(
+    advisor_client: Client, projection: Mock
+) -> None:
+    token = _build_token(advisor_client)
+    assert _project(advisor_client, token, add=["AI331", "CS101"]).status_code == 200
+    assert projection.call_args.kwargs["add"] == ["AI331", "CS101"]
+    assert _project(advisor_client, token).status_code == 200
+    assert projection.call_args.kwargs["add"] == []
+    assert _project(advisor_client, token, add=["A" * 20] * 6).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["AI331", {"a": 1}, ["A1"] * 7, [""], ["A" * 21], [5], [None], [["AI331"]]],
+    ids=["string", "object", "seven", "empty", "long", "number", "null", "nested"],
+)
+def test_invalid_add_is_refused_before_any_forecast(
+    advisor_client: Client, projection: Mock, bad: object
+) -> None:
+    token = _build_token(advisor_client)
+    projection.reset_mock()
+    response = _project(advisor_client, token, add=bad)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "PROJECTION_ADD_INVALID"
+    projection.assert_not_called()
