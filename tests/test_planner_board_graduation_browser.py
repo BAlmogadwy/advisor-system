@@ -1236,10 +1236,14 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         )
         return reply
 
+    # A band so wide that five columns have room to spare in any font (the page's own band at
+    # this viewport is about 810 px; the row needs under 610 px even in the widest font measured).
+    ROOMY = 1150
+
     def test_with_room_to_spare_nothing_is_given_up(self) -> None:
         for language in ("en", "ar"):
             page, _fake = self._projected(language=language)
-            state = self._fit(page)
+            state = self._fit(page, self.ROOMY)
             where = (language, state)
             self.assertTrue(state["row"], where)
             self.assertEqual(state["labelled"], [0, 1, 2, 3, 4], where)
@@ -1273,54 +1277,68 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
                 self.assertEqual(page.evaluate(OVERFLOWS), [], where)
 
     def test_ticks_that_touch_cost_the_unit_first_and_then_the_row_layout(self) -> None:
+        # Every stretch is taken from the measured width of a tick, so it works in any font.
+        tick = (
+            "() => document.querySelector('#plbGrad .plb-rwl--opt .plb-tk')"
+            ".getBoundingClientRect().width"
+        )
         page, _fake = self._projected()
-        self.assertTrue(self._fit(page)["unitShown"])
-        # A unit too wide for its tick goes; the row layout stays.
-        page.add_style_tag(content="#plbGrad .plb-u { letter-spacing: 90px !important; }")
-        state = self._fit(page, 800)
-        self.assertEqual((state["row"], state["unit"], state["unitShown"]), (True, "off", False))
+        self.assertTrue(self._fit(page, self.ROOMY)["unitShown"])
+        # A unit wider than two ticks goes; the row layout stays.
+        page.evaluate(
+            STRESS, f"#plbGrad .plb-u {{ letter-spacing: {page.evaluate(tick)}px !important; }}"
+        )
+        state = self._fit(page, self.ROOMY + 1)
+        self.assertEqual(
+            (state["row"], state["unit"], state["unitShown"]), (True, "off", False), state
+        )
         self._check_fit(page, state, "unit")
-        # Numbers too wide for their ticks: the runway is stacked, where each tick is wider.
+        # Numbers wider than their ticks: the runway is stacked, where each tick is wider.
         page, _fake = self._projected(self._sooner(14))
-        self.assertTrue(self._fit(page, 800)["row"])
-        page.add_style_tag(content="#plbGrad .plb-tk { letter-spacing: 14px !important; }")
-        state = self._fit(page, 801)
+        self.assertTrue(self._fit(page, self.ROOMY)["row"])
+        spacing = page.evaluate(tick) * 0.45
+        page.evaluate(STRESS, f"#plbGrad .plb-tk {{ letter-spacing: {spacing}px !important; }}")
+        state = self._fit(page, self.ROOMY + 1)
         self.assertEqual((state["row"], state["fit"]), (False, "stacked"), state)
         self._check_fit(page, state, "ticks")
-        # Wide again, and with the numbers back to normal, it is a row again.
-        page.add_style_tag(content="#plbGrad .plb-tk { letter-spacing: 0 !important; }")
-        state = self._fit(page, 802)
+        # With the numbers back to normal it is a row again.
+        page.evaluate(STRESS, "")
+        state = self._fit(page, self.ROOMY + 2)
         self.assertEqual((state["row"], state["fit"]), (True, ""), state)
 
     def test_labels_that_crowd_are_thinned_and_then_the_runway_is_stacked(self) -> None:
         page, _fake = self._projected()
-        self.assertEqual(self._fit(page, 800)["labelled"], [0, 1, 2, 3, 4])
-        # Labels wider than one column, narrower than two: every other one, still a row.
+        self.assertEqual(self._fit(page, self.ROOMY)["labelled"], [0, 1, 2, 3, 4])
+        # Every stretch is taken from the measured widths of a column and of a label.
         cell = page.evaluate(
             "() => document.querySelector('#plbGrad .plb-ax').getBoundingClientRect().width"
         )
         label = page.evaluate(TEXT_WIDTH, "#plbGrad .plb-ax")
+        # Labels wider than one column, narrower than two: every other one, still a row.
         spacing = (cell * 1.4 - label) / 6
-        page.add_style_tag(
-            content=f"#plbGrad .plb-ax {{ letter-spacing: {spacing}px !important; }}"
-        )
-        state = self._fit(page, 801)
+        page.evaluate(STRESS, f"#plbGrad .plb-ax {{ letter-spacing: {spacing}px !important; }}")
+        state = self._fit(page, self.ROOMY + 1)
         self.assertEqual((state["row"], state["labelled"]), (True, [0, 2, 4]), state)
         self._check_fit(page, state, "every other")
         # Wider than two columns of the row layout: stacked, and as many labels as fit there.
         spacing = (cell * 2.6 - label) / 6
-        page.add_style_tag(
-            content=f"#plbGrad .plb-ax {{ letter-spacing: {spacing}px !important; }}"
-        )
-        state = self._fit(page, 802)
+        page.evaluate(STRESS, f"#plbGrad .plb-ax {{ letter-spacing: {spacing}px !important; }}")
+        state = self._fit(page, self.ROOMY + 2)
         self.assertEqual((state["row"], state["fit"]), (False, "stacked"), state)
         self.assertLess(len(state["labelled"]), 5, state)
         self._check_fit(page, state, "stacked")
 
+    def test_a_text_that_is_not_drawn_does_not_count_as_outside_the_band(self) -> None:
+        # An element that is not drawn has an empty box at the page's origin.
+        page, _fake = self._projected()
+        page.evaluate(STRESS, "#plbGrad .plb-land b { display: none !important; }")
+        state = self._fit(page, self.ROOMY)
+        self.assertEqual((state["row"], state["fit"]), (True, ""), state)
+
     def test_the_result_is_as_large_as_its_line_allows(self) -> None:
         sizes = {"xl": "22px", "lg": "18px", "": "15px"}
         page, _fake = self._projected()
-        state = self._fit(page, 800)
+        state = self._fit(page, self.ROOMY)
         self.assertEqual((state["size"], state["fontSize"]), ("xl", "22px"), state)
         # Stretch the text a pixel per letter at a time: the size steps down once, then again,
         # and never back up. Each state is checked for being the largest that fits.

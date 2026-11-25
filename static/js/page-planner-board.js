@@ -1847,8 +1847,13 @@
       // the runway is stacked instead.
       if (!ticksFit(runway)) runway.dataset.unit = 'off';
       if (!axisFits(runway)) labelAxis(runway, 2);
+      // (An element that is not drawn has an empty box at the origin: it is not "outside".)
+      const inBand = (node) => {
+        const box = node.getBoundingClientRect();
+        return (!box.width && !box.height) || within(box, band);
+      };
       const texts = [...runway.querySelectorAll('.plb-rl, .plb-land, .plb-land > *, .plb-rwn')];
-      if (!ticksFit(runway) || !axisFits(runway) || !texts.every((node) => within(node.getBoundingClientRect(), band))) {
+      if (!ticksFit(runway) || !axisFits(runway) || !texts.every(inBand)) {
         runway.dataset.fit = 'stacked';
         delete runway.dataset.unit;
         labelAxis(runway, 1);
@@ -1863,6 +1868,8 @@
       return;
     }
     // The result is the page's largest teal text where its line has room for it on one line.
+    // Its size cannot undo what was fitted above: only a "sooner" result is enlarged, and that
+    // belongs to the shorter line, whose landing spans a free column and so sizes no column.
     if (!won) return;
     for (const size of ['xl', 'lg']) {
       won.dataset.size = size;
