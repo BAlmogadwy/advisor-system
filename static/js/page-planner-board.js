@@ -276,10 +276,10 @@
     // Option names, from the option's own week: "Mornings only", "Two afternoons", "Five lighter days".
     optMornings: IS_AR ? 'صباحي فقط' : 'Mornings only',
     optAfternoons: (n) => (IS_AR
-      ? `${DAYS_AR[n] || `${n} أيام`} بعد الظهر`
+      ? pluralAr(n, forms('يوم واحد بعد الظهر', 'يومان بعد الظهر', '{n} أيام بعد الظهر', '{n} يومًا بعد الظهر'))
       : (n === 1 ? 'One afternoon' : `${NUMBER_EN[n] || n} afternoons`)),
     optLighter: (n) => (IS_AR
-      ? `${DAYS_AR[n] || `${n} أيام`} أخف`
+      ? pluralAr(n, forms('يوم واحد أخف', 'يومان أخف', '{n} أيام أخف', '{n} يومًا أخف'))
       : (n === 1 ? 'One lighter day' : `${NUMBER_EN[n] || n} lighter days`)),
     suggested: IS_AR ? 'المقترح' : 'Suggested',
     // The guidance column.
@@ -288,29 +288,39 @@
     viewOption: (name) => (IS_AR ? ['عرض ', bdi(name)] : ['View ', bdi(name)]),
     whyOnly: IS_AR ? 'الجدول الوحيد الذي وجده هذا البناء.' : 'The only timetable this build found.',
     whyAllCourses: IS_AR ? 'الخيار الوحيد الذي يجدول كل المقررات.' : 'The only option that schedules every course.',
-    whyTerms: (n, other, several) => (IS_AR
-      ? `يكتمل في ${T.gradTermCount(n)}؛ ${several ? `بينما تحتاج الخيارات الأخرى إلى ${T.gradTermCount(other)} أو أكثر` : `بينما يحتاج الخيار الآخر إلى ${T.gradTermCount(other)}`}.`
-      : `Finishes in ${T.gradTermCount(n)}; ${several ? `the others take ${other} or more` : `the other takes ${other}`}.`),
-    whyLead: (count, terms) => {
-      const each = IS_AR
-        ? ({ 2: 'الخياران يستغرقان', 3: 'الخيارات الثلاثة تستغرق', 4: 'الخيارات الأربعة تستغرق', 5: 'الخيارات الخمسة تستغرق', 6: 'الخيارات الستة تستغرق' }[count] || 'كل الخيارات تستغرق')
-        : (count === 2 ? 'Both take' : `All ${NUMBER_EN[count] ? NUMBER_EN[count].toLowerCase() : count} take`);
-      return `${each} ${terms}${IS_AR ? '؛ ' : '; '}`;
+    // Why the suggested option comes before the next one: what the two share, then the key that
+    // decided, with both values. "Same terms and days on campus as B1; ends earlier: 14:00
+    // against 14:15."
+    whyDecided: (name, shared, decider, mine, theirs) => {
+      const word = IS_AR
+        ? { terms: 'عدد الفصول', days: 'أيام الحضور', end: 'وقت الانتهاء' }
+        : { terms: 'terms', days: 'days on campus', end: 'finish time' };
+      const clause = IS_AR
+        ? { unplaced: 'مقررات غير مجدولة أقل', terms: 'فصول أقل', days: 'أيام حضور أقل', end: 'ينتهي أبكر', gap: 'فجوات أقصر' }
+        : { unplaced: 'fewer courses left out', terms: 'fewer terms', days: 'fewer days on campus', end: 'ends earlier', gap: 'shorter gaps' };
+      const against = IS_AR ? ' مقابل ' : ' against ';
+      const values = [': ', ...mine, against, ...theirs, '.'];
+      const list = shared.map((key) => word[key]);
+      if (!list.length) {
+        const opening = clause[decider];
+        return IS_AR
+          ? [`${opening} من `, bdi(name), ...values]
+          : [`${opening.charAt(0).toUpperCase()}${opening.slice(1)} than `, bdi(name), ...values];
+      }
+      const joined = IS_AR
+        ? list.join(' و')
+        : (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0]);
+      return IS_AR
+        ? ['مثل ', bdi(name), ` في ${joined}؛ ${clause[decider]}`, ...values]
+        : [`Same ${joined} as `, bdi(name), `; ${clause[decider]}`, ...values];
     },
-    // A fact on which the suggested option is strictly best, or one of a pair no other option has.
-    factLeastLeft: (n) => [IS_AR ? `أقل عدد من المقررات غير المجدولة (${n})` : `fewest courses left out (${n})`],
-    factFewestDays: (n) => [IS_AR ? `أقل أيام حضور (${n})` : `fewest days on campus (${n})`],
-    factEarliest: (time) => [IS_AR ? 'أبكر انتهاء (' : 'earliest finish (', bdi(time), ')'],
-    factNoGaps: [IS_AR ? 'بلا فجوات' : 'no gaps'],
-    factShortestGap: (text) => [IS_AR ? 'أقصر فجوة (' : 'shortest gap (', nb(text), ')'],
-    factFree: (day) => [IS_AR ? `${DAY_FULL_AR[day]} فارغ` : `${DAY_FULL_EN[day]} free`],
-    factFinish: (time) => (IS_AR ? ['انتهاء ', bdi(time)] : ['a ', bdi(time), ' finish']),
-    factOnCampus: (n) => [IS_AR ? `${T.dayWord(n)} حضور` : `${T.dayWord(n)} on campus`],
-    factGap: (text) => (IS_AR ? ['فجوة ', nb(text)] : ['a ', nb(text), ' gap']),
-    whyPair: (name, one, two) => (IS_AR
-      ? ['وحده ', bdi(name), ' فيه ', ...one, ' و', ...two]
-      : ['only ', bdi(name), ' has ', ...one, ' and ', ...two]),
-    whyRank: IS_AR ? 'الأول في أيام الحضور ثم وقت الانتهاء ثم الفجوات' : 'first on days on campus, then finish time, then gaps',
+    whyNoGap: IS_AR ? 'لا فجوات' : 'none',
+    whyLevel: (name) => (IS_AR
+      ? ['يتساوى مع ', bdi(name), ' في كل ما سبق؛ وقد أورده البناء أولًا.']
+      : ['Level with ', bdi(name), ' on every count; the build listed it first.']),
+    whyTimed: (name) => (IS_AR
+      ? ['له مواعيد محددة، بخلاف ', bdi(name), '.']
+      : ['It has timed classes; ', bdi(name), ' has none.']),
     seatLine: (label, n) => [bdi(label), IS_AR ? ': ' : ' has ', T.seatsLeft(n)],
     fallbackLine: (name, facts) => [bdi(name), IS_AR ? ' هو البديل: ' : ' is the fallback: ', ...facts, '.'],
     allNearlyFull: IS_AR ? 'كل الخيارات تستخدم شعبة شبه ممتلئة.' : 'Every option uses a section that is nearly full.',
@@ -326,8 +336,6 @@
     detailsWord: IS_AR ? 'التفاصيل' : 'details',
   };
   const NUMBER_EN = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven'];
-  const DAYS_AR = ['', 'يوم', 'يومان', 'ثلاثة أيام', 'أربعة أيام', 'خمسة أيام', 'ستة أيام', 'سبعة أيام'];
-  const DAY_FULL_EN = { SUN: 'Sunday', MON: 'Monday', TUE: 'Tuesday', WED: 'Wednesday', THU: 'Thursday', FRI: 'Friday', SAT: 'Saturday' };
 
   const DAY_ORDER = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   const ACADEMIC_DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
@@ -958,7 +966,7 @@
     const also = (opt.aliases || []).map((a) => el('span', 'plb-tab-aka', ' | ', bdi(a.name)));
     const tab = el('button', 'plb-tab',
       el('span', 'plb-tab-n', bdi(opt.name), ...also, ...(said ? [' ', el('span', 'plb-tab-nm', said)] : []),
-        ...(ctx.showCredits ? [' ', el('span', 'plb-tab-cr', `· ${T.credits(optionCredits(opt))}`)] : [])),
+        ...(ctx.showCredits ? [' ', el('span', 'plb-tab-cr', T.credits(optionCredits(opt)))] : [])),
       el('span', 'plb-tab-x', ...present(terms, terms ? ' · ' : null, facts.first)),
       ctx.suggested === opt.name
         ? el('span', 'plb-tab-x plb-tab-x--sg', el('span', '', ...facts.second), ' ', el('span', 'plb-mic plb-sg', T.suggested))
@@ -1059,24 +1067,27 @@
       gap: timed ? model.longestGap : NEVER,
     };
   }
-  // The order: fewer courses left unscheduled; fewer projected terms (only when BOTH options have
-  // a complete forecast, so a pair without one skips the key); fewer days on campus; an earlier
-  // last class; a shorter longest gap; then the reply's own order. An insertion sort, so a pair
-  // that skips a key can never make the result depend on the engine.
+  // The keys of the order, in order: fewer courses left unscheduled; fewer projected terms; fewer
+  // days on campus; an earlier last class; a shorter longest gap. Then the reply's own order.
+  const ORDER_KEYS = ['unplaced', 'terms', 'days', 'end', 'gap'];
+  // Every option's keys. The terms key takes part only when EVERY option has a complete forecast
+  // (otherwise it is null for all of them): used for some pairs and skipped for others it would
+  // not be an order at all (A before C on terms, B before A and C before B on days), and the
+  // suggested option would depend on the order the reply happened to list them in.
+  function orderKeys(options, withTerms) {
+    const rows = withTerms ? options.map((opt) => forecastFor(opt.name)) : [];
+    const byTerms = rows.length > 0 && rows.every(isComplete);
+    return new Map(options.map((opt, i) => [opt, {
+      ...rankKeys(opt),
+      terms: byTerms ? rows[i].terms_including_planning_term : null,
+    }]));
+  }
   function rankOptions(options, withTerms) {
-    const keys = new Map(options.map((opt) => [opt, rankKeys(opt)]));
-    const termsOf = (opt) => {
-      const row = withTerms ? forecastFor(opt.name) : null;
-      return isComplete(row) ? row.terms_including_planning_term : null;
-    };
+    const keys = orderKeys(options, withTerms);
     const before = (a, b) => {
       const ka = keys.get(a);
       const kb = keys.get(b);
-      if (ka.unplaced !== kb.unplaced) return ka.unplaced < kb.unplaced;
-      const ta = termsOf(a);
-      const tb = termsOf(b);
-      if (ta !== null && tb !== null && ta !== tb) return ta < tb;
-      for (const key of ['days', 'end', 'gap']) if (ka[key] !== kb[key]) return ka[key] < kb[key];
+      for (const key of ORDER_KEYS) if (ka[key] !== kb[key]) return ka[key] < kb[key];
       return a.replyIndex < b.replyIndex;
     };
     const out = [];
@@ -1144,51 +1155,31 @@
     return found.sort((a, b) => a.remaining - b.remaining);
   }
 
-  // What the suggested option has that another might: each free day, its finish, its days, its gap.
-  function weekFacts(model) {
-    if (!model.meetings.length) return [];
-    const facts = model.freeDays.map((day) => ({ key: `free:${day}`, parts: T.factFree(day) }));
-    facts.push({ key: `end:${model.lastEnd}`, parts: T.factFinish(hhmm(model.lastEnd)) });
-    facts.push({ key: `days:${model.campusDays}`, parts: T.factOnCampus(model.campusDays) });
-    facts.push({ key: `gap:${model.longestGap}`, parts: model.longestGap > 0 ? T.factGap(durationText(model.longestGap)) : T.factNoGaps });
-    return facts;
-  }
-  const capitalised = (parts) => {
-    if (IS_AR || typeof parts[0] !== 'string') return parts;
-    return [parts[0].charAt(0).toUpperCase() + parts[0].slice(1), ...parts.slice(1)];
-  };
-  // One sentence saying why the first option of the order is suggested, from what is true of it.
+  // One sentence saying why the first option of the order is suggested. It is the order itself put
+  // into words: what the first option and the next one have in common, then the key that decided
+  // between them, with both values. So it can never claim more than the order does.
   function whySuggested(first, ranked) {
-    const others = ranked.filter((opt) => opt !== first);
-    if (!others.length) return [T.whyOnly];
-    const keys = new Map(ranked.map((opt) => [opt, rankKeys(opt)]));
+    const next = ranked[1];
+    if (!next) return [T.whyOnly];
+    const keys = orderKeys(ranked, projectionOf() !== null);
     const mine = keys.get(first);
-    if (mine.unplaced === 0 && others.every((opt) => keys.get(opt).unplaced > 0)) return [T.whyAllCourses];
-    const rows = ranked.map((opt) => forecastFor(opt.name));
-    const known = rows.every(isComplete);
-    const termsOf = (opt) => forecastFor(opt.name).terms_including_planning_term;
-    if (known) {
-      const rest = others.map(termsOf);
-      if (rest.every((n) => n > termsOf(first))) return [T.whyTerms(termsOf(first), Math.min(...rest), others.length > 1)];
-    }
-    const sameTerms = known && new Set(ranked.map(termsOf)).size === 1;
-    const lead = sameTerms ? T.whyLead(ranked.length, T.gradTermCount(termsOf(first))) : '';
-    const sentence = (clause) => [...(lead ? [lead, ...clause] : capitalised(clause)), '.'];
-    const least = (key) => Math.min(...others.map((opt) => keys.get(opt)[key]));
-    if (mine.unplaced < least('unplaced')) return sentence(T.factLeastLeft(mine.unplaced));
-    if (mine.days < least('days')) return sentence(T.factFewestDays(mine.days));
-    if (mine.end < least('end')) return sentence(T.factEarliest(hhmm(mine.end)));
-    if (mine.gap < least('gap')) return sentence(mine.gap === 0 ? T.factNoGaps : T.factShortestGap(durationText(mine.gap)));
-    const own = weekFacts(mine.model);
-    const theirs = others.map((opt) => new Set(weekFacts(keys.get(opt).model).map((f) => f.key)));
-    for (let i = 0; i < own.length; i += 1) {
-      for (let j = i + 1; j < own.length; j += 1) {
-        if (theirs.every((set) => !set.has(own[i].key) || !set.has(own[j].key))) {
-          return sentence(T.whyPair(first.name, own[i].parts, own[j].parts));
-        }
-      }
-    }
-    return sentence([T.whyRank]);
+    const theirs = keys.get(next);
+    if (mine.unplaced === 0 && ranked.slice(1).every((opt) => keys.get(opt).unplaced > 0)) return [T.whyAllCourses];
+    const used = ORDER_KEYS.filter((key) => mine[key] !== null);
+    const decider = used.find((key) => mine[key] !== theirs[key]);
+    if (!decider) return T.whyLevel(next.name);
+    // A week with no timed class has no days, finish or gap to quote.
+    if (mine[decider] === NEVER || theirs[decider] === NEVER) return T.whyTimed(next.name);
+    const said = {
+      unplaced: (n) => [String(n)],
+      terms: (n) => [String(n)],
+      days: (n) => [String(n)],
+      end: (mins) => [bdi(hhmm(mins))],
+      gap: (mins) => (mins > 0 ? [nb(durationText(mins))] : [T.whyNoGap]),
+    }[decider];
+    // What the two share is worth saying only for what an adviser weighs: terms, days, finish.
+    const shared = used.slice(0, used.indexOf(decider)).filter((key) => key !== 'unplaced');
+    return T.whyDecided(next.name, shared, decider, said(mine[decider]), said(theirs[decider]));
   }
   // "A1 is the fallback: 4 terms, Thu free, ends 14:15."
   function fallbackLine(opt) {
@@ -1805,14 +1796,16 @@
   }
   // A redraw replaces the nodes it draws. When the page redraws by itself (the age check runs on
   // a timer, a forecast lands when the server answers) the keyboard must stay where it was: the same
-  // control is found again by its id, by its action and course in the table, or by the option it
-  // stands for in "More options".
+  // control is found again by its id, by its action and course in the table, by the option it
+  // stands for in "More options", or by its place among its course's blocks in the week.
+  const weekBlocksOf = (code) => [...document.querySelectorAll(`#plbWeek [data-act="week-open"][data-code="${CSS.escape(code)}"]`)];
   function keepingFocus(redraw) {
     const was = document.activeElement;
     const id = was && was.id ? was.id : '';
     const act = was && was.dataset ? was.dataset.act : '';
     const code = was && was.dataset ? was.dataset.code : '';
     const more = was && was.dataset ? was.dataset.more : '';
+    const inWeek = act === 'week-open' && code ? weekBlocksOf(code).indexOf(was) : -1;
     redraw();
     if (document.activeElement && document.activeElement !== document.body) return;
     let again = id ? document.getElementById(id) : null;
@@ -1820,6 +1813,7 @@
       again = document.querySelector(`#plbTable [data-act="${CSS.escape(act)}"][data-code="${CSS.escape(code)}"]`);
     }
     if (!again && more) again = document.querySelector(`#plbMoreList [data-more="${CSS.escape(more)}"]`);
+    if (!again && inWeek >= 0) again = weekBlocksOf(code)[inWeek] || weekBlocksOf(code)[0] || null;
     if (again && !again.disabled) again.focus();
   }
   // A build older than 30 minutes is out of date. Checked when Review and apply is pressed, when
@@ -2734,7 +2728,8 @@
       target.focus();
     }
   }
-  function openDetail(code) {
+  // `fromBlock` is the week block that opened the panel, when one did: closing returns there.
+  function openDetail(code, fromBlock) {
     const key = norm(code);
     const item = state.shortlist.find((c) => norm(c.course_code) === key);
     const course = item ? null : planPool().find((c) => c.code === key);
@@ -2743,16 +2738,20 @@
       code: key,
       name: item ? String(item.course_name || '') : course.name,
       credits: item ? Number(item.credits) || 0 : course.credits,
+      weekAt: fromBlock ? weekBlocksOf(fromBlock.dataset.code).indexOf(fromBlock) : -1,
+      weekCode: fromBlock ? fromBlock.dataset.code : '',
     };
     renderCourses();
     $('plbDetailTitle').focus();
   }
   function closeDetail(returnFocus) {
-    const code = state.detail ? state.detail.code : null;
+    const was = state.detail;
     state.detail = null;
     renderCourses();
-    if (!returnFocus || !code) return;
-    const button = document.querySelector(`#plbTable [data-act="detail"][data-code="${CSS.escape(code)}"]`);
+    if (!returnFocus || !was) return;
+    // Back to where it was opened from: the week block, else the row's button.
+    const block = was.weekAt >= 0 ? weekBlocksOf(was.weekCode)[was.weekAt] : null;
+    const button = block || document.querySelector(`#plbTable [data-act="detail"][data-code="${CSS.escape(was.code)}"]`);
     if (button) button.focus();
   }
   // Exactly the shape the current page pins a section in (page-planner.js, the section row click).
@@ -2833,7 +2832,7 @@
     });
     $('plbWeek').addEventListener('click', (event) => {
       const block = event.target.closest('[data-act="week-open"]');
-      if (block) openDetail(block.dataset.code);
+      if (block) openDetail(block.dataset.code, block);
     });
     $('plbGuide').addEventListener('click', (event) => {
       const view = event.target.closest('[data-view]');

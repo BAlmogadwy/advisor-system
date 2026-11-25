@@ -9056,9 +9056,10 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
    caption under the axis ("Credits per term") says it. */
 .plb-rw[data-unit="off"] .plb-u { display: none; }
 /* The band keeps the height of its two lines from the moment a forecast is asked for, so the tabs
-   under it do not jump when the forecast lands or when a tab with a single line is chosen. (On a
-   phone the page is scrolled past the band by then, and the browser holds the tabs in place.) */
-.plb-grad[data-state="loading"], .plb-grad[data-state="ready"] { min-height: 164px; }
+   under it do not jump when the forecast lands or when a tab with a single line is chosen: 176px
+   is the runway beside the guidance column with its assumptions on two lines. (On a phone the page
+   is scrolled past the band by then, and the browser holds the tabs in place.) */
+.plb-grad[data-state="loading"], .plb-grad[data-state="ready"] { min-height: 176px; }
 @container plbgrad (min-width: 440px) {
   .plb-rw[data-span="s"]:not([data-fit="stacked"]) { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(16rem); align-items: end; gap: 2px 0; }
   .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }

@@ -89,7 +89,9 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/planner_board.html", "plbFetch"),
     ("core/templates/core/planner_board.html", "plbRulesReset"),
     ("core/templates/core/planner_board.html", "plbRulesCancel"),
-    # ... and "Review and apply" beside the primary Rebuild, and the review dialog's Cancel.
+    # ... and "Review and apply", neutral in the template (no build exists yet; the board's
+    # script makes it the filled button once a build can be applied, which its own browser
+    # test checks by computed colour), and the review dialog's Cancel.
     ("core/templates/core/planner_board.html", "plbReview"),
     ("core/templates/core/planner_board.html", "plbApplyCancel"),
     ("core/templates/core/section_planning.html", "spDeptFilterClear"),

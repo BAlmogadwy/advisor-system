@@ -156,30 +156,30 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(
             self._tab_lines(page, "C1"),
             [
-                "C1 Four afternoons · 15 cr",
+                "C1 Four afternoons 15 cr",
                 "4 days · Thu free",
                 "ends 14:00 · gap 2 h 30 min Suggested",
             ],
         )
         self.assertEqual(
             self._tab_lines(page, "B1"),
-            ["B1 Three afternoons · 15 cr", "4 days · Thu free", "ends 14:15 · gap 1 h 45 min"],
+            ["B1 Three afternoons 15 cr", "4 days · Thu free", "ends 14:15 · gap 1 h 45 min"],
         )
         self.assertEqual(
             self._tab_lines(page, "C2"),
-            ["C2 Five lighter days · 15 cr", "5 days · no free day", "ends 14:00 · gap 3 h 30 min"],
+            ["C2 Five lighter days 15 cr", "5 days · no free day", "ends 14:00 · gap 3 h 30 min"],
         )
         # The two that wait under "More options": B2 leaves a course out and, reading like B3,
         # goes without a name.
         self._pick(page, "B2")
         self.assertEqual(
             self._tab_lines(page, "B2"),
-            ["B2 · 12 cr", "4 days · Thu free", "ends 14:00 · gap 45 min", "1 not scheduled"],
+            ["B2 12 cr", "4 days · Thu free", "ends 14:00 · gap 45 min", "1 not scheduled"],
         )
         self._pick(page, "B3")
         self.assertEqual(
             self._tab_lines(page, "B3"),
-            ["B3 Two afternoons · 15 cr", "5 days · no free day", "ends 16:15 · gap 1 h"],
+            ["B3 Two afternoons 15 cr", "5 days · no free day", "ends 16:15 · gap 1 h"],
         )
         # The Registered tab keeps what part one says.
         self.assertEqual(self._text(page, "#plbTabFacts1"), "4 days · Thu free")
@@ -204,7 +204,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._cell(page, "AI342"), "§M1")
         self.assertEqual(
             self._tab_lines(page, "B3"),
-            ["B3 Two afternoons · 15 cr", "5 days · no free day", "ends 16:15 · gap 1 h"],
+            ["B3 Two afternoons 15 cr", "5 days · no free day", "ends 16:15 · gap 1 h"],
         )
         # Escape closes the list and gives the focus back to the button.
         page.click("#plbMoreBtn")
@@ -643,7 +643,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(
             self._tab_lines(page, "B2"),
             [
-                "B2 · 12 ساعة",
+                "B2 12 ساعة",
                 "4 أيام · الخميس فارغ",
                 "تنتهي 14:00 · فجوة 45 د",
                 "مقرر واحد غير مجدول",

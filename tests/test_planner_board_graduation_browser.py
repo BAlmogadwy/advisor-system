@@ -296,6 +296,9 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
 
     def test_sooner_later_same_and_no_result(self) -> None:
         page, _fake = self._projected()
+        # Beside the guidance column the band is narrow; given room to spare the good news is the
+        # largest text of the page (how it steps down is the fit tests' business).
+        page.evaluate(RESIZE, self.ROOMY)
         size = "n => getComputedStyle(n).fontSize"
         color = "n => getComputedStyle(n).color"
         won = page.locator("#plbGrad .plb-rwl--opt .plb-won")
@@ -306,9 +309,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(won.get_attribute("data-result"), "later")
         # Good news is the largest text of the page; bad news is bold warning ink at reading size,
         # which always fits beside its own line.
-        # With the guidance column beside it the band is narrow, so how large the line may be is
-        # the fit tests' business: here it is only larger than bad news, which is at reading size.
-        self.assertGreater(float(sooner[0][:-2]), 15)
+        self.assertEqual(sooner[0], "22px")
         self.assertEqual(won.evaluate(size), "15px")
         self.assertEqual(won.evaluate("n => getComputedStyle(n).fontWeight"), "700")
         self.assertNotEqual(won.evaluate(color), sooner[1])
@@ -947,17 +948,15 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             self.assertEqual(page.evaluate(display), "grid", (span, threshold))
 
     def test_a_long_runway_fits_the_page_in_either_layout(self) -> None:
-        # Which layout a width gives depends on the band, which the guidance column narrows and
-        # on the fonts: only that either fits is asserted.
+        # Which layout a width gives depends on the band, which the guidance column narrows, and
+        # on the fonts. Whichever it is, the runway has room for its texts and the page does not
+        # scroll sideways.
         for width, columns in ((1440, 15), (1440, 14), (1152, 15), (600, 9)):
             page, _fake = self._projected(_reply(B1=forecast([9] * columns, delta=0)), width=width)
-            self.assertIn(
-                page.evaluate(
-                    "getComputedStyle(document.querySelector('#plbGrad .plb-rw')).display"
-                ),
-                ("grid", "flex"),
-                (width, columns),
-            )
+            self._pick(page, "B1")
+            state = self._fit(page)
+            self.assertEqual(state["columns"], columns, (width, columns))
+            self._check_fit(page, state, (width, columns))
             self.assertEqual(page.evaluate(OVERFLOWS), [], (width, columns))
 
     def test_screen_reader_sentences_and_hidden_ticks(self) -> None:

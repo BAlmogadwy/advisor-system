@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from tests.planner_board_support import (
+    NO_FORECAST,
     OVERFLOWS,
     REG_FORECAST,
     BuildFake,
@@ -228,9 +229,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         self.assertEqual(self._tab_names(page), ["B2", "B1", "B3", "(registered)"])
         self.assertEqual(page.get_attribute("#plbTab_B2", "aria-selected"), "true")
         self.assertTrue(self._guide_rows(page)["Suggested"].startswith("B3"))
-        self.assertEqual(
-            self._sentences(page)[0], "Finishes in 4 terms; the others take 5 or more."
-        )
+        self.assertEqual(self._sentences(page)[0], "Fewer terms than B2: 4 against 5.")
         # ... and the button that goes to it.
         page.click("#plbGuideView")
         self.assertEqual(page.get_attribute("#plbTab_B3", "aria-selected"), "true")
@@ -329,7 +328,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         )
         self.assertEqual(
             self._names_on_tabs(page),
-            {"B3": "يومان بعد الظهر", "B2": "أربعة أيام أخف", "B1": "صباحي فقط"},
+            {"B3": "يومان بعد الظهر", "B2": "4 أيام أخف", "B1": "صباحي فقط"},
         )
         page, _fake = self._board(
             [
@@ -341,7 +340,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
             language="ar",
         )
         self.assertEqual(
-            self._names_on_tabs(page), {"B1": "يوم بعد الظهر", "B2": "ثلاثة أيام بعد الظهر"}
+            self._names_on_tabs(page), {"B1": "يوم واحد بعد الظهر", "B2": "3 أيام بعد الظهر"}
         )
 
     def test_credits_are_on_the_tabs_only_when_the_options_differ_in_credits(self) -> None:
@@ -357,7 +356,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
             page.eval_on_selector_all(
                 "#plbTabs [data-opt] .plb-tab-cr", "n => n.map(x => x.textContent)"
             ),
-            ["· 6 cr", "· 3 cr"],
+            ["6 cr", "3 cr"],
         )
 
     def test_more_options_say_their_names_and_suggested(self) -> None:
@@ -418,7 +417,9 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         )
         self.assertEqual(self._sentences(page)[0], "الخيار الوحيد الذي يجدول كل المقررات.")
 
-    def test_an_option_that_alone_has_the_fewest_terms(self) -> None:
+    # The sentence is the order in words: what the suggested option shares with the next one in
+    # the order, then the key that decided between them, with both values.
+    def test_terms_decide(self) -> None:
         options = [
             week_option("B1", (["SUN", "MON"], "08:00", "09:15"), (["TUE"], "08:00", "09:15")),
             week_option("B2", (["SUN"], "08:00", "09:15"), (["MON"], "08:00", "09:15")),
@@ -433,23 +434,14 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
             )
 
         page, _ = self._suggest(options, reply(B1=4, B2=5, B3=6))
-        self.assertEqual(
-            self._sentences(page)[0], "Finishes in 4 terms; the others take 5 or more."
-        )
-        page, _ = self._suggest(options[:2], reply(B1=4, B2=5))
-        self.assertEqual(self._sentences(page)[0], "Finishes in 4 terms; the other takes 5.")
+        self.assertEqual(self._sentences(page)[0], "Fewer terms than B2: 4 against 5.")
+        # The next one in the order is the one named, not the worst.
+        page, _ = self._suggest(options, reply(B1=4, B2=6, B3=5))
+        self.assertEqual(self._sentences(page)[0], "Fewer terms than B3: 4 against 5.")
         page, _ = self._suggest(options[:2], reply(B1=4, B2=5), language="ar")
-        self.assertEqual(
-            self._sentences(page)[0], "يكتمل في 4 فصول؛ بينما يحتاج الخيار الآخر إلى 5 فصول."
-        )
-        page, _ = self._suggest(options, reply(B1=4, B2=5, B3=6), language="ar")
-        self.assertEqual(
-            self._sentences(page)[0],
-            "يكتمل في 4 فصول؛ بينما تحتاج الخيارات الأخرى إلى 5 فصول أو أكثر.",
-        )
+        self.assertEqual(self._sentences(page)[0], "فصول أقل من B2: 4 مقابل 5.")
 
-    def test_each_fact_on_which_the_suggestion_is_strictly_best(self) -> None:
-        # Terms are the same everywhere, so each sentence opens with that.
+    def test_days_finish_and_gaps_decide_after_what_is_shared(self) -> None:
         def sentence(options, language="en"):
             page, _ = self._suggest(
                 options, self._same_terms([o["name"] for o in options]), language=language
@@ -463,41 +455,54 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
                 "B3", (["SUN", "MON", "TUE"], "08:00", "09:15"), (["SUN"], "10:00", "11:15")
             ),
         ]
-        self.assertEqual(sentence(days), "All three take 4 terms; fewest days on campus (1).")
-        self.assertEqual(sentence(days[:2]), "Both take 4 terms; fewest days on campus (1).")
-        self.assertEqual(sentence(days, "ar"), "الخيارات الثلاثة تستغرق 4 فصول؛ أقل أيام حضور (1).")
+        self.assertEqual(sentence(days), "Same terms as B2; fewer days on campus: 1 against 2.")
+        self.assertEqual(sentence(days, "ar"), "مثل B2 في عدد الفصول؛ أيام حضور أقل: 1 مقابل 2.")
         finish = [
             week_option("B1", (["SUN"], "08:00", "09:15"), (["MON"], "08:00", "12:45")),
             week_option("B2", (["SUN"], "08:00", "09:15"), (["MON"], "08:00", "14:15")),
         ]
-        self.assertEqual(sentence(finish), "Both take 4 terms; earliest finish (12:45).")
-        self.assertEqual(sentence(finish, "ar"), "الخياران يستغرقان 4 فصول؛ أبكر انتهاء (12:45).")
+        self.assertEqual(
+            sentence(finish),
+            "Same terms and days on campus as B2; ends earlier: 12:45 against 14:15.",
+        )
+        self.assertEqual(
+            sentence(finish, "ar"),
+            "مثل B2 في عدد الفصول وأيام الحضور؛ ينتهي أبكر: 12:45 مقابل 14:15.",
+        )
         gaps = [
             week_option("B1", (["SUN"], "08:00", "09:15"), (["SUN"], "09:15", "12:00")),
             week_option("B2", (["SUN"], "08:00", "09:15"), (["SUN"], "10:00", "12:00")),
             week_option("B3", (["SUN"], "08:00", "09:15"), (["SUN"], "10:30", "12:00")),
         ]
-        self.assertEqual(sentence(gaps), "All three take 4 terms; no gaps.")
+        self.assertEqual(
+            sentence(gaps),
+            "Same terms, days on campus and finish time as B2; shorter gaps: none against 45 min.",
+        )
         gaps = gaps[1:] + [
             week_option("B4", (["SUN"], "08:00", "09:15"), (["SUN"], "11:00", "12:00"))
         ]
-        self.assertEqual(sentence(gaps), "All three take 4 terms; shortest gap (45 min).")
-        self.assertEqual(sentence(gaps, "ar"), "الخيارات الثلاثة تستغرق 4 فصول؛ أقصر فجوة (45 د).")
-        # Terms differ but this option is not strictly the best on terms: no lead, a capital letter.
-        mixed = projection_reply(
-            REG_FORECAST,
-            {
-                "B1": forecast([15, 18, 18, 9]),
-                "B2": forecast([15, 18, 18, 9]),
-                "B3": forecast([15, 18, 18, 18, 9]),
-            },
+        self.assertEqual(
+            sentence(gaps),
+            "Same terms, days on campus and finish time as B3;"
+            " shorter gaps: 45 min against 1 h 15 min.",
         )
-        page, _ = self._suggest(days, mixed)
-        self.assertEqual(self._sentences(page)[0], "Fewest days on campus (1).")
+        self.assertEqual(
+            sentence(gaps, "ar"),
+            "مثل B3 في عدد الفصول وأيام الحضور ووقت الانتهاء؛ فجوات أقصر: 45 د مقابل 1 س 15 د.",
+        )
+        # Without a forecast for every option the terms are not part of the order, nor of the
+        # sentence.
+        page, _ = self._suggest(finish)
+        self.assertEqual(
+            self._sentences(page)[0],
+            "Same days on campus as B2; ends earlier: 12:45 against 14:15.",
+        )
+        page, _ = self._suggest(days)
+        self.assertEqual(self._sentences(page)[0], "Fewer days on campus than B2: 1 against 2.")
 
-    def test_a_pair_of_facts_no_other_option_has_together(self) -> None:
-        # The mock-up's three: B1 has Thursday free and a 12:45 finish; A1 has Thursday free but
-        # ends later; A2 ends at 12:45 but has no free day.
+    def test_the_mock_ups_three_options(self) -> None:
+        # B1 has Thursday free and a 12:45 finish; A1 has Thursday free but ends later; A2 ends at
+        # 12:45 but has no free day. B1 is first, A1 next: same terms and days, an earlier finish.
         b1 = week_option(
             "B1",
             (["SUN", "MON", "TUE", "WED"], "08:00", "09:15"),
@@ -514,8 +519,8 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
             (["SUN", "TUE", "WED", "THU"], "11:30", "12:45"),
         )
         for language, expected in (
-            ("en", "All three take 4 terms; only B1 has Thursday free and a 12:45 finish."),
-            ("ar", "الخيارات الثلاثة تستغرق 4 فصول؛ وحده B1 فيه الخميس فارغ وانتهاء 12:45."),
+            ("en", "Same terms and days on campus as A1; ends earlier: 12:45 against 14:15."),
+            ("ar", "مثل A1 في عدد الفصول وأيام الحضور؛ ينتهي أبكر: 12:45 مقابل 14:15."),
         ):
             page, _ = self._suggest(
                 [a1, a2, b1], self._same_terms(["A1", "A2", "B1"]), language=language
@@ -523,25 +528,58 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
             self.assertEqual(self._sentences(page)[0], expected)
             self.assertTrue(list(self._guide_rows(page).values())[0].startswith("B1"))
 
-    def test_two_options_that_look_the_same_are_ranked_in_words(self) -> None:
-        page, _ = self._suggest(
-            [week_option("B1", MORNING, LATE_MORNING), week_option("B2", MORNING, LATE_MORNING)]
-        )
+    def test_two_options_that_look_the_same_are_told_apart_by_the_replys_order(self) -> None:
+        same = [week_option("B1", MORNING, LATE_MORNING), week_option("B2", MORNING, LATE_MORNING)]
+        page, _ = self._suggest(same)
         self.assertEqual(
-            self._sentences(page)[0], "First on days on campus, then finish time, then gaps."
+            self._sentences(page)[0], "Level with B2 on every count; the build listed it first."
         )
-        page, _ = self._suggest(
-            [week_option("B1", MORNING, LATE_MORNING), week_option("B2", MORNING, LATE_MORNING)],
-            self._same_terms(["B1", "B2"]),
-        )
+        page, _ = self._suggest(same, self._same_terms(["B1", "B2"]), language="ar")
         self.assertEqual(
-            self._sentences(page)[0],
-            "Both take 4 terms; first on days on campus, then finish time, then gaps.",
+            self._sentences(page)[0], "يتساوى مع B2 في كل ما سبق؛ وقد أورده البناء أولًا."
         )
 
-    def test_fewest_courses_left_out_when_none_schedules_them_all(self) -> None:
+    def test_two_options_that_schedule_everything_are_not_each_called_the_only_one(self) -> None:
+        page, _ = self._suggest(
+            [
+                week_option("B1", MORNING, LATE_MORNING),
+                week_option("B2", MORNING, LATE_MORNING),
+                week_option("B3", MORNING),
+            ]
+        )
+        self.assertEqual(
+            self._sentences(page)[0], "Level with B2 on every count; the build listed it first."
+        )
+
+    def test_fewer_courses_left_out_when_none_schedules_them_all(self) -> None:
         page, _ = self._suggest([week_option("B1"), week_option("B2", MORNING), week_option("B3")])
-        self.assertEqual(self._sentences(page)[0], "Fewest courses left out (1).")
+        self.assertEqual(self._sentences(page)[0], "Fewer courses left out than B1: 1 against 2.")
+
+    def test_the_order_does_not_depend_on_the_replys_order_when_a_forecast_is_missing(self) -> None:
+        # A takes 4 terms on 3 days, C takes 5 terms on 1 day, B has no forecast and 2 days. Using
+        # the terms for the pairs that have them and skipping them for the others would put A
+        # before C, B before A and C before B: not an order. So without a forecast for every
+        # option the terms take no part, and the fewest days win whatever order they came in.
+        a = week_option(
+            "A1", (["SUN", "MON", "TUE"], "08:00", "09:15"), (["SUN"], "10:00", "11:15")
+        )
+        b = week_option("B1", (["SUN", "MON"], "08:00", "09:15"), (["SUN"], "10:00", "11:15"))
+        c = week_option("C1", (["SUN"], "08:00", "09:15"), (["SUN"], "10:00", "11:15"))
+        reply = projection_reply(
+            REG_FORECAST,
+            {
+                "A1": forecast([15, 18, 18, 9]),
+                "B1": NO_FORECAST,
+                "C1": forecast([15, 18, 18, 18, 9]),
+            },
+        )
+        for options in ([a, b, c], [c, b, a], [b, c, a], [a, c, b]):
+            page, _ = self._suggest(options, reply)
+            where = [o["name"] for o in options]
+            self.assertTrue(self._guide_rows(page)["Suggested"].startswith("C1"), where)
+            self.assertEqual(
+                self._sentences(page)[0], "Fewer days on campus than B1: 1 against 2.", where
+            )
 
     def test_the_suggested_option_is_a_tab_with_a_label_and_a_view_button_when_not_selected(
         self,
@@ -851,6 +889,39 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         page.click("#plbDetail [data-act='dt-remove']")
         # The course is out of the plan: its blocks are pictures now, not controls.
         self.assertEqual(page.locator("#plbWeek button.plb-b[data-code='AI331']").count(), 0)
+
+    def test_closing_the_panel_returns_the_keyboard_to_where_it_was_opened_from(self) -> None:
+        page, _ = self._built()
+        blocks = page.locator("#plbWeek button.plb-b[data-code='AI331']")
+        self.assertGreaterEqual(blocks.count(), 2)
+        # From a week block: back to that block, not to the first one, and not to the table.
+        blocks.nth(1).focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#plbDetailTitle")).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(page.locator("#plbDetail")).to_be_hidden()
+        expect(blocks.nth(1)).to_be_focused()
+        # From the row: back to the row's button, as before.
+        row = page.locator("#plbTable [data-act='detail'][data-code='AI331']")
+        row.click()
+        expect(page.locator("#plbDetailTitle")).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(row).to_be_focused()
+
+    def test_a_redraw_by_itself_leaves_the_keyboard_on_its_week_block(self) -> None:
+        # Thirty minutes on, the once-a-minute check marks the build out of date and redraws the
+        # week: the block the keyboard was on is a new node.
+        page, _ = self._built(clock=True)
+        blocks = page.locator("#plbWeek button.plb-b[data-code='AI331']")
+        blocks.nth(1).focus()
+        page.evaluate(
+            "() => { document.querySelectorAll('#plbWeek button.plb-b').forEach("
+            "(b) => { b.dataset.probe = '1'; }); }"
+        )
+        page.clock.fast_forward(31 * 60 * 1000)
+        expect(page.locator("#plbStrip")).to_have_attribute("data-stale", "old")
+        self.assertEqual(page.locator("#plbWeek button.plb-b[data-probe]").count(), 0)
+        expect(blocks.nth(1)).to_be_focused()
 
     def test_a_planned_block_in_arabic_is_named_in_arabic_order(self) -> None:
         page, _ = self._built(language="ar")
