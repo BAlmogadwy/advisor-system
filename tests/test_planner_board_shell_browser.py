@@ -764,3 +764,39 @@ def test_the_new_script_writes_no_markup() -> None:
     assert sinks == []
     # And it does not borrow the sink helper either.
     assert "safeHtml" not in source
+
+
+def test_no_dom_call_is_handed_a_bare_null() -> None:
+    """`node.append(null)` writes the word "null" on the page.
+
+    Only the script's `el()` skips empty children. An optional child handed straight to
+    append / replaceChildren / prepend must go through `present()`: three such calls were written
+    in one review cycle before this guard existed.
+    """
+    source = SCRIPT.read_text(encoding="utf-8")
+    offenders: list[int] = []
+    for match in re.finditer(r"\.(append|replaceChildren|prepend)\(", source):
+        depth, i, start, quote = 1, match.end(), match.end(), ""
+        args: list[str] = []
+        while i < len(source) and depth:
+            ch = source[i]
+            if quote:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+            elif ch in "'\"`":
+                quote = ch
+            elif ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+            elif ch == "," and depth == 1:
+                args.append(source[start:i])
+                start = i + 1
+            i += 1
+        args.append(source[start : i - 1])
+        if any(re.search(r"(^|:)\s*null\s*$", arg.strip()) for arg in args):
+            offenders.append(source.count("\n", 0, match.start()) + 1)
+    assert offenders == [], f"a bare null reaches the DOM at line(s) {offenders}"

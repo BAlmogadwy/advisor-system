@@ -8941,7 +8941,10 @@ div.plb-dt-sec { cursor: default; }
 .plb-dt-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--rule); }
 .plb-dt-must { display: inline-flex; align-items: center; gap: 8px; min-height: var(--control-h-sm); font-size: var(--text-sm); font-weight: 600; color: var(--t1); cursor: pointer; }
 .plb-tabs[data-stale] { border-bottom-style: dashed; }
-.plb-tabs[data-stale] .plb-tab[data-opt] { opacity: .62; }
+/* Out-of-date options stay readable: the names lose their emphasis and the selected one its solid
+   underline. Fading the whole tab dropped its small grey facts well below readable contrast. */
+.plb-tabs[data-stale] .plb-tab[data-opt] .plb-tab-n { color: var(--t2); font-weight: 600; }
+.plb-tabs[data-stale] .plb-tab[data-opt][aria-selected="true"] { border-bottom-color: var(--t3); border-bottom-style: dashed; }
 .plb-tab-diff { color: var(--t2); }
 .plb-why-btn { align-self: flex-start; }
 .plb-why { display: flex; flex-direction: column; gap: 4px; padding-block: 4px; font-size: var(--text-xs); line-height: 16px; color: var(--t2); overflow-wrap: anywhere; }
@@ -8969,7 +8972,9 @@ div.plb-dt-sec { cursor: default; }
   .plb-stats { margin-top: 0; }
   .plb-body { grid-template-columns: minmax(0, 340fr) minmax(0, 440fr); }
   .plb-body--nodetail .plb-week { grid-column: auto; }
-  .plb-detail { grid-column: 1 / -1; padding-inline-start: 0; border-inline-start: 0; border-top: 1px solid var(--rule); padding-top: 10px; }
+  /* The panel opens right under the courses it belongs to; the week keeps its column beside both. */
+  .plb-detail { grid-column: 1; grid-row: 2; padding-inline-start: 0; border-inline-start: 0; border-top: 1px solid var(--rule); padding-top: 10px; }
+  .plb-body:not(.plb-body--nodetail) .plb-week { grid-row: 1 / span 2; }
   .plb-opts { grid-template-columns: minmax(0, 1fr); }
   .plb-tabs { grid-column: 1 / -1; }
   .plb-acts { grid-column: 1 / -1; grid-row: auto; }
@@ -8980,8 +8985,9 @@ div.plb-dt-sec { cursor: default; }
   .plb-guide::before { display: none; }
   .plb-grad:has(+ .plb-guide[hidden]) { grid-column: auto; }
   .plb-courses { order: 1; border-top: 1px solid var(--rule); padding-top: 10px; }
-  .plb-detail { order: 2; }
+  .plb-detail { order: 2; grid-row: auto; }
   .plb-week { order: 3; }
+  .plb-body:not(.plb-body--nodetail) .plb-week { grid-row: auto; }
 }
 @container plb (max-width: 560px) {
   .plb-tablist { flex: 1 1 100%; }

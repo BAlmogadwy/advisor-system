@@ -197,7 +197,6 @@
     notInBuild: IS_AR ? 'ليس في هذا البناء' : 'not in this build',
     // The course detail panel.
     close: IS_AR ? 'إغلاق' : 'Close',
-    detailTitle: (code) => (IS_AR ? `تفاصيل ${code}` : `Details for ${code}`),
     detailSections: IS_AR ? 'الشعبة' : 'Section',
     anySectionOpt: IS_AR ? 'أي شعبة' : 'Any section',
     anySectionHint: IS_AR ? 'يختار البناء الشعبة المناسبة.' : 'The build chooses the section.',
@@ -225,8 +224,8 @@
     },
     whyMethodName: (letter) => (IS_AR ? ['الطريقة ', bdi(letter)] : ['Method ', bdi(letter)]),
     whyCount: (n) => (IS_AR
-      ? (n ? pluralAr(n, forms('خيار واحد', 'خياران', '{n} خيارات', '{n} خيارًا')) : 'لم تُرجع خيارًا')
-      : (n ? `${n} ${n === 1 ? 'option' : 'options'}` : 'no option returned')),
+      ? (n ? pluralAr(n, forms('خيار واحد', 'خياران', '{n} خيارات', '{n} خيارًا')) : 'بلا خيارات')
+      : (n ? `${n} ${n === 1 ? 'option' : 'options'}` : 'no option')),
     whyUnscheduled: IS_AR ? 'مقررات غير مجدولة' : 'Courses left unscheduled',
     whyAllPlaced: IS_AR ? 'جُدول كل مقرر في الخطة في كل خيار.' : 'Every course in the plan was scheduled in each option.',
   };
@@ -293,6 +292,9 @@
     }
     return node;
   }
+  // Appending null to a node writes the word "null" on the page. Only `el()` skips empty children,
+  // so optional children handed straight to a node's append or replaceChildren go through this.
+  const present = (...list) => list.filter((kid) => kid !== null && kid !== undefined && kid !== false);
   function bdi(text) {
     const node = document.createElement('bdi');
     node.dir = 'ltr';
@@ -646,10 +648,10 @@
       + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
     block.setAttribute('role', 'img');
     block.setAttribute('aria-label', label);
-    block.append(
+    block.append(...present(
       el('span', 'plb-cd', bdi(m.code)),
       m.section ? el('span', 'plb-bs', bdi(`§${m.section}`)) : null,
-      el('span', 'plb-bt', bdi(range)));
+      el('span', 'plb-bt', bdi(range))));
     return block;
   }
   function renderLegend(opt) {
@@ -1383,11 +1385,29 @@
     const reviewing = $('plbApplyDialog').open && !state.applying;
     if (reviewing) closeApply();
     setBuildLine('warn', kind === 'old' ? T.staleOld : T.stale);
-    renderStrip();
-    renderWeek();
-    renderCourses();
-    renderActions();
+    keepingFocus(() => {
+      renderStrip();
+      renderWeek();
+      renderCourses();
+      renderActions();
+    });
     if (reviewing && !$('plbBuild').disabled) $('plbBuild').focus();
+  }
+  // A redraw replaces the nodes it draws. When the page redraws by itself (the age check runs on
+  // a timer) the keyboard must stay where it was: the same control is found again by its id, or
+  // by its action and course in the table.
+  function keepingFocus(redraw) {
+    const was = document.activeElement;
+    const id = was && was.id ? was.id : '';
+    const act = was && was.dataset ? was.dataset.act : '';
+    const code = was && was.dataset ? was.dataset.code : '';
+    redraw();
+    if (document.activeElement && document.activeElement !== document.body) return;
+    let again = id ? document.getElementById(id) : null;
+    if (!again && act && code) {
+      again = document.querySelector(`#plbTable [data-act="${CSS.escape(act)}"][data-code="${CSS.escape(code)}"]`);
+    }
+    if (again && !again.disabled) again.focus();
   }
   // A build older than 30 minutes is out of date. Checked when Review and apply is pressed, when
   // the page becomes visible again, and once a minute: there is no other timer.
@@ -1481,13 +1501,15 @@
     }
     if (build.failures.length || build.unscheduled.length) lines.push(...reasonLines(build));
     const allPlaced = !lines.length && build.options.length && build.options.every((o) => !unplacedFor(o).length);
-    panel.replaceChildren(
+    // Each method reads: "Method B (3 options). Looks for a compact week ...".
+    panel.replaceChildren(...present(
       el('ul', 'plb-why-list', ...['A', 'B', 'C'].map((letter) => el('li', '',
-        el('b', '', ...T.whyMethodName(letter)), ' ', T.whyMethod[letter], ' ',
-        el('span', 'plb-why-n', T.whyCount(build.options.filter((o) => methodOf(o) === letter).length))))),
+        el('b', '', ...T.whyMethodName(letter)), ' ',
+        el('span', 'plb-why-n', `(${T.whyCount(build.options.filter((o) => methodOf(o) === letter).length)}).`),
+        ' ', T.whyMethod[letter]))),
       lines.length ? el('p', 'plb-why-h', T.whyUnscheduled) : null,
       lines.length ? el('ul', 'plb-why-list', ...lines.map((parts) => el('li', '', ...parts))) : null,
-      allPlaced ? el('p', 'plb-why-p', T.whyAllPlaced) : null);
+      allPlaced ? el('p', 'plb-why-p', T.whyAllPlaced) : null));
   }
   function setWhy(open, focus) {
     state.whyOpen = open;
@@ -1749,14 +1771,14 @@
     if (model.options.length) flags.push(el('span', 'plb-flag', ...T.inOptions(model.options)));
     row.dataset.tsid = model.id;
     if (!usable) row.dataset.unusable = 'true';
-    row.append(
+    row.append(...present(
       inPlan ? input : null,
       el('span', 'plb-dt-sec-body',
         el('span', 'plb-dt-sec-main', bdi(`§${model.label || '?'}`),
           model.days || model.times ? ' ' : null, model.days, model.days && model.times ? ' ' : null, model.times ? bdi(model.times) : null),
         el('span', 'plb-dt-sec-seats', model.seats),
         flags.length ? el('span', 'plb-dt-flags', ...flags) : null,
-        !usable ? el('span', 'plb-dt-why', pinned ? T.pinBroken : null, model.reasons.join(' ')) : null));
+        !usable ? el('span', 'plb-dt-why', pinned ? T.pinBroken : null, model.reasons.join(' ')) : null)));
     return row;
   }
   function renderDetail() {
@@ -1960,7 +1982,9 @@
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
       if (event.target.closest && event.target.closest('#plbDetail')) { event.preventDefault(); closeDetail(true); return; }
-      if (state.whyOpen) { event.preventDefault(); setWhy(false, true); }
+      // Only from the disclosure's own corner: Escape in the course search or on a tab is not
+      // a request to close this, and must not pull the keyboard away from where it is.
+      if (state.whyOpen && event.target.closest && event.target.closest('.plb-acts')) { event.preventDefault(); setWhy(false, true); }
     });
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkAge(); });
     setInterval(checkAge, 60 * 1000);

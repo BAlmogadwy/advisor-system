@@ -83,9 +83,13 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbBuild")).to_have_text(rebuild)
         self.assertTrue(page.locator("#plbBuild").is_enabled())
         self.assertIn("btn-primary", page.get_attribute("#plbBuild", "class"))
-        self.assertLess(
-            float(page.evaluate("getComputedStyle(document.getElementById('plbTab_B1')).opacity")),
-            1,
+        # Out-of-date tabs are marked, not faded: their small grey facts must stay readable.
+        self.assertEqual(
+            page.evaluate(
+                "() => [getComputedStyle(document.getElementById('plbTab_B1')).opacity,"
+                " getComputedStyle(document.getElementById('plbStrip')).borderBottomStyle]"
+            ),
+            ["1", "dashed"],
         )
 
     # ── the panel: opening, where it sits, what it lists ─────────────────────
@@ -320,6 +324,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self._open_panel(page, "CS351")
         self.assertEqual(page.locator("#plbDetail input[type='radio']").count(), 0)
         self.assertIn("not in the plan yet", self._text(page, "#plbDetail"))
+        # No radio is drawn here, and its absence must not print the word "null".
+        self.assertNotIn("null", self._text(page, "#plbDetail"))
         self.assertIn("37 of 40 taken", self._section_text(page, 14))
         self.assertIn("3 seats left", self._section_text(page, 14))
         self.assertEqual(page.locator("#plbDetail [data-act='dt-remove']").count(), 0)
@@ -509,6 +515,45 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(fake.save_bodies, [])
 
     # ── Why these options ────────────────────────────────────────────────────
+    def test_apply_checks_the_age_itself_when_no_timer_has_fired(self) -> None:
+        later = dt.datetime.now() + dt.timedelta(minutes=31)
+        page, fake = self._built(_fake(), clock=True)
+        page.click("#plbReview")
+        expect(page.locator("#plbApplyDialog")).to_be_visible()
+        page.clock.set_system_time(later)  # time passes under the open review; no timer fires
+        page.click("#plbApplyGo")
+        expect(page.locator("#plbApplyDialog")).to_be_hidden()
+        self._stale(page, OLD, "old")
+        self.assertEqual(fake.save_bodies, [])
+
+    def test_the_age_check_does_not_take_the_keyboard_away(self) -> None:
+        # The check runs on a timer and redraws the strip and the table: whoever is on a tab or
+        # on a row's control at minute 30 must still be there afterwards.
+        remove = "#plbTable tr[data-code='AI331'] [data-act='remove']"
+        for selector in ("#plbTab_B2", remove):
+            with self.subTest(selector=selector):
+                page, _ = self._built(_fake(), clock=True)
+                page.focus(selector)
+                page.clock.fast_forward(31 * MINUTE)
+                self._stale(page, OLD, "old")
+                expect(page.locator(selector)).to_be_focused()
+                page.context.close()
+
+    def test_escape_elsewhere_leaves_why_these_options_open(self) -> None:
+        page, _ = self._built(_fake())
+        page.click("#plbWhyBtn")
+        expect(page.locator("#plbWhy")).to_be_visible()
+        for selector in ("#plbAdd", "#plbTab_B2"):
+            with self.subTest(selector=selector):
+                page.focus(selector)
+                page.keyboard.press("Escape")
+                expect(page.locator("#plbWhy")).to_be_visible()
+                expect(page.locator(selector)).to_be_focused()
+        # From its own button it still closes.
+        page.focus("#plbWhyBtn")
+        page.keyboard.press("Escape")
+        expect(page.locator("#plbWhy")).to_be_hidden()
+
     def test_why_these_options_opens_lists_the_methods_and_closes_on_escape(self) -> None:
         page = self._open(_fake())
         expect(page.locator("#plbWhyBtn")).to_be_hidden()
@@ -523,12 +568,14 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(button.get_attribute("aria-expanded"), "true")
         text = self._text(page, "#plbWhy")
         self.assertIn(
-            "Method A Tries to schedule as many courses of the plan as it can. no option returned",
-            text,
+            "Method A (no option). Tries to schedule as many courses of the plan as it can.", text
         )
-        self.assertIn("Method B Looks for a compact week", text)
-        self.assertIn("3 options", text)
-        self.assertIn("Method C Uses the fewest days first, then the fewest gaps. 2 options", text)
+        self.assertIn("Method B (3 options). Looks for a compact week", text)
+        self.assertIn(
+            "Method C (2 options). Uses the fewest days first, then the fewest gaps.", text
+        )
+        # An optional line that is absent is absent: it never prints the word "null".
+        self.assertNotIn("null", text)
         # What was left out, with the reply's own reason.
         self.assertIn("Courses left unscheduled", text)
         self.assertIn("B2: Not scheduled: AI342 — Every section clashes with the chosen plan", text)
@@ -708,7 +755,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         text = self._text(page, "#plbWhy")
         self.assertIn("الطريقة B", text)
         self.assertIn("3 خيارات", text)
-        self.assertIn("لم تُرجع خيارًا", text)
+        self.assertIn("الطريقة A (بلا خيارات).", text)
+        self.assertNotIn("null", text)
         page.keyboard.press("Escape")
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_be_enabled()
