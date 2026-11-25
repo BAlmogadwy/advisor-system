@@ -765,15 +765,20 @@
   function distinctOptions(options) {
     const seen = new Map();
     const out = [];
-    const placed = (m) => `${m.term_section_id}@${(m.meetings || [])
-      .map((mm) => `${mm.day} ${mm.start_time}-${mm.end_time}`).sort().join('/')}`;
+    // The key names everything that makes two options the same to an adviser: each course's
+    // section (by id AND label, so a reply without ids cannot collide) at its times, and each
+    // course left out WITH its reason, so no reason is ever dropped by a merge.
+    const placed = (m) => `${courseKeyOf(m) || String(m.course_code || '')}#${m.term_section_id || ''}#${String(m.section || '').trim()}`
+      + `@${(m.meetings || []).map((mm) => `${mm.day} ${mm.start_time}-${mm.end_time}`).sort().join('/')}`;
+    const left = (u) => `${String(u.course_code || '')}:${String(u.reason_code || u.reason || '')}`;
     for (const opt of options) {
-      const key = `${(opt.mappings || []).map(placed).sort().join(',')}|`
-        + `${(opt.unscheduled || []).map((u) => String(u.course_code || '')).sort().join(',')}`;
-      const first = seen.get(key);
+      const key = `${(opt.mappings || []).map(placed).sort().join(',')}|${(opt.unscheduled || []).map(left).sort().join(',')}`;
+      // An option with nothing to save is a placeholder for a failure: never folded into another.
+      const mergeable = optionIds(opt).length > 0;
+      const first = mergeable ? seen.get(key) : null;
       if (first) { first.aliases.push({ name: String(opt.name), method: opt.method }); continue; }
       const kept = { ...opt, aliases: [] };
-      seen.set(key, kept);
+      if (mergeable) seen.set(key, kept);
       out.push(kept);
     }
     return out;

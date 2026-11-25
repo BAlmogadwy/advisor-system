@@ -519,13 +519,14 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
     def test_options_that_are_the_same_timetable_share_one_tab(self) -> None:
         # Different build methods often arrive at the same sections. On real data six options
         # were two timetables: one tab each, carrying the names of the options it stands for.
-        def option(name: str, tsid: int, label: str) -> dict:
+        def option(name: str, tsid: int, label: str, left=()) -> dict:
             return _option(
                 name,
                 [
                     _mapping("AI331", label, tsid, ["MON", "WED"], "10:00", "11:15"),
                     _mapping("AI342", "M1", 15, ["SUN"], "13:00", "14:15"),
                 ],
+                unscheduled=list(left),
             )
 
         fake = _fake()
@@ -534,25 +535,40 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
             build_reply(
                 [
                     option("A1", 12, "M2"),
-                    option("B1", 17, "M4"),
-                    option("C1", 12, "M2"),
-                    option("B2", 12, "M2"),
+                    option("B1", 17, "M4"),  # another section: a different timetable
+                    option("C1", 12, "M2"),  # the same as A1
+                    option("B2", 12, "M2"),  # the same as A1
+                    # The same sections as A1, but each leaves a course out for its own reason:
+                    # merging them would drop a reason, so they stay apart.
+                    option("C2", 12, "M2", [{"course_code": "STAT305", "reason_code": "R_ONE"}]),
+                    option("C3", 12, "M2", [{"course_code": "STAT305", "reason_code": "R_TWO"}]),
+                    # Options with nothing to save are never folded into one another.
+                    _option("A8", []),
+                    _option("A9", []),
                 ]
             ),
         )
         page = self._open(fake)
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild")
-        self.assertEqual(self._tab_names(page), ["A1", "B1", "(registered)"])
+        self.assertEqual(self._tab_names(page), ["A1", "B1", "C2", "(registered)"])
         self.assertEqual(self._text(page, "#plbTab_A1 .plb-tab-n"), "A1 | C1 | B2 · 15 cr")
         self.assertEqual(self._text(page, "#plbTab_B1 .plb-tab-n"), "B1 · 15 cr")
-        self.assertEqual(page.locator("#plbMoreBtn").count(), 0)
+        self.assertEqual(self._text(page, "#plbMoreBtn"), "More options (3)")
+        page.click("#plbMoreBtn")
+        hidden = page.eval_on_selector_all(
+            "#plbMoreList .plb-more-item", "ns => ns.map(n => n.dataset.more)"
+        )
+        self.assertEqual(hidden, ["C3", "A8", "A9"])
+        page.keyboard.press("Escape")
         # Nothing the reply said is lost: every name still counts for its method.
         page.click("#plbWhyBtn")
         why = self._text(page, "#plbWhy")
-        self.assertIn("Method A (1 option).", why)
+        self.assertIn("Method A (3 options).", why)
         self.assertIn("Method B (2 options).", why)
-        self.assertIn("Method C (1 option).", why)
+        self.assertIn("Method C (3 options).", why)
+        page.keyboard.press("Escape")
+        page.click("#plbTab_A1")
         # And the merged option is saved as what it is: its own sections, once.
         page.click("#plbReview")
         page.click("#plbApplyGo")
