@@ -211,11 +211,13 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
 
     def test_the_request_carries_the_builds_token(self) -> None:
         page, fake = self._projected()
-        self.assertEqual(fake.projection_bodies, [{"token": "token"}])
+        self.assertEqual(fake.projection_bodies, [{"token": "token", "add": ["STAT305", "CS351"]}])
         fake.build_answer = lambda body: (200, {**FIVE, "graduation_projection_token": "second"})
         page.click("#plbBuild")
         self._wait_for(page, lambda: len(fake.projection_bodies) == 2)
-        self.assertEqual(fake.projection_bodies[1], {"token": "second"})
+        self.assertEqual(
+            fake.projection_bodies[1], {"token": "second", "add": ["STAT305", "CS351"]}
+        )
 
     def test_no_request_without_options_or_without_a_token(self) -> None:
         for reply in (
@@ -519,7 +521,8 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         status, payload = answers.pop(0)
         fake.pending_projection.pop().fulfill(status=status, json=payload)
         expect(page.locator("#plbGradLine")).to_be_hidden()
-        self.assertEqual(fake.projection_bodies, [{"token": "token"}, {"token": "token"}])
+        body = {"token": "token", "add": ["STAT305", "CS351"]}
+        self.assertEqual(fake.projection_bodies, [body, body])
         self.assertEqual(self._line(page, "opt")["num"], ["4"])
         self.assertTrue(
             page.evaluate("document.getElementById('plbGrad').contains(document.activeElement)")

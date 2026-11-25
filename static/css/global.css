@@ -8985,6 +8985,15 @@ html[dir="rtl"] .plb-view svg { transform: scaleX(-1); }
 /* An out-of-date build keeps its guidance, marked as the tabs are: a dashed rule, quieter names. */
 .plb-guide[data-stale]::before { width: 0; background: none; border-inline-start: 1px dashed var(--rule-strong); }
 .plb-guide[data-stale] .plb-gt { color: var(--t2); font-weight: 600; }
+/* What one course does to graduation: on the section line of its row, wrapping under it when short of room. */
+.plb-sl { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; min-width: 0; }
+.plb-fxt { min-width: 0; font-size: var(--text-xs); line-height: 16px; color: var(--t3); overflow-wrap: anywhere; }
+.plb-fxt--strong { font-weight: 700; color: var(--ink); }
+.plb-fxt--brand { font-weight: 600; color: var(--text-brand); }
+.plb-fxt[data-stale] { border-block-end: 1px dashed var(--rule-strong); }
+.plb-dep { display: block; }
+.plb-dep bdi { font-weight: 700; color: var(--ink); }
+.plb-dt-fx { margin: 2px 0 0; }
 /* A planned block is a real control; a registered one stays a picture. */
 button.plb-b {
   width: auto; height: auto; align-self: stretch; justify-self: stretch;

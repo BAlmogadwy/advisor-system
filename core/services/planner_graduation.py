@@ -38,6 +38,7 @@ _RETAINED_KINDS = {
     SnapshotClass.WORKING: "working_timetable",
 }
 _MAX_REASONS = 3
+_MAX_POSTPONED = 12
 
 
 def _section_id(mapping: dict) -> int | None:
@@ -286,11 +287,15 @@ def compare_planner_graduation(
     term: int,
     options: list[dict],
     retained_baseline: list[dict] | None = None,
+    add: list[str] | None = None,
 ) -> dict:
     """Project the exact course sets from server-built options and same-term enrolments.
 
     The solver's retained rows can be expected or working timetable evidence in
     keep mode. They compose the proposal but cannot establish factual enrolment.
+
+    Every complete option also carries ``course_effects``: what postponing each
+    course it adds, and adding each code of ``add``, would do to its forecast.
     """
     planning_term = {"academic_year": year, "term": term}
     registered_rows = get_student_term_baseline(
@@ -397,6 +402,20 @@ def compare_planner_graduation(
         report = reports[signature]
         return report, [] if report else [{"code": "academic_plan_unavailable"}]
 
+    add_codes = list(dict.fromkeys(code for code in map(normalize_code, add or []) if code))
+
+    def effect(effect_names: dict[str, str], own: dict) -> dict:
+        report, errors = forecast(effect_names)
+        if errors:
+            return {"status": "unavailable", "reason_code": errors[0]["code"]}
+        summary = _summarize(report, effect_names, planning_term)
+        count = summary["terms_including_planning_term"]
+        return {
+            "status": summary["status"],
+            "terms_including_planning_term": count,
+            "delta_terms": None if count is None else count - own["terms_including_planning_term"],
+        }
+
     baseline_report, baseline_reasons = (
         forecast(registered_names, factual=True)
         if registered_names or term not in {1, 2}
@@ -421,9 +440,19 @@ def compare_planner_graduation(
             delta = (
                 option["terms_including_planning_term"] - baseline["terms_including_planning_term"]
             )
+        postponed: dict[str, dict] = {}
+        added: dict[str, dict] = {}
+        if option["status"] == "complete":
+            fresh = sorted(names.keys() - registered_names.keys() - retained_names.keys())
+            for code in fresh[:_MAX_POSTPONED]:
+                postponed[code] = effect({k: v for k, v in names.items() if k != code}, option)
+            for code in add_codes:
+                if code not in names:
+                    added[code] = effect({**names, code: metadata.get(code, (code, 0))[0]}, option)
         option_results[name] = {
             **option,
             "delta_terms": delta,
+            "course_effects": {"postponed": postponed, "added": added},
             "reasons": errors
             or _explain(baseline, option, baseline_report, report, prerequisites, delta),
         }
