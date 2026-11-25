@@ -37,7 +37,13 @@ sync_playwright = playwright_api.sync_playwright
 STUDENT_ID = "4500000"
 OTHER_ID = "4500001"
 SCRIPT = Path(settings.BASE_DIR) / "static" / "js" / "page-planner-board.js"
-NO_MOTION = "*, *::before, *::after { transition: none !important; animation: none !important; }"
+# Motion off for the tests. The `:not(#...)` carries an id's specificity, so this beats the
+# stylesheet's own `!important` transitions (`html body .btn` has one), which a bare `*` did not.
+NO_MOTION = (
+    "html body *:not(#plb-no-motion), html body *:not(#plb-no-motion)::before,"
+    " html body *:not(#plb-no-motion)::after"
+    " { transition: none !important; animation: none !important; }"
+)
 
 
 def _row(code: str, name: str, section: str, credits: int | None, day, start, end, tsid: int):

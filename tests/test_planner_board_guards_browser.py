@@ -180,6 +180,15 @@ class PlannerBoardEligibilityRequestTests(PlannerBoardCase):
 class PlannerBoardAuditTests(PlannerBoardCase):
     """Contrast and false affordances, in both themes and both languages, loaded and built."""
 
+    def test_the_harness_stops_the_stylesheets_own_transitions(self) -> None:
+        # global.css gives every button an `!important` transition (`html body .btn`): the tests'
+        # no-motion rule must still win, or a colour read can catch a button mid-fade.
+        page = self._open(BuildFake())
+        durations = page.eval_on_selector_all(
+            ".btn", "bs => [...new Set(bs.map(b => getComputedStyle(b).transitionDuration))]"
+        )
+        self.assertEqual(durations, ["0s"])
+
     def _states(self, page, script):
         """Yield a label for each state of the board worth measuring, once it has settled."""
         self._settle(page, script)
@@ -210,8 +219,9 @@ class PlannerBoardAuditTests(PlannerBoardCase):
 
     @staticmethod
     def _settle(page, script: str) -> None:
-        """Wait until no animation or transition runs (a theme change starts some that NO_MOTION
-        does not reach) and the audit answers the same in two consecutive animation frames."""
+        """Wait until no animation or transition runs and the audit answers the same in two
+        consecutive animation frames. NO_MOTION stops them; this stays as the guard in case one
+        slips past it."""
         page.evaluate("window.__guardPrev = null")
         page.wait_for_function(
             "(src) => { if (document.getAnimations().length) return false;"
