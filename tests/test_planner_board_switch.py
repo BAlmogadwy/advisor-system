@@ -72,14 +72,25 @@ class TestSwitch:
         assert BOARD in _templates(staff_client.get("/planner/?layout=nonsense"))
 
     def test_production_turns_the_board_on_and_nothing_else_does(self) -> None:
-        # The live site serves the board (render.yaml, the web service only); the setting's
-        # default stays off, so local runs and the tests keep the old page until it is retired.
+        # The live site serves the board: render.yaml sets it for the web service and for no
+        # other service. The setting's default stays off, so local runs and the tests keep the
+        # old page until it is retired.
         from django.conf import settings
 
+        from scripts.validate_render_blueprint import load_blueprint
+
         base = Path(settings.BASE_DIR)
-        render = (base / "render.yaml").read_text(encoding="utf-8")
-        assert re.search(r'key: PLANNER_BOARD_ENABLED\s*\n\s*value: "true"', render)
-        assert render.count("PLANNER_BOARD_ENABLED") == 1
+        services = {
+            service["name"]: {env["key"]: env for env in service.get("envVars") or []}
+            for service in load_blueprint(base / "render.yaml")["services"]
+        }
+        assert services["advisor-system"]["PLANNER_BOARD_ENABLED"] == {
+            "key": "PLANNER_BOARD_ENABLED",
+            "value": "true",
+        }
+        assert [name for name, env in services.items() if "PLANNER_BOARD_ENABLED" in env] == [
+            "advisor-system"
+        ]
         source = (base / "config" / "settings.py").read_text(encoding="utf-8")
         assert re.search(r'os\.getenv\("PLANNER_BOARD_ENABLED", "false"\)', source)
 

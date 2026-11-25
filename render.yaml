@@ -132,8 +132,9 @@ services:
       - key: TIMETABLE_ONLINE_EVENING_WINDOWS
         value: "true"
       # The new staff planner screen is /planner/ (owner 2026-11-25, "Yes, plan the swap").
-      # The old page stays at /planner/?layout=classic until it is retired; "false" brings it
-      # back as the default.
+      # The old page stays at /planner/?layout=classic until it is retired. To make it the
+      # default again set "false" HERE: a value set only in the Render dashboard is
+      # overwritten by this file at the next blueprint sync.
       - key: PLANNER_BOARD_ENABLED
         value: "true"
       # Teaching-time rules per instructor (owner 2026-11-21), typed on Instructor Management:
