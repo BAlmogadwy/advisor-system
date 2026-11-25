@@ -76,13 +76,16 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
 
     def _stale(self, page, text=STALE, kind="changed", rebuild="Rebuild") -> None:
         expect(page.locator("#plbBuildLine")).to_have_text(text)
-        self.assertEqual(self._tab_names(page), ["B1", "B2", "B3", "(registered)"])
+        # The tabs keep the order they were laid out in (the options ranked, C1 first).
+        self.assertEqual(self._tab_names(page), ["C1", "B1", "C2", "(registered)"])
         self.assertEqual(page.get_attribute("#plbStrip", "data-stale"), kind)
         self.assertTrue(page.locator("#plbReview").is_disabled())
         self.assertEqual(page.get_attribute("#plbReview", "aria-describedby"), "plbBuildLine")
         expect(page.locator("#plbBuild")).to_have_text(rebuild)
         self.assertTrue(page.locator("#plbBuild").is_enabled())
-        self.assertIn("btn-primary", page.get_attribute("#plbBuild", "class"))
+        # Out of date, Rebuild is the outline in the brand colour; Review and apply is disabled.
+        self.assertIn("btn-outline-primary", page.get_attribute("#plbBuild", "class"))
+        self.assertNotIn("btn-primary", page.get_attribute("#plbBuild", "class").split())
         # Out-of-date tabs are marked, not faded: their small grey facts must stay readable.
         self.assertEqual(
             page.evaluate(
@@ -312,13 +315,13 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
     def test_the_panel_names_the_options_that_chose_each_section(self) -> None:
         page, _ = self._built(_fake())
         self._open_panel(page, "AI331")
-        self.assertIn("in B1, B3, C2", self._section_text(page, 12))
-        self.assertIn("in B2, C1", self._section_text(page, 11))
+        self.assertIn("in B1, C2, B3", self._section_text(page, 12))
+        self.assertIn("in C1, B2", self._section_text(page, 11))
         self.assertNotIn(" in ", " " + self._section_text(page, 17))
         # A stale build still says it.
         page.click("#plbDetail input[value='17']")
         self._stale(page)
-        self.assertIn("in B1, B3, C2", self._section_text(page, 12))
+        self.assertIn("in B1, C2, B3", self._section_text(page, 12))
 
     def test_a_course_not_in_the_plan_is_read_only_until_it_is_added(self) -> None:
         page = self._open(_fake())
@@ -386,10 +389,12 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertNotIn("seats left", self._section_text(page, 19))
         self.assertNotIn("left", self._section_text(page, 16))
         # The row on an option's tab, and the tab, one flag: the smallest number.
+        page.click("#plbTab_B1")
         self.assertEqual(self._cell(page, "AI331"), "§M4 · 2 seats left")
         self.assertEqual(self._cell(page, "AI342"), "§M1")  # unknown capacity: no warning
         self.assertEqual(self._tab_lines(page, "B1")[-1], "2 seats left")
-        # With another flag on the tab they share one line.
+        # With another flag on the tab they share one line (B2 leaves a course out: last in the order).
+        self._pick(page, "B2")
         self.assertEqual(self._tab_lines(page, "B2")[-1], "1 not scheduled · 5 seats left")
         self.assertEqual(len(self._tab_lines(page, "B2")), 4)
         # Six seats, full and unknown give no flag.
@@ -422,7 +427,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
                         page.click("#plbDetail [data-act='dt-remove']")
                 self._stale(page)
                 # The tabs can still be selected and read.
-                page.click("#plbTab_B2")
+                self._pick(page, "B2")  # one of the "More options"
                 self.assertEqual(page.get_attribute("#plbTab_B2", "aria-selected"), "true")
                 self.assertEqual(self._blocks(page, "new"), ["AI331 new", "AI331 new"])
                 # A rebuild clears it.
@@ -445,7 +450,9 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page, _ = self._built(_fake())
         page.click("#plbTable button[data-act='add'][data-code='CS351']")
         self.assertEqual(self._cell(page, "CS351"), "not in this build")
-        self.assertEqual(self._cell(page, "AI331"), "§M2")
+        self.assertEqual(
+            self._cell(page, "AI331"), "§M1"
+        )  # C1, the first of the order, is selected
 
     def test_another_student_and_a_save_still_remove_the_options(self) -> None:
         page, _ = self._built(_fake())
@@ -552,8 +559,10 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild")
         self.assertEqual(self._tab_names(page), ["A1", "B1", "C2", "(registered)"])
-        self.assertEqual(self._text(page, "#plbTab_A1 .plb-tab-n"), "A1 | C1 | B2 · 15 cr")
-        self.assertEqual(self._text(page, "#plbTab_B1 .plb-tab-n"), "B1 · 15 cr")
+        self.assertEqual(
+            self._text(page, "#plbTab_A1 .plb-tab-n"), "A1 | C1 | B2 Four lighter days · 15 cr"
+        )
+        self.assertEqual(self._text(page, "#plbTab_B1 .plb-tab-n"), "B1 Three afternoons · 15 cr")
         self.assertEqual(self._text(page, "#plbMoreBtn"), "More options (3)")
         page.click("#plbMoreBtn")
         hidden = page.eval_on_selector_all(
@@ -590,7 +599,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         # The check runs on a timer and redraws the strip and the table: whoever is on a tab or
         # on a row's control at minute 30 must still be there afterwards.
         remove = "#plbTable tr[data-code='AI331'] [data-act='remove']"
-        for selector in ("#plbTab_B2", remove):
+        for selector in ("#plbTab_B1", remove):
             with self.subTest(selector=selector):
                 page, _ = self._built(_fake(), clock=True)
                 page.focus(selector)
@@ -603,7 +612,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page, _ = self._built(_fake())
         page.click("#plbWhyBtn")
         expect(page.locator("#plbWhy")).to_be_visible()
-        for selector in ("#plbAdd", "#plbTab_B2"):
+        for selector in ("#plbAdd", "#plbTab_B1"):
             with self.subTest(selector=selector):
                 page.focus(selector)
                 page.keyboard.press("Escape")
@@ -812,7 +821,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page, _ = self._built(_fake())
         self.assertEqual(page.locator(".plb-tab-diff").count(), 0)
         # The synthetic five have different facts, exactly as the part-two comment says.
-        self.assertEqual(len({tuple(self._tab_lines(page, n)[1:3]) for n in ("B1", "B2", "B3")}), 3)
+        self.assertEqual(len({tuple(self._tab_lines(page, n)[1:3]) for n in ("C1", "B1", "C2")}), 3)
         self.assertEqual(FIVE["options"][0]["name"], "B1")
 
     # ── Arabic and size ──────────────────────────────────────────────────────
@@ -825,7 +834,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         text = self._text(page, "#plbDetail")
         for arabic in ("أي شعبة", "تتعارض مع مقرر مسجّل", "20 من 40 مشغولة", "ممتلئة", "الشعبة"):
             self.assertIn(arabic, text)
-        self.assertIn("في B1، B3، C2", self._section_text(page, 12))
+        self.assertIn("في B1، C2، B3", self._section_text(page, 12))
         self.assertIn("مقعدان متبقيان", self._section_text(page, 17))
         self.assertIn(
             "غير متاحة: الشُعب الممتلئة غير مسموحة في القواعد.", self._section_text(page, 16)
@@ -878,7 +887,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
                     page.click("#plbWhyBtn")
                     page.check("#plbDetail input[value='12']")  # a stale build, with the panel open
                     found += page.evaluate(OVERFLOWS)
-                    page.click("#plbTab_B2")
+                    page.click("#plbTab_B1")
                     found += page.evaluate(OVERFLOWS)
                     if found:
                         problems[f"{language} {width}px {font} fonts"] = found
