@@ -10,6 +10,7 @@ from django.db.models import Q
 from core.models import (
     Course,
     ElectiveCourse,
+    ElectiveTermMapping,
     ProgrammeRequirement,
     Student,
     StudentCourse,
@@ -17,6 +18,7 @@ from core.models import (
     TermSection,
 )
 from core.services.course_identity import planner_course_key
+from core.services.elective_validation import programme_variants
 from core.services.section_programmes import (
     normalize_section_program,
     reconcile_observed_section_programs,
@@ -623,12 +625,20 @@ def append_unmapped_studying_courses(
             .order_by("course__course_code")
         )
     )
+    appended: list[tuple[Course, str, int]] = []
     for sc in resolved_studying_rows:
         course = sc.course
         code = normalize_code(course.course_code)
         if not code or code in seen_codes:
             continue
+        seen_codes.add(code)
         credits = resolved_credit_map.get(code, course.credit_hours or 0)
+        appended.append((course, code, int(credits or 0)))
+
+    carried = _slots_carried_by_their_course(
+        student_id, student_program, baseline, appended, plan_codes=set(resolved_credit_map)
+    )
+    for course, code, credits in appended:
         out.append(
             {
                 "course_code": course.course_code or code,
@@ -637,7 +647,7 @@ def append_unmapped_studying_courses(
                 "course_number": "",
                 "section": "",
                 "registered_count": None,
-                "credits": int(credits or 0),
+                "credits": 0 if code in carried else credits,
                 "day": "",
                 "start_time": "",
                 "end_time": "",
@@ -647,9 +657,71 @@ def append_unmapped_studying_courses(
                 "source": "fallback_studying",
             }
         )
-        seen_codes.add(code)
 
     return out
+
+
+def _slots_carried_by_their_course(
+    student_id: int | str,
+    student_program: str | None,
+    baseline: list[dict[str, object]],
+    appended: list[tuple[Course, str, int]],
+    *,
+    plan_codes: set[str],
+) -> set[str]:
+    """The studying elective slots whose hours a counted course already carries.
+
+    ``elective_resolver`` marks an elective slot of the plan (AI1) as studying
+    once the department's mapping names a course in the student's timetable for
+    it (AI463). The slot is then how the plan names that course, not a second
+    registration. The course carries its own hours, so the slot adds none:
+    counting both charged one course twice. A slot keeps the plan's hours only
+    when no course mapped to it is counted with hours of its own.
+
+    The mapping is read as the resolver reads it. A second-cohort programme also
+    uses its base programme's rows; a course the plan lists as a row of its own
+    is that row and never a slot's filler; and one course fills one slot, so two
+    studying slots that name the same course do not both lose their hours.
+    Mappings of every term are read: the studying mark carries no term, and the
+    resolver withdraws it when the timetable stops backing it.
+    """
+    if not appended:
+        return set()
+    programme = student_program or (
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+    )
+    if not programme:
+        return set()
+    variants = set(programme_variants(programme))
+    studying = {code for _course, code, _hours in appended}
+    mapped: dict[str, set[str]] = defaultdict(set)
+    # Matched here, not in the query: these legacy text columns hold case and
+    # spacing variants (``elective_validation.ElectiveSelection``). The table is
+    # one row per offered elective per term.
+    for owner, slot, elective in ElectiveTermMapping.objects.values_list(
+        "programme", "placeholder_code", "elective__course_code"
+    ):
+        slot, course = normalize_code(slot), normalize_code(elective)
+        if normalize_code(owner) in variants and slot in studying and course not in plan_codes:
+            mapped[slot].add(course)
+    if not mapped:
+        return set()
+
+    counted = {code for _course, code, hours in appended if hours > 0 and code not in mapped}
+    for row in baseline:
+        hours = row.get("credits")
+        if isinstance(hours, int) and hours > 0:
+            key = normalize_code(row.get("course_key") or row.get("course_code") or "")
+            counted.add(key.partition("::")[0])
+
+    carried: set[str] = set()
+    used: set[str] = set()
+    for slot in sorted(mapped):
+        carrier = next((code for code in sorted(mapped[slot] & counted) if code not in used), None)
+        if carrier is not None:
+            used.add(carrier)
+            carried.add(slot)
+    return carried
 
 
 def get_student_term_registration_summary(

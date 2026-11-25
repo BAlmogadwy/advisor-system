@@ -251,7 +251,11 @@ def _current_course_state(
         code = normalize_code(row.get("course_key") or row.get("course_code") or "")
         if not code or code in by_code:
             continue
-        credits = int(row.get("credits") or credit_by_code.get(code, 0) or 0)
+        # The row's own hours are the course's load. A 0 is a figure, not a gap to
+        # fill from the plan: a studying elective slot arrives with 0 when the
+        # registered course that fills it carries the hours.
+        row_credits = row.get("credits")
+        credits = int((credit_by_code.get(code, 0) if row_credits is None else row_credits) or 0)
         by_code[code] = {
             "code": code,
             "name": str(row.get("course_name") or ""),
@@ -655,6 +659,20 @@ def build_graduation_report(
     else:
         registered_now = baseline_credits if current_courses else int(registered_registrar or 0)
 
+    # THE HOUR LEDGER IS KEPT IN PLAN ROWS. ``registered_now`` above is the term's
+    # load, in the hours of the courses the student actually holds. What follows
+    # is a different quantity: the hours this term adds toward the cumulative-hour
+    # gates and the scenario's future terms. Those terms are scheduled at the
+    # plan's credit hours, so the baseline must enter the ledger the same way, as
+    # the plan rows being completed.
+    #
+    # A registered course outside the plan therefore adds nothing here. It is
+    # taken against an elective row, the registrar posts it under that row's code
+    # once the grade lands, and the scenario still schedules the row at the plan's
+    # hours. Its hours counted here as well would be held twice, and on the six
+    # zero-slack co-op gates that opens the gate a term early. A resolved elective
+    # slot is itself a plan row, so it counts, at the plan's hours.
+    #
     # A retake still consumes timetable load, but its credits are already part
     # of the registrar's earned total. Count only newly earnable baseline
     # credits when evaluating cumulative-hour gates and future progression.
@@ -662,9 +680,9 @@ def build_graduation_report(
     # with which to identify repeats, so retain that aggregate as the fallback.
     baseline_progress_credits = (
         sum(
-            int(course.get("credits") or 0)
-            for course in current_courses
-            if normalize_code(course.get("code") or "") not in actual_passed
+            int(plan_rows[code].get("credits") or 0)
+            for code in (normalize_code(course.get("code") or "") for course in current_courses)
+            if code in plan_rows and code not in actual_passed
         )
         if current_courses
         else registered_now
