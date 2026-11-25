@@ -8960,7 +8960,10 @@ div.plb-dt-sec { cursor: default; }
 /* projected graduation: the runway. One DOM, two layouts. The stacked layout is the default (a
    wrapping flex row per line: label and landing, then the ticks under them, one axis for both
    lines); the row layout (one grid, a subgrid per line) applies once the band itself is wide enough
-   for its number of columns (container `plbgrad`, thresholds below). */
+   for its number of columns (container `plbgrad`, thresholds below), unless the script finds that
+   its texts have no room there and marks the runway `data-fit="stacked"`. Text widths depend on
+   the language and on the fonts that loaded, so fitRunway() in page-planner-board.js measures
+   them: the layout, the unit on the first tick, how many term labels, the size of the result. */
 .plb-grad { container: plbgrad / inline-size; }
 .plb-gh { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 10px; min-height: 24px; }
 .plb-gh .plb-lk { margin-block: -4px; }
@@ -9012,79 +9015,63 @@ div.plb-dt-sec { cursor: default; }
 .plb-asm--warn { font-weight: 600; color: var(--sev-warning-ink); }
 .plb-gwhy { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 0; padding-inline-start: 16px; font-size: var(--text-xs); line-height: 16px; color: var(--t2); overflow-wrap: anywhere; }
 .plb-tab-terms { font-weight: 700; color: var(--t2); }
-/* Nine columns and more leave no room for the unit beside the first number: the caption under the
-   axis ("Credits per term") says it. */
-.plb-rw:is([data-span="l"], [data-span="xl"]) .plb-u { display: none; }
+/* The first tick loses its unit when its line has no room for it (fitRunway() decides): the
+   caption under the axis ("Credits per term") says it. */
+.plb-rw[data-unit="off"] .plb-u { display: none; }
 /* The band keeps the height of its two lines from the moment a forecast is asked for, so the tabs
    under it do not jump when the forecast lands or when a tab with a single line is chosen. (On a
    phone the page is scrolled past the band by then, and the browser holds the tabs in place.) */
 .plb-grad[data-state="loading"], .plb-grad[data-state="ready"] { min-height: 164px; }
 @container plbgrad (min-width: 440px) {
-  .plb-rw[data-span="s"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) max-content; align-items: end; gap: 2px 0; }
-  .plb-rw[data-span="s"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
-  .plb-rw[data-span="s"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
-  .plb-rw[data-span="s"] .plb-rwl .plb-rl, .plb-rw[data-span="s"] .plb-axn { grid-column: 1; }
-  .plb-rw[data-span="s"] .plb-brk { display: none; }
-  .plb-rw[data-span="s"] .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
-  .plb-rw[data-span="s"] .plb-rwn { grid-column: 2 / -1; }
-  .plb-rw[data-span="s"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
-  .plb-rw[data-span="s"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(16rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-rwl .plb-rl, .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-axn { grid-column: 1; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-brk { display: none; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-rwn { grid-column: 2 / -1; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; }
+  .plb-rw[data-span="s"]:not([data-fit="stacked"]) .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
 }
 @container plbgrad (min-width: 580px) {
-  .plb-rw[data-span="m"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) max-content; align-items: end; gap: 2px 0; }
-  .plb-rw[data-span="m"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
-  .plb-rw[data-span="m"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
-  .plb-rw[data-span="m"] .plb-rwl .plb-rl, .plb-rw[data-span="m"] .plb-axn { grid-column: 1; }
-  .plb-rw[data-span="m"] .plb-brk { display: none; }
-  .plb-rw[data-span="m"] .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
-  .plb-rw[data-span="m"] .plb-rwn { grid-column: 2 / -1; }
-  .plb-rw[data-span="m"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
-  .plb-rw[data-span="m"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(16rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-rwl .plb-rl, .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-axn { grid-column: 1; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-brk { display: none; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-rwn { grid-column: 2 / -1; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; }
+  .plb-rw[data-span="m"]:not([data-fit="stacked"]) .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
 }
 @container plbgrad (min-width: 620px) {
-  .plb-rw[data-span="l"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) max-content; align-items: end; gap: 2px 0; }
-  .plb-rw[data-span="l"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
-  .plb-rw[data-span="l"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
-  .plb-rw[data-span="l"] .plb-rwl .plb-rl, .plb-rw[data-span="l"] .plb-axn { grid-column: 1; }
-  .plb-rw[data-span="l"] .plb-brk { display: none; }
-  .plb-rw[data-span="l"] .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
-  .plb-rw[data-span="l"] .plb-rwn { grid-column: 2 / -1; }
-  .plb-rw[data-span="l"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
-  .plb-rw[data-span="l"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(16rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-rwl .plb-rl, .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-axn { grid-column: 1; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-brk { display: none; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-rwn { grid-column: 2 / -1; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; }
+  .plb-rw[data-span="l"]:not([data-fit="stacked"]) .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
 }
 @container plbgrad (min-width: 900px) {
-  .plb-rw[data-span="xl"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) max-content; align-items: end; gap: 2px 0; }
-  .plb-rw[data-span="xl"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
-  .plb-rw[data-span="xl"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
-  .plb-rw[data-span="xl"] .plb-rwl .plb-rl, .plb-rw[data-span="xl"] .plb-axn { grid-column: 1; }
-  .plb-rw[data-span="xl"] .plb-brk { display: none; }
-  .plb-rw[data-span="xl"] .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
-  .plb-rw[data-span="xl"] .plb-rwn { grid-column: 2 / -1; }
-  .plb-rw[data-span="xl"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
-  .plb-rw[data-span="xl"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(16rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-rwl .plb-rl, .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-axn { grid-column: 1; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-brk { display: none; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-axn { display: block; padding-top: 7px; padding-inline-end: 14px; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-rwn { grid-column: 2 / -1; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; }
+  .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
 }
-/* "1 term sooner" is the page's largest teal text where its line leaves room for it: one free
-   column and the landing column. The steps were measured with the real fonts, which the test
-   server does not load: the narrowest band at which the Arabic text, the wider of the two, stays
-   on one line is 532 px (18 px text) and 607 px (22 px) with five columns, 687 and 808 with
-   eight, 998 with fourteen. Each step starts a little above its figure. Below it, or in a font
-   this was not measured with, the text wraps onto a second line: it never leaves the band.
-   Bad news and "same term" stay at reading size. */
-@container plbgrad (min-width: 560px) {
-  .plb-rw[data-span="s"] .plb-won[data-result="sooner"] { font-size: var(--text-lg); line-height: 24px; }
-}
-@container plbgrad (min-width: 640px) {
-  .plb-rw[data-span="s"] .plb-won[data-result="sooner"] { font-size: var(--text-xl); line-height: 26px; }
-}
-@container plbgrad (min-width: 730px) {
-  .plb-rw[data-span="m"] .plb-won[data-result="sooner"] { font-size: var(--text-lg); line-height: 24px; }
-}
-@container plbgrad (min-width: 850px) {
-  .plb-rw[data-span="m"] .plb-won[data-result="sooner"] { font-size: var(--text-xl); line-height: 26px; }
-}
-@container plbgrad (min-width: 1050px) {
-  .plb-rw[data-span="l"] .plb-won[data-result="sooner"] { font-size: var(--text-lg); line-height: 24px; }
-}
+/* "1 term sooner" is the page's largest teal text where its line has room for it on one line:
+   fitRunway() tries the sizes from the largest down, because the room depends on the language and
+   on the fonts that loaded. Where neither fits it stays at reading size and may wrap; it never
+   leaves the band. Bad news and "same term" stay at reading size. */
+.plb-won[data-size="lg"] { font-size: var(--text-lg); line-height: 24px; }
+.plb-won[data-size="xl"] { font-size: var(--text-xl); line-height: 26px; }
 
 /* laptop width */
 @container plb (max-width: 1361px) {
