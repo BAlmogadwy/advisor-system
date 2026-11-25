@@ -466,6 +466,7 @@
     inflight: 0,       // build requests not yet answered: the button waits for all of them
     applying: false,   // a save request is in flight
     fetchKeyboard: false, // Fetch had the keyboard when a load disabled it (see releaseFetch)
+    maxDirty: false,   // the max-credits field was typed in since it last showed the applied value
     moreOpen: false,   // the "More options" disclosure
     detail: null,      // {code, name, credits, only}: the course whose detail panel is open
     altShown: null,    // what the week drew as dashed blocks last (see syncAlt)
@@ -641,7 +642,7 @@
     $('plbEligStrict').checked = r.eligibility === 'strict';
     $('plbEligRelaxed').checked = r.eligibility === 'relaxed';
     const field = $('plbMaxIn');
-    if (document.activeElement !== field) {
+    if (!state.maxDirty) {
       field.value = r.maxCredits === null ? '' : String(r.maxCredits);
       field.removeAttribute('aria-invalid');
       $('plbMaxInErr').hidden = true;
@@ -760,6 +761,7 @@
     if (max.value !== state.rules.maxCredits) commitRules({ ...state.rules, maxCredits: max.value });
     // What was applied is what the field says ("018" becomes "18").
     field.value = max.value === null ? '' : String(max.value);
+    state.maxDirty = false;
   }
 
   /* ── Student ───────────────────────────────────────────────────────────── */
@@ -3239,7 +3241,9 @@
     $('plbMaxIn').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); commitMaxInPlace(); }
     });
-    $('plbMaxIn').addEventListener('blur', commitMaxInPlace);
+    // Typed in: a load leaves the field alone until it is committed or left.
+    $('plbMaxIn').addEventListener('input', () => { state.maxDirty = true; });
+    $('plbMaxIn').addEventListener('blur', () => { commitMaxInPlace(); state.maxDirty = false; });
     $('plbRulesCancel').addEventListener('click', closeRulesDialog);
     // A dialog opened by the Eligibility switch hands the keyboard back to it, however it closes.
     $('plbRulesDialog').addEventListener('close', () => {

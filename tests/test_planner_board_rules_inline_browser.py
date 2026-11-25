@@ -606,6 +606,15 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbContext")).to_have_text(f"{OTHER_ID} · 1448/1")
         expect(page.locator("#plbMaxIn")).to_have_value("16")
+        # Focused but not typed in: a load still puts the student's cap there.
+        page.focus("#plbMaxIn")
+        page.evaluate(
+            f"document.getElementById('plbStudentId').value = '{STUDENT_ID}';"
+            "document.getElementById('plbLoad').requestSubmit();"
+        )
+        expect(page.locator("#plbContext")).to_have_text(f"{STUDENT_ID} · 1448/1")
+        expect(page.locator("#plbMaxIn")).to_have_value("18")
+        expect(page.locator("#plbMaxIn")).to_be_focused()
 
     # ── the keyboard on the Eligibility switch ──────────────────────────────
     def test_an_arrow_key_on_eligibility_over_a_changed_list_opens_the_dialog_and_cancel_returns(
