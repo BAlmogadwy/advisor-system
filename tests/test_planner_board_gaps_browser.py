@@ -160,8 +160,9 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self.assertEqual(self._second(page, 23), "For AI · 20 of 40 taken")
         page = self._open(_fake(), language="ar")
         self._open_panel(page)
-        self.assertEqual(self._second(page, 21), "لـAI / DS · 20 من 40 مشغولة")
+        self.assertEqual(self._second(page, 21), "لبرامج AI / DS · 20 من 40 مشغولة")
         self.assertEqual(self._second(page, 22), "غير مرتبط ببرنامج · 20 من 40 مشغولة")
+        self.assertEqual(self._second(page, 23), "لبرنامج AI · 20 من 40 مشغولة")
 
     def test_a_read_only_section_names_its_programmes_too(self) -> None:
         # STAT305 is not in the plan until added: its panel is read-only and still says whose it is.
@@ -431,6 +432,65 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         expect(page.locator("#plbFetch")).to_be_enabled()
 
     # ── Layout ───────────────────────────────────────────────────────────────
+    def test_the_keyboard_comes_back_to_fetch_after_a_load(self) -> None:
+        for answer in ("loaded", "not found"):
+            with self.subTest(answer=answer):
+                fake = _fake()
+                fake.hold_ids = {STUDENT_ID}
+                page = self._open(fake, load=False)
+                page.fill("#plbStudentId", STUDENT_ID)
+                page.focus("#plbFetch")
+                page.keyboard.press("Enter")
+                expect(page.locator("#plbFetch")).to_be_disabled()
+                for _ in range(250):
+                    if fake.pending:
+                        break
+                    page.wait_for_timeout(20)
+                body, route = fake.pending.pop()
+                if answer == "loaded":
+                    status, payload = fake.context_answer(body)
+                    route.fulfill(status=status, json=payload)
+                else:
+                    route.fulfill(status=404, json={"error": {"code": "STUDENT_NOT_FOUND"}})
+                expect(page.locator("#plbFetch")).to_be_enabled()
+                expect(page.locator("#plbFetch")).to_be_focused()
+
+    def test_two_untimed_courses_that_share_a_code_are_named_apart(self) -> None:
+        baseline = [
+            *BASELINE,
+            _row("CS112", "Programming I", "M1", 3, None, None, None, 31),
+            _row("CS112", "Discrete Structures", "M2", 3, None, None, None, 32),
+        ]
+        page = self._open(self._note_fake(baseline), load=False)
+        self._fetch(page, STUDENT_ID)
+        expect(page.locator("#plbWeek .plb-note")).to_have_text(
+            "2 registered courses have no timetable slots"
+            " (CS112 Programming I, CS112 Discrete Structures)."
+        )
+
+    def test_a_section_line_that_wraps_never_covers_the_name_or_leaves_its_row(self) -> None:
+        row = "#plbTable tbody[data-group='could'] tr[data-code='STAT305']"
+        geometry = """(sel) => {
+          const row = document.querySelector(sel);
+          const box = (n) => { const r = n.getBoundingClientRect(); return {top: r.top, bottom: r.bottom, height: r.height, width: r.width}; };
+          return {row: box(row), name: box(row.querySelector('.plb-name')), text: box(row.querySelector('.plb-sc-t'))};
+        }"""
+        for width in (1440, 390):
+            for font in ("app", "wide"):
+                with self.subTest(width=width, font=font):
+                    page = self._open(_fake(), width=width, font=font)
+                    # Half the width the line takes now: it has to wrap, whatever the font.
+                    half = page.evaluate(geometry, row)["text"]["width"] / 2
+                    page.add_style_tag(content=f"{row} .plb-sc-btn {{ max-width: {half:.1f}px; }}")
+                    boxes = page.evaluate(geometry, row)
+                    self.assertGreater(boxes["text"]["height"], 24, boxes)  # two lines or more
+                    self.assertGreaterEqual(
+                        boxes["text"]["top"], boxes["name"]["bottom"] - 0.5, boxes
+                    )
+                    self.assertLessEqual(
+                        boxes["text"]["bottom"], boxes["row"]["bottom"] + 0.5, boxes
+                    )
+
     def test_nothing_overflows_at_three_widths_in_both_languages_and_both_fonts(self) -> None:
         crowded = _multi(
             31,

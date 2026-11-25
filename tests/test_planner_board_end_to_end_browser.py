@@ -20,7 +20,6 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import Client
 
 from core.models import StudentTermSection, TermSectionMeeting
-from tests.test_exam_rosters_browser import WIDE_FONT  # noqa: F401  (the harness of the others)
 from tests.test_planner_graduation import STUDENT_ID, TERM, YEAR, _seed_curriculum
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -147,17 +146,20 @@ class PlannerBoardEndToEndTests(StaticLiveServerTestCase):
         page.click("#plbReview")
         expect(page.locator("#plbApplyDialog")).to_be_visible()
         listed = page.locator("#plbApplyList li").all_inner_texts()
+        applied = page.eval_on_selector_all(
+            "#plbApplyList li", "ls => ls.map(l => l.querySelector('bdi').textContent.trim())"
+        )
         self.assertTrue(any("AI331" in line and "M2" in line for line in listed), listed)
         page.click("#plbApplyGo")
         expect(page.locator("#plbApplyDialog")).to_be_hidden(timeout=30000)
         expect(page.locator("#plbStatus")).to_have_text("Saved", timeout=30000)
 
-        # The database holds exactly the planned sections: AI331 as M2 (the pinned one), and each
-        # other course of the plan. Nothing else was written for the term.
+        # The database holds exactly the sections of the option applied, as its review listed them:
+        # AI331 as M2 (the pinned one) among them. Nothing else was written for the term.
         saved = self._saved()
         self.assertIn(("AI331", "M2"), saved)
         self.assertNotIn(("AI331", "M1"), saved)
-        self.assertEqual({course for course, _ in saved}, set(planned))
+        self.assertEqual({course for course, _ in saved}, set(applied))
         self.assertEqual(
             StudentTermSection.objects.filter(student_id=STUDENT_ID).count(), len(saved)
         )

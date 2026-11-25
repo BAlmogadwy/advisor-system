@@ -99,8 +99,11 @@
     // The registrar's timetable was mapped to sections only in part (n rows came from a fallback).
     mappingPartial: (n) => (IS_AR ? `جودة الربط: جزئي (${n} احتياطي)` : `Mapping quality: partial (${n} fallback)`),
     advisor: IS_AR ? 'المرشد' : 'Advisor',
-    // A section's programmes: "For AI / DS", «لـAI / DS»; none: "Unassigned".
-    forProgrammes: (list) => (list.length ? [IS_AR ? 'لـ' : 'For ', bdi(list.join(' / '))] : [IS_AR ? 'غير مرتبط ببرنامج' : 'Unassigned']),
+    // A section's programmes: "For AI / DS"; in Arabic «لبرنامج AI», «لبرامج AI / DS»; none: "Unassigned".
+    forProgrammes: (list) => {
+      if (!list.length) return [IS_AR ? 'غير مرتبط ببرنامج' : 'Unassigned'];
+      return [IS_AR ? (list.length === 1 ? 'لبرنامج ' : 'لبرامج ') : 'For ', bdi(list.join(' / '))];
+    },
     resetPlan: IS_AR ? 'العودة إلى المقترح' : 'Reset to suggestions',
     resetDone: (n) => (IS_AR
       ? `أُعيدت المقررات إلى المقترح (${n}).`
@@ -445,6 +448,7 @@
     buildGen: 0,       // bumped whenever a reply in flight must no longer be believed
     inflight: 0,       // build requests not yet answered: the button waits for all of them
     applying: false,   // a save request is in flight
+    fetchKeyboard: false, // Fetch had the keyboard when a load disabled it (see releaseFetch)
     moreOpen: false,   // the "More options" disclosure
     detail: null,      // {code, name, credits, only}: the course whose detail panel is open
     altShown: null,    // what the week drew as dashed blocks last (see syncAlt)
@@ -959,11 +963,17 @@
     $('plbWeekPanel').setAttribute('aria-labelledby', opt ? tabId(opt.name) : 'plbTabRegistered');
     if (!state.ctx) { host.replaceChildren(el('p', 'plb-empty', T.loadFirstWeek)); return; }
     const showRegistered = !opt || state.build.rules.mode === 'keep';
-    const untimed = showRegistered ? registeredCourses().filter((c) => !c.timed).map((c) => c.code) : [];
+    // One entry per course (CODE::NAME, never the bare code); a code two courses share is told
+    // apart by the name.
+    const untimedRows = showRegistered
+      ? [...new Map(registeredCourses().filter((c) => !c.timed).map((c) => [`${c.code}::${c.name}`, c])).values()]
+      : [];
+    const sharedCodes = new Set(untimedRows.map((c) => c.code).filter((code, i, all) => all.indexOf(code) !== i));
+    const untimed = untimedRows.map((c) => (sharedCodes.has(c.code) && c.name ? `${c.code} ${c.name}` : c.code));
     const partial = showRegistered ? fallbackRows() : 0;
     const clashes = opt ? weekMeetings(opt).filter((m) => m.kind === 'new' && m.clash).length : 0;
     const notes = [
-      untimed.length ? el('p', 'plb-note', ...T.untimed([...new Set(untimed)])) : null,
+      untimed.length ? el('p', 'plb-note', ...T.untimed(untimed)) : null,
       partial ? el('p', 'plb-note', T.mappingPartial(partial)) : null,
       clashes ? el('p', 'plb-note', T.clashNote(clashes)) : null,
     ].filter(Boolean);
@@ -1861,6 +1871,15 @@
   }
 
   /* ── Loading a student ─────────────────────────────────────────────────── */
+  // Disabling the button that has the keyboard drops the keyboard on the page: it comes back to
+  // Fetch when the load ends, unless the user has moved on meanwhile.
+  function releaseFetch() {
+    const button = $('plbFetch');
+    button.disabled = false;
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (state.fetchKeyboard && lost) button.focus();
+    state.fetchKeyboard = false;
+  }
   async function loadStudent(options) {
     const reuse = !!(options && options.reuse && state.ctx);
     const studentId = reuse ? state.ctx.studentId : $('plbStudentId').value.trim();
@@ -1871,7 +1890,7 @@
 
     const mine = ++state.ctxGen;
     const failed = (line) => {
-      $('plbFetch').disabled = false;
+      releaseFetch();
       $('plbRoot').removeAttribute('aria-busy');
       setStatus('error', line);
       // The page still shows what the last accepted reply brought, so the rule goes back to
@@ -1882,6 +1901,7 @@
       }
     };
     $('plbRoot').setAttribute('aria-busy', 'true');
+    if (document.activeElement === $('plbFetch')) state.fetchKeyboard = true;
     $('plbFetch').disabled = true;             // one load at a time; the newest request frees it
     setStatus('loading', T.loading);
     let result;
@@ -1901,7 +1921,7 @@
       return;
     }
     $('plbRoot').removeAttribute('aria-busy');
-    $('plbFetch').disabled = false;
+    releaseFetch();
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
