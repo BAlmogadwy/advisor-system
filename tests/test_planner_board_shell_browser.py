@@ -410,12 +410,12 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertEqual(self._text(page, "tbody[data-group='new'] .plb-grp td"), "Must-take")
         self.assertIn("Could be added", self._text(page, "tbody[data-group='could'] .plb-grp"))
         self.assertIn("3 cr free", self._text(page, "tbody[data-group='could'] .plb-grp"))
-        # Registered: the section and a lock. New: "any section" and a must-take tick.
+        # Registered: the section and a lock. New: "Any section" and a must-take tick.
         reg = "tbody[data-group='registered'] tr[data-code='CS301']"
         self.assertIn("§M1", self._text(page, f"{reg} .plb-sc"))
         self.assertEqual(page.locator(f"{reg} [role='img'][aria-label='Registered']").count(), 1)
         row = "tbody[data-group='new'] tr[data-code='AI331']"
-        self.assertEqual(self._text(page, f"{row} .plb-sc"), "any section")
+        self.assertEqual(self._text(page, f"{row} .plb-sc"), "Any section")
         self.assertFalse(page.is_checked(f"{row} input[type='checkbox']"))
         # Could be added: the sections, and a seat warning when one section is nearly full.
         self.assertEqual(self._text(page, "tr[data-code='STAT305'] .plb-sc"), "Mon Wed")

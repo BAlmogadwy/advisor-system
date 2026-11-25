@@ -286,8 +286,8 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
             self._text(page, "tbody[data-group='registered'] tr[data-code='CS301'] .plb-sc"), "§M1"
         )
         page.click("#plbTabRegistered")
-        self.assertEqual(self._cell(page, "AI331"), "any section")
-        self.assertEqual(self._cell(page, "AI342"), "any section")
+        self.assertEqual(self._cell(page, "AI331"), "Any section")
+        self.assertEqual(self._cell(page, "AI342"), "Any section")
 
     # ── Review and apply ─────────────────────────────────────────────────────
     def test_review_lists_what_will_be_saved_and_apply_saves_once_then_reloads(self) -> None:
@@ -530,7 +530,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._tab_names(page), ["(registered)"])
         self.assertTrue(page.locator("#plbReview").is_disabled())
         self.assertEqual(len(self._blocks(page, "reg")), 6)
-        self.assertEqual(self._cell(page, "AI331"), "any section")
+        self.assertEqual(self._cell(page, "AI331"), "Any section")
         # A reply with no reasons at all still says something plain.
         fake.build_answer = lambda body: (200, build_reply([]))
         page.click("#plbBuild")
@@ -604,7 +604,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._tab_names(page)[0], "C1")
         self._fetch(page, OTHER_ID)
         self._assert_options_gone(page)
-        self.assertEqual(self._cell(page, "AI331"), "any section")
+        self.assertEqual(self._cell(page, "AI331"), "Any section")
 
     def test_applying_the_rules_dialog_with_nothing_changed_keeps_the_options(self) -> None:
         page, _ = self._built()
