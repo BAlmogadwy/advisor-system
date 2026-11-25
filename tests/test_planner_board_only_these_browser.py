@@ -639,8 +639,10 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self._build(page)
         self._pick(page, "B1")
         self.assertEqual(self._line(page), "§M2 · أو 5 شعب أخرى")
-        for tsid in (23, 24, 25, 26):
+        for tsid in (24, 25, 26):
             self._box(page, tsid).uncheck()
+        self.assertEqual(self._line(page), "§M2 · أو شعبتان أخريان")
+        self._box(page, 23).uncheck()
         self.assertEqual(self._line(page), "§M2 · أو §M1")
         self._box(page, 21).uncheck()
         self.assertIn("AI331: يجوز استخدام §M2 فقط.", self._status(page))
