@@ -797,6 +797,17 @@ def test_no_dom_call_is_handed_a_bare_null() -> None:
                 start = i + 1
             i += 1
         args.append(source[start : i - 1])
-        if any(re.search(r"(^|:)\s*null\s*$", arg.strip()) for arg in args):
-            offenders.append(source.count("\n", 0, match.start()) + 1)
+        for arg in args:
+            # Look only at the argument's own level: what is nested inside el(...) is safe.
+            flat = arg.strip()
+            while True:
+                smaller = re.sub(r"\([^()]*\)|\[[^\[\]]*\]|\{[^{}]*\}", "0", flat)
+                if smaller == flat:
+                    break
+                flat = smaller
+            if re.search(
+                r"\?\s*(null|undefined|false)\s*:|(^|:)\s*(null|undefined|false)\s*$", flat
+            ):
+                offenders.append(source.count("\n", 0, match.start()) + 1)
+                break
     assert offenders == [], f"a bare null reaches the DOM at line(s) {offenders}"

@@ -8760,6 +8760,7 @@ html[data-theme="dark"] .plb {
 .plb-tab[aria-selected="true"] .plb-tab-n { color: var(--text-brand); font-weight: 700; }
 .plb-tab-lock { display: inline-flex; color: var(--t4); }
 .plb-tab-cr { font-size: var(--text-xs); font-weight: 500; line-height: 16px; color: var(--t3); }
+.plb-tab-aka { font-weight: 500; color: var(--t3); }   /* the options this tab also stands for */
 .plb-tab-x { font-size: var(--text-xs); line-height: 16px; color: var(--t3); }
 .plb-tab-x:empty { display: none; }
 .plb-tab-warn { font-weight: 700; color: var(--sev-warning-ink); }

@@ -759,6 +759,25 @@
   function optionIds(opt) {
     return (opt.mappings || []).map((m) => m.term_section_id).filter(Boolean);
   }
+  // Different build methods often arrive at the same timetable: on real data six options were two.
+  // One tab per distinct timetable (the same sections, the same courses left out). The first
+  // option stands for the others and remembers them, so nothing the reply said is lost.
+  function distinctOptions(options) {
+    const seen = new Map();
+    const out = [];
+    const placed = (m) => `${m.term_section_id}@${(m.meetings || [])
+      .map((mm) => `${mm.day} ${mm.start_time}-${mm.end_time}`).sort().join('/')}`;
+    for (const opt of options) {
+      const key = `${(opt.mappings || []).map(placed).sort().join(',')}|`
+        + `${(opt.unscheduled || []).map((u) => String(u.course_code || '')).sort().join(',')}`;
+      const first = seen.get(key);
+      if (first) { first.aliases.push({ name: String(opt.name), method: opt.method }); continue; }
+      const kept = { ...opt, aliases: [] };
+      seen.set(key, kept);
+      out.push(kept);
+    }
+    return out;
+  }
   // The fewest seats left in any section the option uses, when that is a warning; else null.
   function fewestSeats(opt) {
     let least = null;
@@ -792,8 +811,10 @@
     const seats = fewestSeats(opt);
     const flags = [unplaced ? T.notScheduled(unplaced) : null, seats === null ? null : T.seatsLeft(seats)].filter(Boolean);
     const selected = state.selected === opt.name;
+    // An option that stands for identical ones carries their names too: "A1 | B2 | C2".
+    const also = (opt.aliases || []).map((a) => el('span', 'plb-tab-aka', ' | ', bdi(a.name)));
     const tab = el('button', 'plb-tab',
-      el('span', 'plb-tab-n', bdi(opt.name), ' ', el('span', 'plb-tab-cr', `· ${T.credits(optionCredits(opt))}`)),
+      el('span', 'plb-tab-n', bdi(opt.name), ...also, ' ', el('span', 'plb-tab-cr', `· ${T.credits(optionCredits(opt))}`)),
       el('span', 'plb-tab-x', facts.first),
       el('span', 'plb-tab-x', ...facts.second),
       alike ? differenceLine(opt, state.build.options) : null,
@@ -1505,7 +1526,7 @@
     panel.replaceChildren(...present(
       el('ul', 'plb-why-list', ...['A', 'B', 'C'].map((letter) => el('li', '',
         el('b', '', ...T.whyMethodName(letter)), ' ',
-        el('span', 'plb-why-n', `(${T.whyCount(build.options.filter((o) => methodOf(o) === letter).length)}).`),
+        el('span', 'plb-why-n', `(${T.whyCount(build.options.flatMap((o) => [o, ...(o.aliases || [])]).filter((o) => methodOf(o) === letter).length)}).`),
         ' ', T.whyMethod[letter]))),
       lines.length ? el('p', 'plb-why-h', T.whyUnscheduled) : null,
       lines.length ? el('ul', 'plb-why-list', ...lines.map((parts) => el('li', '', ...parts))) : null,
@@ -1573,7 +1594,7 @@
       const feasible = Boolean(summary.best_feasible && options.length);
       const now = new Date();
       state.build = {
-        options: feasible ? options : [],
+        options: feasible ? distinctOptions(options) : [],
         shortlist,
         rules,
         madeAt: now.getTime(),
@@ -1765,9 +1786,10 @@
     input.checked = pinned;
     input.disabled = !usable && !pinned;       // a pin that became unusable stays selected, flagged
     const flags = [];
-    if (model.cap.known && model.cap.full) flags.push(el('span', 'plb-flag plb-flag--bad', T.seatsFull));
+    // A section that cannot be used says why in a sentence below: a chip saying the same is noise.
+    if (usable && model.cap.known && model.cap.full) flags.push(el('span', 'plb-flag plb-flag--bad', T.seatsFull));
     if (fewSeats(model.cap)) flags.push(el('span', 'plb-flag plb-flag--warn', T.seatsLeft(model.cap.remaining)));
-    if (model.clash) flags.push(el('span', 'plb-flag plb-flag--bad', T.clashFlag));
+    if (usable && model.clash) flags.push(el('span', 'plb-flag plb-flag--bad', T.clashFlag));
     if (model.options.length) flags.push(el('span', 'plb-flag', ...T.inOptions(model.options)));
     row.dataset.tsid = model.id;
     if (!usable) row.dataset.unusable = 'true';

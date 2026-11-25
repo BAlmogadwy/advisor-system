@@ -135,13 +135,14 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         m1 = self._section_text(page, 11)
         self.assertIn("§M1 Sun Tue 10:00-11:15", m1)
         self.assertIn("20 of 40 taken", m1)
-        self.assertIn("Clashes with a registered class", m1)
+        # A section that cannot be used says why once, in a sentence: no chip repeats it.
         self.assertIn("Not available: it clashes with a registered class", m1)
+        self.assertEqual(page.locator("#plbDetail [data-tsid='11'] .plb-flag--bad").count(), 0)
         m2 = self._section_text(page, 12)
         self.assertIn("§M2 Mon Wed 10:00-11:15 20 of 40 taken", m2)
-        self.assertNotIn("Clashes", m2)
-        self.assertIn("Full", self._section_text(page, 16))
+        self.assertNotIn("clashes", m2.lower())
         self.assertIn("Not available: full sections are off", self._section_text(page, 16))
+        self.assertEqual(page.locator("#plbDetail [data-tsid='16'] .plb-flag--bad").count(), 0)
         # Close puts the keyboard back on the row's button.
         page.click("#plbDetail [data-act='dt-close']")
         expect(page.locator("#plbDetail")).to_be_hidden()
@@ -515,6 +516,49 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(fake.save_bodies, [])
 
     # ── Why these options ────────────────────────────────────────────────────
+    def test_options_that_are_the_same_timetable_share_one_tab(self) -> None:
+        # Different build methods often arrive at the same sections. On real data six options
+        # were two timetables: one tab each, carrying the names of the options it stands for.
+        def option(name: str, tsid: int, label: str) -> dict:
+            return _option(
+                name,
+                [
+                    _mapping("AI331", label, tsid, ["MON", "WED"], "10:00", "11:15"),
+                    _mapping("AI342", "M1", 15, ["SUN"], "13:00", "14:15"),
+                ],
+            )
+
+        fake = _fake()
+        fake.build_answer = lambda body: (
+            200,
+            build_reply(
+                [
+                    option("A1", 12, "M2"),
+                    option("B1", 17, "M4"),
+                    option("C1", 12, "M2"),
+                    option("B2", 12, "M2"),
+                ]
+            ),
+        )
+        page = self._open(fake)
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        self.assertEqual(self._tab_names(page), ["A1", "B1", "(registered)"])
+        self.assertEqual(self._text(page, "#plbTab_A1 .plb-tab-n"), "A1 | C1 | B2 · 15 cr")
+        self.assertEqual(self._text(page, "#plbTab_B1 .plb-tab-n"), "B1 · 15 cr")
+        self.assertEqual(page.locator("#plbMoreBtn").count(), 0)
+        # Nothing the reply said is lost: every name still counts for its method.
+        page.click("#plbWhyBtn")
+        why = self._text(page, "#plbWhy")
+        self.assertIn("Method A (1 option).", why)
+        self.assertIn("Method B (2 options).", why)
+        self.assertIn("Method C (1 option).", why)
+        # And the merged option is saved as what it is: its own sections, once.
+        page.click("#plbReview")
+        page.click("#plbApplyGo")
+        expect(page.locator("#plbApplyDialog")).to_be_hidden()
+        self.assertEqual(fake.save_bodies[-1]["term_section_ids"], [12, 15])
+
     def test_apply_checks_the_age_itself_when_no_timer_has_fired(self) -> None:
         later = dt.datetime.now() + dt.timedelta(minutes=31)
         page, fake = self._built(_fake(), clock=True)
@@ -734,7 +778,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self._open_panel(page, "AI331")
         self.assertEqual(self._text(page, "#plbDetail [data-act='dt-close']"), "إغلاق")
         text = self._text(page, "#plbDetail")
-        for arabic in ("أي شعبة", "يتعارض مع مقرر مسجّل", "20 من 40 مشغولة", "ممتلئة", "الشعبة"):
+        for arabic in ("أي شعبة", "تتعارض مع مقرر مسجّل", "20 من 40 مشغولة", "ممتلئة", "الشعبة"):
             self.assertIn(arabic, text)
         self.assertIn("في B1، B3، C2", self._section_text(page, 12))
         self.assertIn("مقعدان متبقيان", self._section_text(page, 17))
