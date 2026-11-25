@@ -307,6 +307,18 @@ def test_an_added_course_that_changes_nothing_has_a_zero_delta():
     }
 
 
+def test_add_codes_are_cleaned_before_they_are_forecast():
+    sections = _seed_curriculum()
+    result = _compare_adding(
+        [_option("A1", sections["AI331", "M1"])],
+        [" stat305 ", "STAT305", "Stat 305", "ai331", "   "],
+    )
+    # One entry per course however it was spelt; the option's own course and a blank give none.
+    assert _effects(result, "A1")["added"] == {
+        "STAT305": {"status": "complete", "terms_including_planning_term": 4, "delta_terms": 0}
+    }
+
+
 def test_a_request_without_add_has_empty_added_effects():
     sections = _seed_curriculum()
     result = _compare([_option("A1", sections["AI331", "M1"])])
@@ -331,11 +343,11 @@ def test_an_option_that_did_not_finish_has_no_effects():
     assert _effects(result, "A1") == {"postponed": {}, "added": {}}
 
 
-def test_at_most_eight_postponed_courses_in_code_order():
+def test_at_most_twelve_postponed_courses_in_code_order():
     _seed_curriculum()
     extra = []
-    for number in range(1, 10):
-        code = f"ELX{number}00"
+    for number in range(1, 14):
+        code = f"ELX{number:02d}0"
         Course.objects.create(course_code=code, description=f"Extra {number}", credit_hours=3)
         ProgrammeRequirement.objects.create(
             program="PLN",
@@ -357,7 +369,7 @@ def test_at_most_eight_postponed_courses_in_code_order():
         TermSectionProgram.objects.create(term_section=section, program="PLN")
         extra.append(section)
     result = _compare([_option("BIG", *extra)])
-    assert list(_effects(result, "BIG")["postponed"]) == [f"ELX{n}00" for n in range(1, 9)]
+    assert list(_effects(result, "BIG")["postponed"]) == [f"ELX{n:02d}0" for n in range(1, 13)]
 
 
 def test_options_with_the_same_course_set_forecast_once(monkeypatch):

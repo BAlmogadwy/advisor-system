@@ -38,7 +38,7 @@ _RETAINED_KINDS = {
     SnapshotClass.WORKING: "working_timetable",
 }
 _MAX_REASONS = 3
-_MAX_POSTPONED = 8
+_MAX_POSTPONED = 12
 
 
 def _section_id(mapping: dict) -> int | None:
@@ -402,7 +402,7 @@ def compare_planner_graduation(
         report = reports[signature]
         return report, [] if report else [{"code": "academic_plan_unavailable"}]
 
-    add_codes = list(dict.fromkeys(normalize_code(code) for code in add or [] if code))
+    add_codes = list(dict.fromkeys(code for code in map(normalize_code, add or []) if code))
 
     def effect(effect_names: dict[str, str], own: dict) -> dict:
         report, errors = forecast(effect_names)

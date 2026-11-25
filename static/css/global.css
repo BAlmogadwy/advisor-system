@@ -8990,7 +8990,7 @@ html[dir="rtl"] .plb-view svg { transform: scaleX(-1); }
 .plb-fxt { min-width: 0; font-size: var(--text-xs); line-height: 16px; color: var(--t3); overflow-wrap: anywhere; }
 .plb-fxt--strong { font-weight: 700; color: var(--ink); }
 .plb-fxt--brand { font-weight: 600; color: var(--text-brand); }
-.plb-fxt[data-stale] { border-bottom: 1px dashed var(--rule-strong); }
+.plb-fxt[data-stale] { border-block-end: 1px dashed var(--rule-strong); }
 .plb-dep { display: block; }
 .plb-dep bdi { font-weight: 700; color: var(--ink); }
 .plb-dt-fx { margin: 2px 0 0; }

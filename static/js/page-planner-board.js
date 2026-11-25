@@ -287,11 +287,12 @@
     gStatus: IS_AR ? 'الحالة' : 'Status',
     gDepends: IS_AR ? 'يعتمد على' : 'Depends on',
     // What one course does to the forecast: "If postponed: 5 terms" / "Still 4 terms" / "3 terms, 1 sooner".
+    // Arabic puts "no change" after the count: a verb would have to agree with one, two, few and many terms.
     ifPostponed: (n, still) => (IS_AR
-      ? `إن أُجِّل: ${still ? 'ما زال ' : ''}${T.gradTermCount(n)}`
+      ? `إن أُجِّل: ${T.gradTermCount(n)}${still ? `${T.gradSep}بلا تغيير` : ''}`
       : `If postponed: ${still ? 'still ' : ''}${T.gradTermCount(n)}`),
     ifAdded: (n, delta) => {
-      if (delta === 0) return IS_AR ? `ما زال ${T.gradTermCount(n)}` : `Still ${T.gradTermCount(n)}`;
+      if (delta === 0) return IS_AR ? `${T.gradTermCount(n)}${T.gradSep}بلا تغيير` : `Still ${T.gradTermCount(n)}`;
       if (IS_AR) return `${T.gradTermCount(n)}${T.gradSep}${T.gradTiming(delta)}`;
       return `${T.gradTermCount(n)}${T.gradSep}${Math.abs(delta)} ${delta < 0 ? 'sooner' : 'later'}`;
     },
@@ -1649,6 +1650,10 @@
     }
     renderCourses();
     loadCatalog(run);
+    // A build that was forecast before these rows were known is asked once more, now naming them.
+    const build = state.build;
+    if (state.planState === 'ready' && build && build.token && !build.addCodes && build.projection
+      && ['loading', 'ready'].includes(build.projection.state) && planPool().length) loadProjection(build);
   }
   async function loadCatalog(run) {
     if (!state.ctx) return;
@@ -2387,9 +2392,10 @@
     renderGrad();
     // "What if" the first six "Could be added" rows, in the table's order, were added. Fixed when the
     // build is first forecast: a later change to the list does not re-ask, a retry asks the same.
-    if (!build.addCodes) build.addCodes = state.planState === 'loading' ? [] : planPool().slice(0, 6).map((c) => c.code);
+    // While the plan is still loading there are no rows to name: loadPlan() asks again once it has them.
+    if (!build.addCodes && state.planState !== 'loading') build.addCodes = planPool().slice(0, 6).map((c) => c.code);
     const body = { token: build.token };
-    if (build.addCodes.length) body.add = build.addCodes;
+    if (build.addCodes && build.addCodes.length) body.add = build.addCodes;
     let result = null;
     try { result = await postJson('/ops/planner/graduation-projection/', body); } catch (err) { result = null; }
     if (state.build !== build || run !== build.projRun) return;

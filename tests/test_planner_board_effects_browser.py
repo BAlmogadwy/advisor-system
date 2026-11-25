@@ -125,6 +125,74 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         page.wait_for_timeout(200)
         self.assertEqual(len(fake.projection_bodies), 1)
 
+    def test_a_build_made_before_the_plan_arrived_asks_again_naming_the_rows(self) -> None:
+        fake = BuildFake()
+        fake.hold_plan = 1
+        fake.projection_answer = lambda body: (200, STANDARD)
+        page = self._open(fake, load=False)
+        self._fetch(page, STUDENT_ID)
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        page.click("#plbBuild")
+        self._wait_until(page, lambda: len(fake.projection_bodies) == 1)
+        self.assertEqual(fake.projection_bodies, [{"token": "token"}])
+        self._start(page)
+        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+        fake.pending_plan.pop().fulfill(json=fake.plan_payload)
+        self._wait_until(page, lambda: len(fake.projection_bodies) == 2)
+        self.assertEqual(fake.projection_bodies[1], {"token": "token", "add": ["STAT305", "CS351"]})
+        expect(page.locator(COULD.format("CS351"))).to_have_text("3 terms, 1 sooner")
+        page.wait_for_timeout(200)
+        self.assertEqual(len(fake.projection_bodies), 2)
+
+    def test_an_expired_forecast_is_not_asked_again_when_the_plan_arrives(self) -> None:
+        fake = BuildFake()
+        fake.hold_plan = 1
+        fake.projection_raw = lambda route: route.fulfill(status=409, json={"error": "expired"})
+        page = self._open(fake, load=False)
+        self._fetch(page, STUDENT_ID)
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        page.click("#plbBuild")
+        self._wait_until(page, lambda: len(fake.projection_bodies) == 1)
+        expect(page.locator("#plbGrad")).to_have_attribute("data-state", "expired")
+        fake.pending_plan.pop().fulfill(json=fake.plan_payload)
+        expect(
+            page.locator("#plbTable tbody[data-group='could'] tr[data-code='CS351']")
+        ).to_be_visible()
+        page.wait_for_timeout(200)
+        self.assertEqual(len(fake.projection_bodies), 1)
+
+    def test_a_rule_that_reloads_the_student_does_not_ask_the_forecast_again(self) -> None:
+        page, fake = self._projected(STANDARD)
+        self._rules(page, elig="relaxed")
+        self._wait_until(page, lambda: len(fake.context_bodies) == 2)
+        expect(
+            page.locator("#plbTable tbody[data-group='could'] tr[data-code='CS351']")
+        ).to_be_visible()
+        page.wait_for_timeout(300)
+        self.assertEqual(len(fake.projection_bodies), 1)
+
+    def test_the_keyboard_stays_put_when_the_forecast_lands(self) -> None:
+        targets = (
+            "#plbTable tbody[data-group='new'] tr[data-code='AI342'] input.plb-tick",
+            "#plbTable tbody[data-group='new'] tr[data-code='AI331'] .plb-sc-btn",
+            "#plbTable tbody[data-group='could'] tr[data-code='CS351'] .plb-ib--add",
+            "#plbDetail [data-fk='must']",
+        )
+        for selector in targets:
+            with self.subTest(selector=selector):
+                fake = BuildFake()
+                fake.hold_projection = 1
+                page = self._open(fake)
+                page.click("#plbBuild")
+                self._wait_until(page, lambda fake=fake: len(fake.pending_projection) == 1)
+                self._start(page)
+                if selector.startswith("#plbDetail"):
+                    self._open_panel(page, "AI331")
+                page.locator(selector).focus()
+                fake.pending_projection.pop().fulfill(json=STANDARD)
+                expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+                expect(page.locator(selector)).to_be_focused()
+
     # ── the rows ─────────────────────────────────────────────────────────────
     def test_each_text_of_a_row_in_english(self) -> None:
         page, _fake = self._projected(STANDARD)
@@ -136,8 +204,8 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
     def test_each_text_of_a_row_in_arabic(self) -> None:
         page, _fake = self._projected(STANDARD, language="ar")
         self.assertEqual(self._text(page, NEW.format("AI331")), "إن أُجِّل: 5 فصول")
-        self.assertEqual(self._text(page, NEW.format("AI342")), "إن أُجِّل: ما زال 4 فصول")
-        self.assertEqual(self._text(page, COULD.format("STAT305")), "ما زال 4 فصول")
+        self.assertEqual(self._text(page, NEW.format("AI342")), "إن أُجِّل: 4 فصول، بلا تغيير")
+        self.assertEqual(self._text(page, COULD.format("STAT305")), "4 فصول، بلا تغيير")
         self.assertEqual(self._text(page, COULD.format("CS351")), "3 فصول، أبكر بفصل واحد")
 
     def test_arabic_counts_go_through_the_plural_forms(self) -> None:
@@ -147,7 +215,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         )
         page, _fake = self._projected(with_effects(many), language="ar")
         self.assertEqual(self._text(page, NEW.format("AI331")), "إن أُجِّل: 11 فصلًا")
-        self.assertEqual(self._text(page, NEW.format("AI342")), "إن أُجِّل: ما زال فصلان")
+        self.assertEqual(self._text(page, NEW.format("AI342")), "إن أُجِّل: فصلان، بلا تغيير")
         self.assertEqual(self._text(page, COULD.format("STAT305")), "فصل واحد، أبكر بفصلين")
         self.assertEqual(self._text(page, COULD.format("CS351")), "12 فصلًا، أبعد بـ3 فصول")
 
