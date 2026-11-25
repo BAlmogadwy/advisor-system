@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from copy import deepcopy
 
 from django.db.models import Q
 
 from core.models import (
+    Course,
+    ElectiveCourse,
     ProgrammeRequirement,
     Student,
     StudentCourse,
     StudentTermSection,
     TermSection,
 )
+from core.services.course_identity import planner_course_key
 from core.services.section_programmes import (
     normalize_section_program,
     reconcile_observed_section_programs,
@@ -367,6 +371,89 @@ def section_course_key(term_section: TermSection) -> str:
 _section_course_key = section_course_key
 
 
+def _names_course(course_key: str, row_identity: str) -> bool:
+    """Whether a catalogue row describes the course ``course_key`` stands for.
+
+    Both are ``planner_course_key`` identities of one code. They are the same
+    course unless BOTH carry a name and the names differ: a bare key says only
+    the code, so there is nothing to tell apart.
+    """
+    return "::" not in course_key or "::" not in row_identity or course_key == row_identity
+
+
+def programme_course_credits(program: object, course_keys: Iterable[object]) -> dict[str, int]:
+    """Credit hours of each course a student of ``program`` holds a section of.
+
+    The order is the graduation forecast's (``planner_graduation``): the
+    student's own plan, then the programme's elective catalogue, then the course
+    table. The plan alone is not enough. A course taken against an elective slot
+    (AI463 for the slot AI1) or a general-studies elective is in no plan, and the
+    plan-only lookup this replaces counted each of those as 0 credit hours.
+
+    A course is CODE::NAME, never the bare code (``course_identity``). So a key
+    that carries a name takes its hours only from a row that names the same
+    course, and one no row names stays 0: CS112::PROGRAMMING_II is never given
+    the hours of CS112::PROGRAMMING_I. A bare key is looked up by its code. The
+    plan and the elective catalogue are read for this programme only, where a
+    code is one course; the course table holds one row per code, which is why it
+    comes last.
+
+    A course the plan names keeps the plan's figure, 0 when the plan records
+    none. Every key asked for is in the result; 0 means no source knows the hours.
+    """
+    keys = {key for key in (normalize_code(raw) for raw in course_keys) if key}
+    if not keys:
+        return {}
+    programme = str(program or "").strip()
+    plan: dict[str, tuple[str, int]] = {}
+    if programme:
+        for code, name, hours in ProgrammeRequirement.objects.filter(
+            program__iexact=programme,
+        ).values_list("course_code", "course_name", "credit_hours"):
+            norm = normalize_code(code)
+            if norm:
+                plan[norm] = (planner_course_key(norm, name), hours or 0)
+
+    credits: dict[str, int] = {}
+    outside_plan: dict[str, list[str]] = defaultdict(list)
+    for key in sorted(keys):
+        code = key.partition("::")[0]
+        in_plan = plan.get(code)
+        if in_plan is not None and _names_course(key, in_plan[0]):
+            credits[key] = in_plan[1]
+        else:
+            credits[key] = 0
+            outside_plan[code].append(key)
+    if not outside_plan:
+        return credits
+
+    # Electives first: a list keeps the order, so the programme's own catalogue
+    # answers before the one-row-per-code course table does.
+    catalogue: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    if programme:
+        for code, name, hours in ElectiveCourse.objects.filter(
+            programme__iexact=programme,
+            course_code__in=sorted(outside_plan),
+            credit_hours__gt=0,
+        ).values_list("course_code", "course_name", "credit_hours"):
+            norm = normalize_code(code)
+            catalogue[norm].append((planner_course_key(norm, name), int(hours)))
+    for code, name, hours in Course.objects.filter(
+        course_code__in=sorted(outside_plan),
+        credit_hours__gt=0,
+    ).values_list("course_code", "description", "credit_hours"):
+        norm = normalize_code(code)
+        catalogue[norm].append((planner_course_key(norm, name), int(hours)))
+
+    for code, code_keys in outside_plan.items():
+        for key in code_keys:
+            credits[key] = next(
+                (hours for identity, hours in catalogue[code] if _names_course(key, identity)),
+                0,
+            )
+    return credits
+
+
 def ensure_student_section_schema() -> None:
     # Schema is managed by Django migrations.
     # Keep this function as a compatibility no-op for existing call sites.
@@ -425,29 +512,26 @@ def get_student_term_baseline(
     raw_student_cohort = str(student_profile.get("section") or "").strip().upper()
     student_cohort = raw_student_cohort if raw_student_cohort in ("M", "F") else ""
 
-    # Build a credit lookup from programme_requirements
-    credit_map: dict[str, int] = {}
-    if student_program:
-        for code, credits in ProgrammeRequirement.objects.filter(
-            program__iexact=student_program,
-        ).values_list("course_code", "credit_hours"):
-            norm = normalize_code(code)
-            if norm:
-                credit_map[norm] = credits or 0
-
-    out: list[dict[str, object]] = []
+    visible: list[tuple[StudentTermSection, str]] = []
     for sts in sts_qs.order_by(
         "term_section__course_code",
         "term_section__course_number",
         "term_section__section",
     ):
-        ts = sts.term_section
-        section_cohort = section_gender(ts.section or "")
+        section_cohort = section_gender(sts.term_section.section or "")
         if section_cohort == OTHER_BRANCH_SECTION_COHORT:
             continue
         if student_cohort and section_cohort and section_cohort != student_cohort:
             continue
-        course_key_norm = _section_course_key(ts)
+        visible.append((sts, _section_course_key(sts.term_section)))
+
+    # Every reader sums ``credits`` as the student's load, so a course outside the
+    # plan must carry its real hours here, not 0.
+    credit_map = programme_course_credits(student_program, [key for _sts, key in visible])
+
+    out: list[dict[str, object]] = []
+    for sts, course_key_norm in visible:
+        ts = sts.term_section
         credits = credit_map.get(course_key_norm, 0)
 
         meetings_list = sorted(ts.meetings.all(), key=lambda m: (m.day, m.start_time))

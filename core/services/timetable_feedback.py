@@ -224,7 +224,7 @@ class SeenSection:
     #: more than one course among the recorded sections.
     identity_certain: bool
     credits: int
-    #: False for an off-plan course, whose credits the reader reports as 0.
+    #: False for an off-plan course: its hours, if any, are not the plan's figure.
     credits_known: bool
     #: (DAY, HH:MM, HH:MM, ROOM), normalised, each once, sorted.
     meetings: tuple[Meeting, ...]

@@ -72,11 +72,20 @@ def scenario_effective_credits(registrar_total: int, plan_credits_passed: int) -
     it, and inventing a decomposition would inflate credits on a guess. The
     conservative under-count is the right failure direction for a gate.
 
-    Latent today for two independent reasons, neither of them by design: an
-    out-of-plan registration contributes 0 to the baseline credit total, and all
-    six second-cohort gates sit at exactly ``plan_total - co-op credits``, so the
-    end state lands on the gate either way. Raise any gate above that and the loss
-    starts to matter.
+    Latent today for one reason, and not by design: all six second-cohort gates
+    sit at exactly ``plan_total - co-op credits``, so the end state lands on the
+    gate either way. Raise any gate above that and the loss starts to matter.
+
+    It had a second cover until 2026-11: a registered course outside the plan
+    contributed 0 to the baseline credit total. It now contributes its hours
+    (``student_sections.programme_course_credits``), which exposes the OPPOSITE
+    error, and that one is live, not latent. Such a course is taken against an
+    elective row of the plan, and the scenario still schedules that row later
+    at the plan's hours, so by the end those hours are held twice. On the
+    zero-slack gates that opens co-op early. Measured on the data of
+    2026-11-25: 113 second-cohort estimates moved one term earlier; against a
+    model that fills the row, 110 moved closer and 3 ended one term short.
+    The cure is to fill the row, not to drop the hours.
 
     DELIBERATELY NOT used by :func:`hour_gate`. That answers "may this student
     register for this course NOW", where the registrar's own total is the
