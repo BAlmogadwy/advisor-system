@@ -223,6 +223,19 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
         self.assertEqual(page.locator(COULD.format("CS351")).count(), 0)
 
+    def test_a_quiet_request_that_finds_the_session_gone_says_so(self) -> None:
+        fake = BuildFake()
+        first = with_effects(effects({"AI331": effect(5, 1), "AI342": effect(4, 0)}))
+        fake.projection_answer = lambda body: (200, first)
+        page = self._built_before_the_plan(fake)
+        self._start(page)
+        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+        fake.hold_projection = 1
+        fake.pending_plan.pop().fulfill(json=fake.plan_payload)
+        self._wait_until(page, lambda: len(fake.pending_projection) == 1)
+        fake.pending_projection.pop().fulfill(status=401, json={})
+        expect(page.locator("#plbGrad")).to_have_attribute("data-state", "signedout")
+
     def test_a_plan_that_failed_first_never_asks_on_a_later_reload(self) -> None:
         fake = BuildFake()
         fake.projection_answer = lambda body: (200, STANDARD)

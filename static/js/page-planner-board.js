@@ -2426,7 +2426,8 @@
         };
       }
     }
-    if (kept && next.state !== 'ready') return;   // the forecast on screen is still good
+    // The forecast on screen stays unless a good reply replaces it, or the session has gone.
+    if (kept && next.state !== 'ready' && next.state !== 'signedout') return;
     build.projection = next;
     keepingFocus(() => {
       renderStrip();
