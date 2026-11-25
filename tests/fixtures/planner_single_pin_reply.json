@@ -1,0 +1,672 @@
+{
+ "SUCCESS": {
+  "summary": {
+   "scheduled": 3,
+   "target": 3,
+   "conflicts": 0,
+   "swaps_required": 0,
+   "best_feasible": true,
+   "hard_constraint_failures": []
+  },
+  "options": [
+   {
+    "name": "A1",
+    "method": "A",
+    "rank": 1,
+    "scheduled": 3,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "AI301",
+      "course_key": "AI301",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:AI301/M1",
+      "meetings": [
+       {
+        "day": "THU",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "FE1",
+      "course_key": "FE1",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:FE1/M2",
+      "meetings": [
+       {
+        "day": "WED",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": []
+   },
+   {
+    "name": "A2",
+    "method": "A",
+    "rank": 2,
+    "scheduled": 2,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "AI301",
+      "course_key": "AI301",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:AI301/M1",
+      "meetings": [
+       {
+        "day": "THU",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "FE1",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 2,
+        "credit_limit": 18,
+        "sections_considered": 2
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   },
+   {
+    "name": "A3",
+    "method": "A",
+    "rank": 3,
+    "scheduled": 2,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "FE1",
+      "course_key": "FE1",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:FE1/M2",
+      "meetings": [
+       {
+        "day": "WED",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "AI301",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 4,
+        "credit_limit": 18,
+        "sections_considered": 1
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   },
+   {
+    "name": "B1",
+    "method": "B",
+    "rank": 1,
+    "scheduled": 3,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "AI301",
+      "course_key": "AI301",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:AI301/M1",
+      "meetings": [
+       {
+        "day": "THU",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "FE1",
+      "course_key": "FE1",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:FE1/M2",
+      "meetings": [
+       {
+        "day": "WED",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": []
+   },
+   {
+    "name": "B2",
+    "method": "B",
+    "rank": 2,
+    "scheduled": 2,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "AI301",
+      "course_key": "AI301",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:AI301/M1",
+      "meetings": [
+       {
+        "day": "THU",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "FE1",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 2,
+        "credit_limit": 18,
+        "sections_considered": 2
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   },
+   {
+    "name": "B3",
+    "method": "B",
+    "rank": 3,
+    "scheduled": 2,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "FE1",
+      "course_key": "FE1",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:FE1/M2",
+      "meetings": [
+       {
+        "day": "WED",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "AI301",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 4,
+        "credit_limit": 18,
+        "sections_considered": 1
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   },
+   {
+    "name": "C1",
+    "method": "C",
+    "rank": 1,
+    "scheduled": 3,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "AI301",
+      "course_key": "AI301",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:AI301/M1",
+      "meetings": [
+       {
+        "day": "THU",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "FE1",
+      "course_key": "FE1",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:FE1/M2",
+      "meetings": [
+       {
+        "day": "WED",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": []
+   },
+   {
+    "name": "C2",
+    "method": "C",
+    "rank": 2,
+    "scheduled": 2,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "AI301",
+      "course_key": "AI301",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:AI301/M1",
+      "meetings": [
+       {
+        "day": "THU",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "FE1",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 2,
+        "credit_limit": 18,
+        "sections_considered": 2
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   },
+   {
+    "name": "C3",
+    "method": "C",
+    "rank": 3,
+    "scheduled": 2,
+    "target": 3,
+    "mappings": [
+     {
+      "course_code": "ENGL214",
+      "course_key": "ENGL214",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:ENGL214/M2",
+      "meetings": [
+       {
+        "day": "MON",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     },
+     {
+      "course_code": "FE1",
+      "course_key": "FE1",
+      "course_number": "",
+      "section": "M2",
+      "term_section_id": "id:FE1/M2",
+      "meetings": [
+       {
+        "day": "WED",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "AI301",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 4,
+        "credit_limit": 18,
+        "sections_considered": 1
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   }
+  ],
+  "unscheduled": [],
+  "swap_suggestions": []
+ },
+ "MUST_TAKE_CLASH": {
+  "summary": {
+   "scheduled": 0,
+   "target": 2,
+   "conflicts": 1,
+   "swaps_required": 0,
+   "best_feasible": false,
+   "hard_constraint_failures": [
+    {
+     "kind": "must_take",
+     "course_code": "ENGL214",
+     "reason": "Must-take course could not be scheduled: Could not fit alongside the other courses within the 18-credit limit, or its sections clash"
+    }
+   ]
+  },
+  "options": [],
+  "unscheduled": [
+   {
+    "course_code": "ENGL214",
+    "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+    "details": [
+     {
+      "course_credits": 3,
+      "credit_limit": 18,
+      "sections_considered": 1
+     }
+    ],
+    "reason_code": "DID_NOT_FIT"
+   }
+  ],
+  "swap_suggestions": []
+ },
+ "OPTIONAL_CLASH": {
+  "summary": {
+   "scheduled": 1,
+   "target": 2,
+   "conflicts": 1,
+   "swaps_required": 0,
+   "best_feasible": true,
+   "hard_constraint_failures": []
+  },
+  "options": [
+   {
+    "name": "A1",
+    "method": "A",
+    "rank": 1,
+    "scheduled": 1,
+    "target": 2,
+    "mappings": [
+     {
+      "course_code": "REQ101",
+      "course_key": "REQ101",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:REQ101/M1",
+      "meetings": [
+       {
+        "day": "TUE",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "AI331",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 4,
+        "credit_limit": 18,
+        "sections_considered": 1
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   },
+   {
+    "name": "B1",
+    "method": "B",
+    "rank": 1,
+    "scheduled": 1,
+    "target": 2,
+    "mappings": [
+     {
+      "course_code": "REQ101",
+      "course_key": "REQ101",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:REQ101/M1",
+      "meetings": [
+       {
+        "day": "TUE",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "AI331",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 4,
+        "credit_limit": 18,
+        "sections_considered": 1
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   },
+   {
+    "name": "C1",
+    "method": "C",
+    "rank": 1,
+    "scheduled": 1,
+    "target": 2,
+    "mappings": [
+     {
+      "course_code": "REQ101",
+      "course_key": "REQ101",
+      "course_number": "",
+      "section": "M1",
+      "term_section_id": "id:REQ101/M1",
+      "meetings": [
+       {
+        "day": "TUE",
+        "start_time": "09:00",
+        "end_time": "10:00"
+       }
+      ],
+      "meeting_issue_codes": []
+     }
+    ],
+    "unscheduled": [
+     {
+      "course_code": "AI331",
+      "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+      "details": [
+       {
+        "course_credits": 4,
+        "credit_limit": 18,
+        "sections_considered": 1
+       }
+      ],
+      "reason_code": "DID_NOT_FIT"
+     }
+    ]
+   }
+  ],
+  "unscheduled": [
+   {
+    "course_code": "AI331",
+    "reason": "Could not fit alongside the other courses within the 18-credit limit, or its sections clash",
+    "details": [
+     {
+      "course_credits": 4,
+      "credit_limit": 18,
+      "sections_considered": 1
+     }
+    ],
+    "reason_code": "DID_NOT_FIT"
+   }
+  ],
+  "swap_suggestions": []
+ }
+}

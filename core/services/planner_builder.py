@@ -1443,10 +1443,10 @@ def build_plans(
         if item.get("must_take") and str(item.get("course_code", "")).strip()
     }
 
-    # A pin is singular: the last valid value is the exact section allowed for
-    # that course.  The list-shaped payload is retained for API compatibility
-    # with older clients, but it is not an "acceptable alternatives" list.
-    pinned_id_by_code: dict[str, int] = {}
+    # The ``pinned_sections`` list of a shortlist item is the set of sections the
+    # course may be placed in ("only these"): the build uses exactly one of them.
+    # A single entry is the historical exact pin and behaves as it always did.
+    allowed_ids_by_code: dict[str, set[int]] = {}
     for item in shortlist:
         code = str(item.get("course_code", "")).replace(" ", "").upper()
         pinned_raw = item.get("pinned_sections") or []
@@ -1460,7 +1460,7 @@ def build_plans(
             except (TypeError, ValueError):
                 continue
             if term_section_id > 0:
-                pinned_id_by_code[code] = term_section_id
+                allowed_ids_by_code.setdefault(code, set()).add(term_section_id)
 
     codes = sorted(
         {
@@ -1474,14 +1474,14 @@ def build_plans(
     if require_complete_meetings:
         catalog, incomplete_meetings = _complete_catalogue(catalog)
 
-    # A pinned section is an exact hard constraint. Other sections for the
-    # course are removed before any solver or alternative-generation pass.
-    for code, pinned_id in pinned_id_by_code.items():
+    # The allowed sections are a hard constraint. Every other section of the
+    # course is removed before any solver or alternative-generation pass.
+    for code, allowed_ids in allowed_ids_by_code.items():
         if code in catalog:
             catalog[code] = [
                 s
                 for s in catalog[code]
-                if int(s.get("term_section_id") or 0) == pinned_id  # type: ignore[call-overload]
+                if int(s.get("term_section_id") or 0) in allowed_ids  # type: ignore[call-overload]
             ]
 
     # Capacity is a hard eligibility rule unless the caller explicitly allows
@@ -1528,20 +1528,34 @@ def build_plans(
                 }
             )
 
-        for code, pinned_id in sorted(pinned_id_by_code.items()):
+        for code, allowed_ids in sorted(allowed_ids_by_code.items()):
             selected_item = selected_by_code.get(code)
             if selected_item is None:
                 continue
             selected_id = int(selected_item.get("term_section_id") or 0)
-            if selected_id != pinned_id:
-                failures.append(
-                    {
-                        "kind": "pinned_section",
-                        "course_code": code,
-                        "reason": "The generated option did not use the exact pinned section",
-                        "term_section_id": pinned_id,
-                    }
-                )
+            if selected_id not in allowed_ids:
+                if len(allowed_ids) == 1:
+                    (only_id,) = allowed_ids
+                    failures.append(
+                        {
+                            "kind": "pinned_section",
+                            "course_code": code,
+                            "reason": "The generated option did not use the exact pinned section",
+                            "term_section_id": only_id,
+                        }
+                    )
+                else:
+                    failures.append(
+                        {
+                            "kind": "pinned_section",
+                            "course_code": code,
+                            "reason": (
+                                "The generated option did not use any of the "
+                                f"{len(allowed_ids)} allowed sections"
+                            ),
+                            "term_section_ids": sorted(allowed_ids),
+                        }
+                    )
 
         if max_credits and max_credits > 0:
             scheduled_credits = sum(credits_map.get(code, 0) for code in selected_by_code)
