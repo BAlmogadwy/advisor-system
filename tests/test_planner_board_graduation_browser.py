@@ -9,6 +9,8 @@ with a term in which no course can be taken; C1 sooner; C2 cannot be resolved).
 from __future__ import annotations
 
 import copy
+import pathlib
+import re
 
 from tests.planner_board_support import (
     FIVE,
@@ -16,12 +18,16 @@ from tests.planner_board_support import (
     OTHER_ID,
     OVERFLOWS,
     READY,
+    REG_FORECAST,
     UNRESOLVED,
     BuildFake,
     PlannerBoardCase,
+    _mapping,
+    _option,
     build_reply,
     expect,
     forecast,
+    projection_reply,
 )
 
 EXPIRED = "Build the options again to refresh the projection."
@@ -199,14 +205,18 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         page.click("#plbTab_B3")
         self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["1 term later"])
         self.assertEqual(won.get_attribute("data-result"), "later")
-        self.assertEqual(won.evaluate(size), sooner[0])
+        # Good news is the largest text of the page; bad news is bold warning ink at reading size,
+        # which always fits beside its own line.
+        self.assertEqual(sooner[0], "22px")
+        self.assertEqual(won.evaluate(size), "15px")
+        self.assertEqual(won.evaluate("n => getComputedStyle(n).fontWeight"), "700")
         self.assertNotEqual(won.evaluate(color), sooner[1])
         self.assertEqual(
             won.evaluate(color),
             page.locator("#plbTab_B2 .plb-tab-warn").evaluate(color),
         )
         page.click("#plbTab_B2")
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["Same completion term"])
+        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["Same term"])
         self.assertEqual(won.get_attribute("data-result"), "same")
         self.assertEqual(won.evaluate("n => getComputedStyle(n).fontWeight"), "600")
         self.assertLess(float(won.evaluate(size)[:-2]), float(sooner[0][:-2]))
@@ -730,7 +740,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         page.click("#plbTab_B3")
         self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["أبعد بفصل واحد"])
         page.click("#plbTab_B2")
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["نفس فصل التسجيل الحالي"])
+        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["الفصل نفسه"])
 
     def test_data_span_and_the_every_other_label_rule(self) -> None:
         for columns, span in ((5, "s"), (6, "m"), (8, "m"), (9, "l"), (14, "l"), (15, "xl")):
@@ -752,6 +762,11 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
                 self.assertEqual(labels[2], "1449/1")
             else:
                 self.assertTrue(all(labels))
+            # Past eight columns the unit no longer fits beside the first number: the caption says it.
+            self.assertEqual(
+                page.locator("#plbGrad .plb-rwl--opt .plb-u").is_visible(), max(columns, 5) <= 8
+            )
+            self.assertTrue(page.locator("#plbGrad .plb-axn").is_visible())
             # The ticks keep a title, labelled or not.
             self.assertTrue(
                 all(
@@ -794,7 +809,11 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             opt[0]["right"] - opt[0]["left"], axis[0]["right"] - axis[0]["left"], delta=1
         )
         self.assertGreater(axis[0]["top"], reg[0]["bottom"] - 1)
-        self.assertTrue(page.locator("#plbGrad .plb-axn").is_hidden())
+        # The caption that names the numbers is a row of its own under the term labels.
+        self.assertTrue(page.locator("#plbGrad .plb-axn").is_visible())
+        caption = self._boxes(page, "#plbGrad .plb-axn")[0]
+        self.assertGreaterEqual(caption["top"], axis[0]["bottom"] - 1)
+        self.assertLess(caption["left"], axis[0]["right"])
         # The result is on one line with the completion term, at the smaller size.
         won = page.locator("#plbGrad .plb-rwl--opt .plb-won")
         self.assertLess(float(won.evaluate("n => getComputedStyle(n).fontSize")[:-2]), 18)
@@ -804,22 +823,42 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(page.evaluate(OVERFLOWS), [])
 
     def test_the_row_layout_applies_from_each_spans_width(self) -> None:
-        # 5 columns: a 440px band is enough, 440px is not for 9. Measured on the band itself.
-        page, _fake = self._projected(width=1440)
-        self.assertEqual(page.get_attribute("#plbGrad .plb-rw", "data-span"), "s")
-        for width, columns, _display in (
-            (1440, 15, "grid"),
-            (900, 15, "flex"),
-            (900, 9, "grid"),
-            (700, 9, "flex"),
+        # The band is given an exact width: one pixel under its span's threshold the runway is
+        # stacked, at the threshold it is the row layout.
+        display = "getComputedStyle(document.querySelector('#plbGrad .plb-rw')).display"
+        resize = (
+            "w => { const g = document.getElementById('plbGrad');"
+            " g.style.width = w + 'px'; g.style.justifySelf = 'start';"
+            " return g.getBoundingClientRect().width; }"
+        )
+        for columns, span, threshold in (
+            (5, "s", 440),
+            (7, "m", 580),
+            (9, "l", 620),
+            (15, "xl", 900),
+        ):
+            page, _fake = self._projected(_reply(B1=forecast([9] * columns, delta=0)), width=1440)
+            self.assertEqual(page.get_attribute("#plbGrad .plb-rw", "data-span"), span)
+            self.assertEqual(page.evaluate(resize, threshold - 1), threshold - 1)
+            self.assertEqual(page.evaluate(display), "flex", (span, threshold - 1))
+            self.assertEqual(page.evaluate(resize, threshold), threshold)
+            self.assertEqual(page.evaluate(display), "grid", (span, threshold))
+
+    def test_a_long_runway_fits_the_page_in_either_layout(self) -> None:
+        for width, columns, display in (
+            (1440, 15, "flex"),
+            (1440, 14, "grid"),
+            (1152, 15, "grid"),
+            (600, 9, "flex"),
         ):
             page, _fake = self._projected(_reply(B1=forecast([9] * columns, delta=0)), width=width)
-            grad = page.evaluate("document.getElementById('plbGrad').getBoundingClientRect().width")
-            shown = page.evaluate(
-                "getComputedStyle(document.querySelector('#plbGrad .plb-rw')).display"
+            self.assertEqual(
+                page.evaluate(
+                    "getComputedStyle(document.querySelector('#plbGrad .plb-rw')).display"
+                ),
+                display,
+                (width, columns),
             )
-            wide = {"xl": 900, "l": 620}["xl" if columns >= 15 else "l"]
-            self.assertEqual(shown, "grid" if grad >= wide else "flex", (width, columns, grad))
             self.assertEqual(page.evaluate(OVERFLOWS), [], (width, columns))
 
     def test_screen_reader_sentences_and_hidden_ticks(self) -> None:
@@ -909,3 +948,275 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-rwn"), ["Projection unavailable"])
         self.assertEqual(self._line(page, "reg")["num"], ["5"])
         self.assertNotIn("terms", self._tab_lines(page, "B2")[1])
+
+    # ── what the forecast does to the page when it lands ────────────────────
+    def test_a_forecast_that_lands_leaves_the_keyboard_where_it_is(self) -> None:
+        # The tabs are redrawn when the forecast lands (they gain their term counts).
+        page, fake = self._held()
+        page.focus("#plbTab_B2")
+        fake.pending_projection.pop().fulfill(json=READY)
+        expect(page.locator("#plbGradLine")).to_be_hidden()
+        self.assertEqual(self._tab_lines(page, "B2")[1], "5 terms · 4 days · Thu free")
+        expect(page.locator("#plbTab_B2")).to_be_focused()
+        # An item of "More options" has no id: it is found again by the option it stands for.
+        page, fake = self._held()
+        page.click("#plbMoreBtn")
+        page.focus("#plbMoreList [data-more='C2']")
+        fake.pending_projection.pop().fulfill(json=READY)
+        expect(page.locator("#plbGradLine")).to_be_hidden()
+        expect(page.locator("#plbMoreList [data-more='C1']")).to_contain_text("4 terms")
+        expect(page.locator("#plbMoreList [data-more='C2']")).to_be_focused()
+        expect(page.locator("#plbMoreList")).to_be_visible()
+
+    def test_a_reply_for_a_retired_build_redraws_nothing(self) -> None:
+        page, fake = self._held()
+        fake.projection_answer = lambda body: (200, READY)
+        page.click("#plbBuild")
+        self._wait_for(page, lambda: len(fake.projection_bodies) == 2)
+        expect(page.locator("#plbGradLine")).to_be_hidden()
+        # A redraw replaces the nodes it draws: mark the ones on screen.
+        page.evaluate(
+            "() => { document.getElementById('plbTab_B1').dataset.probe = '1';"
+            " document.querySelector('#plbGrad .plb-rw').dataset.probe = '1'; }"
+        )
+        fake.pending_projection.pop().fulfill(json=READY)
+        page.wait_for_timeout(150)
+        self.assertEqual(page.get_attribute("#plbTab_B1", "data-probe"), "1")
+        self.assertEqual(page.get_attribute("#plbGrad .plb-rw", "data-probe"), "1")
+
+    def test_the_band_keeps_its_height_when_the_forecast_lands_and_between_tabs(self) -> None:
+        # The tabs sit under the band: they must not jump away from the pointer. On a desktop the
+        # band keeps its height; on a phone the page is scrolled to the tabs by then and the
+        # browser's scroll anchoring holds them.
+        top = "document.getElementById('plbStrip').getBoundingClientRect().top"
+        for kwargs in (
+            {"width": 1152},
+            {"width": 1152, "language": "ar"},
+            {"width": 390, "height": 900},
+            {"width": 390, "height": 900, "language": "ar"},
+        ):
+            page, fake = self._held(**kwargs)
+            loading = page.evaluate(top)
+            fake.pending_projection.pop().fulfill(json=READY)
+            expect(page.locator("#plbGradLine")).to_be_hidden()
+            expect(page.locator("#plbGrad .plb-rwl--opt .plb-tk")).to_have_count(4)
+            self.assertAlmostEqual(page.evaluate(top), loading, delta=2, msg=str(kwargs))
+            page.click("#plbTabRegistered")
+            expect(page.locator("#plbGrad .plb-rwl--opt")).to_have_count(0)
+            self.assertAlmostEqual(page.evaluate(top), loading, delta=2, msg=str(kwargs))
+
+    def test_no_assumptions_when_no_line_is_drawn(self) -> None:
+        nothing = projection_reply(
+            {**NO_FORECAST, "kind": None, "reason_code": "no_registered_timetable"},
+            {name: NO_FORECAST for name in ("B1", "B2", "B3", "C1", "C2")},
+            retained_baseline_kind="expected_plan",
+        )
+        page, _fake = self._projected(nothing)
+        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-rwn"), ["Projection unavailable"])
+        expect(page.locator("#plbGradAsm")).to_be_hidden()
+        expect(page.locator("#plbGradRetained")).to_be_hidden()
+        # One line drawn is enough for them to show.
+        page, _fake = self._projected(
+            projection_reply(REG_FORECAST, READY["options"], retained_baseline_kind="expected_plan")
+        )
+        page.click("#plbTabRegistered")
+        expect(page.locator("#plbGradAsm")).to_be_visible()
+        expect(page.locator("#plbGradRetained")).to_be_visible()
+
+    def test_escape_is_left_alone_when_the_reasons_button_is_not_shown(self) -> None:
+        reply = _reply(
+            B1=forecast([15, 18, 18, 15], delta=-1, reasons=[{"code": "same_course_set"}])
+        )
+        page, _fake = self._projected(reply)
+        page.click("#plbGradWhyBtn")
+        expect(page.locator("#plbGradWhy")).to_be_visible()
+        page.click("#plbTabRegistered")
+        expect(page.locator("#plbGradWhyBtn")).to_be_hidden()
+        # Registered after the page's own listener, so it sees what that one decided.
+        page.evaluate(
+            "() => { window.__esc = []; document.addEventListener('keydown', (e) => {"
+            " if (e.key === 'Escape') window.__esc.push(e.defaultPrevented); }); }"
+        )
+        page.focus("#plbGrad")
+        page.keyboard.press("Escape")
+        self.assertEqual(page.evaluate("window.__esc"), [False])
+        # Back on the option the list is still open, and there Escape closes it.
+        page.click("#plbTab_B1")
+        expect(page.locator("#plbGradWhy")).to_be_visible()
+        page.focus("#plbGradWhyBtn")
+        page.keyboard.press("Escape")
+        expect(page.locator("#plbGradWhy")).to_be_hidden()
+        self.assertEqual(page.evaluate("window.__esc"), [False, True])
+
+    def test_a_requirement_with_no_course_code_is_not_listed(self) -> None:
+        blocked = [{"missing_course_prerequisites": ["AI331"]}, {"code": "AI431"}]
+        reply = _reply(B1={**UNRESOLVED, "unresolved_requirements": blocked})
+        page, _fake = self._projected(reply)
+        self.assertEqual(self._grad(page, "li"), ["AI431 could not be placed in the projection."])
+        self.assertNotIn("undefined", self._text(page, "#plbGrad"))
+
+    def test_a_tab_that_stands_for_several_options_reads_its_own_forecast(self) -> None:
+        def option(name: str, tsid: int, label: str) -> dict:
+            return _option(
+                name,
+                [
+                    _mapping("AI331", label, tsid, ["MON", "WED"], "10:00", "11:15"),
+                    _mapping("AI342", "M1", 15, ["SUN"], "13:00", "14:15"),
+                ],
+            )
+
+        fake = BuildFake()
+        fake.build_answer = lambda body: (
+            200,
+            build_reply([option("A1", 11, "M2"), option("C1", 11, "M2"), option("B1", 12, "M3")]),
+        )
+        # The reply answers for every name the build returned; the merged tab is A1's.
+        reply = projection_reply(
+            REG_FORECAST,
+            {
+                "A1": forecast([15, 18, 18, 15], delta=-1),
+                "C1": forecast([9] * 7, delta=2),
+                "B1": forecast([12, 18, 18, 18, 6], delta=0),
+            },
+        )
+        page, _fake = self._projected(reply, fake=fake)
+        self.assertEqual(self._tab_names(page), ["A1", "B1", "(registered)"])
+        self.assertIn("A1 | C1", self._text(page, "#plbTab_A1 .plb-tab-n"))
+        line = self._line(page, "opt")
+        self.assertEqual(line["num"], ["4"])
+        self.assertEqual(line["label"], ["Option A1"])
+        self.assertEqual(line["won"], ["1 term sooner"])
+        self.assertEqual(self._tab_lines(page, "A1")[1][:7], "4 terms")
+        self.assertIn("Option A1: 4 terms", self._text(page, "#plbGrad .plb-rwl--opt .sr-only"))
+
+    # ── nothing wraps, nothing collides ─────────────────────────────────────
+    def test_the_result_stays_on_one_line_clear_of_the_ticks(self) -> None:
+        # The result never wraps, so its size steps down with the room its line leaves. Every step
+        # is checked at its own threshold, where the room is tightest, in both languages.
+        def sooner(registered: int) -> dict:
+            reply = _reply(B1=forecast([15] + [18] * (registered - 3) + [12], delta=-1))
+            reply["baseline"] = forecast(
+                [6] + [18] * (registered - 2) + [9], kind="registered_timetable", reason_code=None
+            )
+            return reply
+
+        size = "n => getComputedStyle(n).fontSize"
+        resize = (
+            "w => { const g = document.getElementById('plbGrad');"
+            " g.style.width = w === null ? '' : w + 'px';"
+            " g.style.justifySelf = w === null ? '' : 'start'; }"
+        )
+        # (tab, the band's width or None for the page's own, layout, the result's size)
+        short = (
+            ("B1", None, "grid", "22px"),
+            ("B1", 680, "grid", "22px"),
+            ("B1", 679, "grid", "18px"),
+            ("B1", 540, "grid", "18px"),
+            ("B1", 539, "grid", "15px"),
+            ("B1", 440, "grid", "15px"),
+            ("B3", None, "grid", "15px"),
+            ("B3", 580, "grid", "15px"),
+            ("B3", 470, "flex", "15px"),
+            ("B2", 440, "grid", "13px"),
+        )
+        middle = (
+            ("B1", 980, "grid", "22px"),
+            ("B1", 979, "grid", "18px"),
+            ("B1", 760, "grid", "18px"),
+            ("B1", 759, "grid", "15px"),
+            ("B1", 580, "grid", "15px"),
+        )
+        long = (
+            ("B1", 900, "grid", "18px"),
+            ("B1", 899, "grid", "15px"),
+            ("B1", 620, "grid", "15px"),
+        )
+        longest = (("B1", 900, "grid", "15px"),)
+        for reply, cases in (
+            (READY, short),
+            (sooner(8), middle),
+            (sooner(12), long),
+            (sooner(16), longest),
+        ):
+            for language in ("en", "ar"):
+                page, _fake = self._projected(reply, language=language)
+                for tab, width, layout, expected in cases:
+                    where = (language, tab, width)
+                    page.click(f"#plbTab_{tab}")
+                    page.evaluate(resize, width)
+                    self.assertEqual(
+                        page.evaluate(
+                            "getComputedStyle(document.querySelector('#plbGrad .plb-rw')).display"
+                        ),
+                        layout,
+                        where,
+                    )
+                    won = page.locator("#plbGrad .plb-rwl--opt .plb-won")
+                    if language == "en":  # Arabic type is a step larger: only its fit is checked
+                        self.assertEqual(won.evaluate(size), expected, where)
+                    box = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-won")[0]
+                    line_height = float(won.evaluate("n => getComputedStyle(n).lineHeight")[:-2])
+                    self.assertLess(box["bottom"] - box["top"], line_height * 1.5, where)
+                    for tick in self._boxes(page, "#plbGrad .plb-rwl--opt .plb-tk"):
+                        apart = (
+                            box["left"] >= tick["right"] - 1
+                            or box["right"] <= tick["left"] + 1
+                            or box["bottom"] <= tick["top"] + 1
+                            or box["top"] >= tick["bottom"] - 1
+                        )
+                        self.assertTrue(apart, (where, box, tick))
+                    grad = self._boxes(page, "#plbGrad")[0]
+                    self.assertLessEqual(box["right"], grad["right"] + 1, where)
+                    self.assertGreaterEqual(box["left"], grad["left"] - 1, where)
+                    completion = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-land b")[0]
+                    self.assertLessEqual(completion["right"], grad["right"] + 1, where)
+                    self.assertGreaterEqual(completion["left"], grad["left"] - 1, where)
+
+    def test_stacked_ticks_stay_on_one_row_for_any_number_of_columns(self) -> None:
+        for columns in (6, 7, 11, 13, 16):
+            page, _fake = self._projected(
+                _reply(B1=forecast([9] * columns, delta=0)), width=390, height=900
+            )
+            self.assertEqual(
+                page.evaluate(
+                    "getComputedStyle(document.querySelector('#plbGrad .plb-rw')).display"
+                ),
+                "flex",
+            )
+            # One row each: the same bottom edge (an unlabelled axis cell is shorter, not lower).
+            for selector in ("#plbGrad .plb-rwl--opt .plb-tk", "#plbGrad .plb-ax"):
+                boxes = self._boxes(page, selector)
+                self.assertEqual(len(boxes), columns)
+                self.assertEqual(
+                    len({round(box["bottom"]) for box in boxes}), 1, (columns, selector)
+                )
+            self.assertEqual(page.evaluate(OVERFLOWS), [], columns)
+
+
+def test_the_four_row_layout_blocks_are_one_block_repeated() -> None:
+    """The row layout is written once per span because only the threshold differs.
+
+    A change made to one copy and not the others would give one span a different layout: the four
+    must stay the same text apart from the span they name.
+    """
+    css = (pathlib.Path(__file__).resolve().parents[1] / "static" / "css" / "global.css").read_text(
+        encoding="utf-8"
+    )
+    blocks = {}
+    for threshold, body in re.findall(
+        r"@container plbgrad \(min-width: (\d+)px\) \{\n((?:  [^\n]+\n)+)\}", css
+    ):
+        if "subgrid" not in body:
+            continue
+        spans = set(re.findall(r'data-span="(\w+)"', body))
+        assert len(spans) == 1, spans
+        blocks[spans.pop()] = (int(threshold), re.sub(r'data-span="\w+"', "data-span", body))
+    assert {span: threshold for span, (threshold, _body) in blocks.items()} == {
+        "s": 440,
+        "m": 580,
+        "l": 620,
+        "xl": 900,
+    }
+    bodies = {body for _threshold, body in blocks.values()}
+    assert len(bodies) == 1, "the row-layout blocks differ"
+    assert bodies.pop().count("\n") >= 8

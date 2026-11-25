@@ -237,7 +237,8 @@
     gradRetry: IS_AR ? 'حاول مرة أخرى' : 'Try again',
     gradUnresolved: IS_AR ? 'تعذّر تحديد فصل الإكمال' : 'Completion term unresolved',
     gradNoReg: IS_AR ? 'لا يوجد تسجيل رسمي لهذا الفصل' : 'No registrar registration for this term',
-    gradSame: IS_AR ? 'نفس فصل التسجيل الحالي' : 'Same completion term',
+    // Shorter than the current page's sentence: here it sits beside the registered line's own term.
+    gradSame: IS_AR ? 'الفصل نفسه' : 'Same term',
     gradAsRegistered: IS_AR ? 'كما هو مسجّل' : 'As registered',
     gradPerTerm: IS_AR ? 'الساعات في كل فصل' : 'Credits per term',
     gradReasons: IS_AR ? 'أسباب على مستوى المقررات' : 'Course-level reasons',
@@ -1468,19 +1469,22 @@
     if (reviewing && !$('plbBuild').disabled) $('plbBuild').focus();
   }
   // A redraw replaces the nodes it draws. When the page redraws by itself (the age check runs on
-  // a timer) the keyboard must stay where it was: the same control is found again by its id, or
-  // by its action and course in the table.
+  // a timer, a forecast lands when the server answers) the keyboard must stay where it was: the same
+  // control is found again by its id, by its action and course in the table, or by the option it
+  // stands for in "More options".
   function keepingFocus(redraw) {
     const was = document.activeElement;
     const id = was && was.id ? was.id : '';
     const act = was && was.dataset ? was.dataset.act : '';
     const code = was && was.dataset ? was.dataset.code : '';
+    const more = was && was.dataset ? was.dataset.more : '';
     redraw();
     if (document.activeElement && document.activeElement !== document.body) return;
     let again = id ? document.getElementById(id) : null;
     if (!again && act && code) {
       again = document.querySelector(`#plbTable [data-act="${CSS.escape(act)}"][data-code="${CSS.escape(code)}"]`);
     }
+    if (!again && more) again = document.querySelector(`#plbMoreList [data-more="${CSS.escape(more)}"]`);
     if (again && !again.disabled) again.focus();
   }
   // A build older than 30 minutes is out of date. Checked when Review and apply is pressed, when
@@ -1692,7 +1696,9 @@
   // An option's reasons, then the requirements it cannot place. A "could not be placed" reason is
   // skipped when the same course is listed as a blocked requirement (the current page's rule).
   function gradWhyItems(row) {
-    const blocking = (Array.isArray(row.unresolved_requirements) ? row.unresolved_requirements : []).filter(isObj);
+    // A requirement with no course code names nothing: it is not listed.
+    const blocking = (Array.isArray(row.unresolved_requirements) ? row.unresolved_requirements : [])
+      .filter((r) => isObj(r) && r.code);
     const detailed = new Set(blocking.map((r) => r.code));
     const items = (Array.isArray(row.reasons) ? row.reasons : [])
       .filter((r) => !(isObj(r) && r.code === 'requirement_unresolved' && detailed.has(r.course_code)))
@@ -1815,7 +1821,7 @@
     const asm = $('plbGradAsm');
     const kept = $('plbGradRetained');
     const stale = $('plbGradStale');
-    asm.hidden = !ready;
+    asm.hidden = true;
     kept.hidden = true;
     stale.hidden = !(ready && build.stale);
     asm.replaceChildren();
@@ -1824,17 +1830,22 @@
     let items = [];
     let disclosure = false;
     if (ready) {
+      const opt = currentOption();
+      const row = opt ? forecastFor(opt.name) : null;
+      // The assumptions explain a forecast: with no line drawn there is nothing for them to explain.
+      const drawn = isComplete(ready.baseline) || isComplete(row);
       const cap = Number.isFinite(Number(ready.cap)) && Number(ready.cap) > 0 ? Number(ready.cap) : 18;
       const planning = isObj(ready.planning) && ready.planning.academic_year && ready.planning.term
         ? termLabel(ready.planning)
         : (state.ctx ? `${state.ctx.year}/${state.ctx.term}` : '');
-      asm.replaceChildren(...T.gradAssumes(planning, cap));
-      const keptText = { expected_plan: T.gradRetainedExpected, working_timetable: T.gradRetainedWorking }[ready.retainedKind];
+      asm.hidden = !drawn;
+      if (drawn) asm.replaceChildren(...T.gradAssumes(planning, cap));
+      const keptText = drawn
+        ? { expected_plan: T.gradRetainedExpected, working_timetable: T.gradRetainedWorking }[ready.retainedKind]
+        : '';
       kept.hidden = !keptText;
       kept.textContent = keptText || '';
-      const opt = currentOption();
       if (opt) {
-        const row = forecastFor(opt.name);
         items = gradWhyItems(row);
         // A complete forecast keeps its reasons behind the button; one that failed lists them at once.
         disclosure = isComplete(row) && items.length > 0;
@@ -2378,7 +2389,12 @@
       // Only from the disclosure's own corner: Escape in the course search or on a tab is not
       // a request to close this, and must not pull the keyboard away from where it is.
       if (state.whyOpen && event.target.closest && event.target.closest('.plb-acts')) { event.preventDefault(); setWhy(false, true); }
-      if (state.gradWhy && event.target.closest && event.target.closest('#plbGrad')) { event.preventDefault(); setGradWhy(false, true); }
+      // The reasons close on Escape only while their button is on screen: on a tab whose forecast
+      // has none (or lists them without a button) there is nothing to close and Escape is left alone.
+      if (state.gradWhy && !$('plbGradWhyBtn').hidden && event.target.closest && event.target.closest('#plbGrad')) {
+        event.preventDefault();
+        setGradWhy(false, true);
+      }
     });
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkAge(); });
     setInterval(checkAge, 60 * 1000);

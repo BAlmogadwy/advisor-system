@@ -8976,8 +8976,10 @@ div.plb-dt-sec { cursor: default; }
 .plb-st b { font-size: var(--text-base); font-weight: 600; line-height: 18px; color: var(--t2); }
 .plb-rwl--reg .plb-num { font-size: var(--text-display); line-height: 32px; color: var(--t3); }
 .plb-rwl--reg .plb-st b { color: var(--t3); }
+/* Stacked, a tick is one Nth of the row less a hair: N shares rounded by a browser to its own
+   unit may add up to more than the row, and the last tick would wrap. */
 .plb-tk {
-  position: relative; box-sizing: border-box; order: 3; flex: 0 0 calc(100% / var(--plb-cols)); min-width: 0; height: 46px;
+  position: relative; box-sizing: border-box; order: 3; flex: 0 0 calc(100% / var(--plb-cols) - 0.01px); min-width: 0; height: 46px;
   display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; white-space: nowrap;
   font-size: var(--text-sm); font-weight: 600; line-height: 18px; color: var(--ink); border-bottom: 3px solid var(--brand);
 }
@@ -8995,14 +8997,14 @@ div.plb-dt-sec { cursor: default; }
 .plb-land { order: 1; margin-inline-start: auto; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 0 8px; padding-bottom: 3px; text-align: end; }
 .plb-land b { font-size: var(--text-sm); font-weight: 600; line-height: 18px; color: var(--ink); }
 .plb-rwl--reg .plb-land b { font-weight: 500; color: var(--t2); }
-.plb-won { font-size: var(--text-body); font-weight: 700; line-height: 22px; color: var(--text-brand); }
+.plb-won { font-size: var(--text-body); font-weight: 700; line-height: 22px; color: var(--text-brand); white-space: nowrap; }
 .plb-won[data-result="later"] { color: var(--sev-warning-ink); }
 .plb-won[data-result="same"] { font-size: var(--text-sm); font-weight: 600; line-height: 18px; color: var(--ink); }
 .plb-brk { order: 2; display: block; flex: 0 0 100%; height: 0; }
 .plb-rwn { order: 1; flex: 1 1 12ch; min-width: 0; margin: 0; padding-bottom: 3px; font-size: var(--text-sm); line-height: 18px; color: var(--t2); }
-.plb-axn { display: none; }
+.plb-axn { order: 4; flex: 0 0 100%; padding-top: 2px; }
 .plb-ax {
-  order: 3; flex: 0 0 calc(100% / var(--plb-cols)); min-width: 0; padding-top: 6px; text-align: center; white-space: nowrap;
+  order: 3; flex: 0 0 calc(100% / var(--plb-cols) - 0.01px); min-width: 0; padding-top: 6px; text-align: center; white-space: nowrap;
   font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 500; line-height: 16px; color: var(--t3);
 }
 .plb-ax--now { font-weight: 700; color: var(--ink); }
@@ -9010,16 +9012,15 @@ div.plb-dt-sec { cursor: default; }
 .plb-asm--warn { font-weight: 600; color: var(--sev-warning-ink); }
 .plb-gwhy { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 0; padding-inline-start: 16px; font-size: var(--text-xs); line-height: 16px; color: var(--t2); overflow-wrap: anywhere; }
 .plb-tab-terms { font-weight: 700; color: var(--t2); }
-@container plbgrad (max-width: 619px) {
-  .plb-rw[data-span="l"] .plb-u, .plb-rw[data-span="xl"] .plb-u { position: absolute; inset-block-start: 0; inset-inline-start: 0; margin: 0; line-height: 14px; }
-  .plb-rw[data-span="l"] .plb-rwl--reg .plb-tk, .plb-rw[data-span="xl"] .plb-rwl--reg .plb-tk { height: 40px; }
-}
-@container plbgrad (min-width: 620px) and (max-width: 899px) {
-  .plb-rw[data-span="xl"] .plb-u { position: absolute; inset-block-start: 0; inset-inline-start: 0; margin: 0; line-height: 14px; }
-  .plb-rw[data-span="xl"] .plb-rwl--reg .plb-tk { height: 40px; }
-}
+/* Nine columns and more leave no room for the unit beside the first number: the caption under the
+   axis ("Credits per term") says it. */
+.plb-rw:is([data-span="l"], [data-span="xl"]) .plb-u { display: none; }
+/* The band keeps the height of its two lines from the moment a forecast is asked for, so the tabs
+   under it do not jump when the forecast lands or when a tab with a single line is chosen. (On a
+   phone the page is scrolled past the band by then, and the browser holds the tabs in place.) */
+.plb-grad[data-state="loading"], .plb-grad[data-state="ready"] { min-height: 164px; }
 @container plbgrad (min-width: 440px) {
-  .plb-rw[data-span="s"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(8rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="s"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(9rem); align-items: end; gap: 2px 0; }
   .plb-rw[data-span="s"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
   .plb-rw[data-span="s"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
   .plb-rw[data-span="s"] .plb-rwl .plb-rl, .plb-rw[data-span="s"] .plb-axn { grid-column: 1; }
@@ -9028,11 +9029,9 @@ div.plb-dt-sec { cursor: default; }
   .plb-rw[data-span="s"] .plb-rwn { grid-column: 2 / -1; }
   .plb-rw[data-span="s"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
   .plb-rw[data-span="s"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
-  .plb-rw[data-span="s"] .plb-won { font-size: var(--text-xl); line-height: 26px; white-space: normal; }
-  .plb-rw[data-span="s"] .plb-won[data-result="same"] { font-size: var(--text-sm); line-height: 18px; }
 }
 @container plbgrad (min-width: 580px) {
-  .plb-rw[data-span="m"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(8rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="m"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(9rem); align-items: end; gap: 2px 0; }
   .plb-rw[data-span="m"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
   .plb-rw[data-span="m"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
   .plb-rw[data-span="m"] .plb-rwl .plb-rl, .plb-rw[data-span="m"] .plb-axn { grid-column: 1; }
@@ -9041,11 +9040,9 @@ div.plb-dt-sec { cursor: default; }
   .plb-rw[data-span="m"] .plb-rwn { grid-column: 2 / -1; }
   .plb-rw[data-span="m"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
   .plb-rw[data-span="m"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
-  .plb-rw[data-span="m"] .plb-won { font-size: var(--text-xl); line-height: 26px; white-space: normal; }
-  .plb-rw[data-span="m"] .plb-won[data-result="same"] { font-size: var(--text-sm); line-height: 18px; }
 }
 @container plbgrad (min-width: 620px) {
-  .plb-rw[data-span="l"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(8rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="l"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(9rem); align-items: end; gap: 2px 0; }
   .plb-rw[data-span="l"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
   .plb-rw[data-span="l"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
   .plb-rw[data-span="l"] .plb-rwl .plb-rl, .plb-rw[data-span="l"] .plb-axn { grid-column: 1; }
@@ -9054,11 +9051,9 @@ div.plb-dt-sec { cursor: default; }
   .plb-rw[data-span="l"] .plb-rwn { grid-column: 2 / -1; }
   .plb-rw[data-span="l"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
   .plb-rw[data-span="l"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
-  .plb-rw[data-span="l"] .plb-won { font-size: var(--text-xl); line-height: 26px; white-space: normal; }
-  .plb-rw[data-span="l"] .plb-won[data-result="same"] { font-size: var(--text-sm); line-height: 18px; }
 }
 @container plbgrad (min-width: 900px) {
-  .plb-rw[data-span="xl"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(8rem); align-items: end; gap: 2px 0; }
+  .plb-rw[data-span="xl"] { display: grid; grid-template-columns: max-content repeat(var(--plb-cols), minmax(0, 1fr)) fit-content(9rem); align-items: end; gap: 2px 0; }
   .plb-rw[data-span="xl"] .plb-rwl { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: end; }
   .plb-rw[data-span="xl"] .plb-rwl > :not(.sr-only) { grid-row: 1; order: 0; }
   .plb-rw[data-span="xl"] .plb-rwl .plb-rl, .plb-rw[data-span="xl"] .plb-axn { grid-column: 1; }
@@ -9067,8 +9062,24 @@ div.plb-dt-sec { cursor: default; }
   .plb-rw[data-span="xl"] .plb-rwn { grid-column: 2 / -1; }
   .plb-rw[data-span="xl"] .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; white-space: nowrap; }
   .plb-rw[data-span="xl"] .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
-  .plb-rw[data-span="xl"] .plb-won { font-size: var(--text-xl); line-height: 26px; white-space: normal; }
-  .plb-rw[data-span="xl"] .plb-won[data-result="same"] { font-size: var(--text-sm); line-height: 18px; }
+}
+/* "1 term sooner" never wraps, so its size follows the room its line leaves: one free column and
+   the landing column. It is the page's largest teal text where that is wide enough, in steps that
+   are also safe for Arabic, whose type is a step larger. Bad news and "same term" stay small. */
+@container plbgrad (min-width: 540px) {
+  .plb-rw[data-span="s"] .plb-won[data-result="sooner"] { font-size: var(--text-lg); line-height: 24px; }
+}
+@container plbgrad (min-width: 680px) {
+  .plb-rw[data-span="s"] .plb-won[data-result="sooner"] { font-size: var(--text-xl); line-height: 26px; }
+}
+@container plbgrad (min-width: 760px) {
+  .plb-rw[data-span="m"] .plb-won[data-result="sooner"] { font-size: var(--text-lg); line-height: 24px; }
+}
+@container plbgrad (min-width: 980px) {
+  .plb-rw[data-span="m"] .plb-won[data-result="sooner"] { font-size: var(--text-xl); line-height: 26px; }
+}
+@container plbgrad (min-width: 900px) {
+  .plb-rw[data-span="l"] .plb-won[data-result="sooner"] { font-size: var(--text-lg); line-height: 24px; }
 }
 
 /* laptop width */
