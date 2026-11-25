@@ -557,6 +557,56 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         expect(page.locator("#plbDetail input[type='radio'][value='only']")).to_be_focused()
 
     # ── Arabic ───────────────────────────────────────────────────────────────
+    def test_removing_the_course_ends_only_these_for_the_panel_left_open(self) -> None:
+        only = "#plbDetail input[name='plbMode'][value='only']"
+        for tick in (False, True):
+            with self.subTest(tick=tick):
+                page, _fake = self._page()
+                self._panel(page)
+                if tick:
+                    self._tick(page, 22)
+                else:
+                    page.check(only)
+                self.assertTrue(self._checked(page, only))
+                page.click("#plbDetail [data-act='dt-remove']")
+                expect(page.locator("#plbDetail [data-act='dt-add']")).to_be_visible()
+                page.click("#plbDetail [data-act='dt-add']")
+                expect(
+                    page.locator("#plbDetail input[name='plbMode'][value='any']")
+                ).to_be_checked()
+                self.assertEqual(
+                    page.locator("#plbDetail input[name='plbOnly']:checked").count(), 0
+                )
+                self.assertEqual(page.locator("#plbDetail .plb-dt-note").count(), 0)
+
+    def test_the_only_these_radio_says_what_it_means_right_now(self) -> None:
+        page, _fake = self._page()
+        self._panel(page)
+        only = page.locator("#plbDetail input[name='plbMode'][value='only']")
+        self.assertIsNone(only.get_attribute("aria-describedby"))
+        only.check()
+        self.assertEqual(only.get_attribute("aria-describedby"), "plbOnlyNote")
+        expect(page.locator("#plbOnlyNote")).to_have_text(
+            "Tick the sections the build may use. Until one is ticked, any section may be used."
+        )
+        self._tick(page, *ONE_TO_SIX)
+        self.assertEqual(only.get_attribute("aria-describedby"), "plbOnlyNote plbOnlyMax")
+        expect(page.locator("#plbOnlyNote")).to_have_text(
+            "The build picks one of the ticked sections."
+        )
+        expect(page.locator("#plbOnlyMax")).to_have_text("Six sections at most.")
+
+    def test_on_a_phone_a_dashed_block_names_its_section_as_a_solid_one_does(self) -> None:
+        for width, word in ((1440, True), (390, False)):
+            with self.subTest(width=width):
+                page, _fake = self._page(width=width)
+                self._panel(page)
+                self._tick(page, 23)  # M3, Mon and Wed: dashed on the Registered tab
+                block = page.locator("#plbWeek .plb-gb").first
+                expect(block).to_be_attached()
+                self.assertEqual(block.locator(".plb-alt-w").is_visible(), word)
+                self.assertIn("\u00a7M3", block.text_content())
+
     def test_arabic_for_every_text(self) -> None:
         page, _ = self._page(language="ar")
         self._panel(page)

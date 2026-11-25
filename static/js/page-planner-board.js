@@ -231,7 +231,7 @@
       if (labels.length === 1) return [' · ', IS_AR ? 'أو ' : 'or ', bdi(`§${labels[0]}`)];
       const n = labels.length;
       return [' · ', IS_AR
-        ? `أو ${pluralAr(n, forms('شعبة أخرى', 'شعبتين أخريين', '{n} شعب أخرى', '{n} شعبة أخرى'))}`
+        ? `أو ${pluralAr(n, forms('شعبة أخرى', 'شعبتان أخريان', '{n} شعب أخرى', '{n} شعبة أخرى'))}`
         : `or ${n} others`];
     },
     // The status line after a change to the allowed sections.
@@ -248,7 +248,7 @@
       return [bdi(code), IS_AR ? `: يجوز استخدام ${T.sectionWord(labels.length)} فقط.` : `: only ${T.sectionWord(labels.length)} may be used.`];
     },
     // The week's dashed blocks.
-    altTag: (label) => [IS_AR ? 'بديل ' : 'alt ', bdi(`§${label}`)],
+    altTag: (label) => [el('span', 'plb-alt-w', IS_AR ? 'بديل ' : 'alt '), bdi(`§${label}`)],
     legendAlt: IS_AR ? 'بديل' : 'Alternative',
     // Why these options.
     whyButton: IS_AR ? 'لماذا هذه الخيارات' : 'Why these options',
@@ -1644,6 +1644,8 @@
     const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
     if (at < 0) return;
     const [gone] = state.shortlist.splice(at, 1);
+    // "Only these" with nothing ticked belonged to the course that has just gone, not to the panel.
+    if (state.detail && state.detail.code === norm(code)) delete state.detail.only;
     planChanged();
     state.focus = keepFocus ? null : { kind: 'add', code: gone.course_code };
     setStatus('ok', ...T.removed(gone.course_code));
@@ -2903,8 +2905,18 @@
       group.append(gone);
     }
     if (info.inPlan && only) {
-      group.append(el('p', 'plb-dt-hint plb-dt-note', pins.length ? T.onlyPicks : T.onlyNone));
-      if (atMax) group.append(el('p', 'plb-dt-hint plb-dt-note', T.sixMax));
+      // What "Only these" means right now is said with the radio, not only printed under the list.
+      const note = el('p', 'plb-dt-hint plb-dt-note', pins.length ? T.onlyPicks : T.onlyNone);
+      note.id = 'plbOnlyNote';
+      group.append(note);
+      const said = [note.id];
+      if (atMax) {
+        const most = el('p', 'plb-dt-hint plb-dt-note', T.sixMax);
+        most.id = 'plbOnlyMax';
+        group.append(most);
+        said.push(most.id);
+      }
+      group.querySelector("input[name='plbMode'][value='only']").setAttribute('aria-describedby', said.join(' '));
     }
     parts.push(group);
 

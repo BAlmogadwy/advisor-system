@@ -8893,6 +8893,8 @@ html[data-theme="dark"] .plb {
 .plb-gb .plb-bs, .plb-gb .plb-bt { color: var(--t3); }
 .plb-k--alt { background: transparent; border: 1px dashed var(--t4); border-inline-start: 3px dashed var(--t4); }
 .plb-or { color: var(--t3); font-weight: 400; }
+/* On a phone a week column is too narrow for the word "alt": the dashed edge and the legend say it. */
+@media (max-width: 768px) { .plb-gb .plb-alt-w { display: none; } }
 .plb-free {
   display: flex; justify-content: center; padding-top: 94px; margin-inline-start: 1px;
   background: color-mix(in srgb, var(--ink) 3%, transparent); font-size: var(--text-xs); font-weight: 600; color: var(--t3);
