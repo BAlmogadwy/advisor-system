@@ -132,17 +132,17 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
     # ── Option tabs ──────────────────────────────────────────────────────────
     def test_five_options_give_three_tabs_more_options_and_registered_last(self) -> None:
         page, _ = self._built()
-        self.assertEqual(self._tab_names(page), ["B1", "B2", "B3", "(registered)"])
+        self.assertEqual(self._tab_names(page), ["C1", "B1", "C2", "(registered)"])
         self.assertEqual(page.get_attribute("#plbTabs", "role"), "tablist")
-        self.assertEqual(page.get_attribute("#plbTab_B1", "aria-selected"), "true")
-        self.assertEqual(page.get_attribute("#plbTab_B2", "aria-selected"), "false")
+        self.assertEqual(page.get_attribute("#plbTab_C1", "aria-selected"), "true")
+        self.assertEqual(page.get_attribute("#plbTab_B1", "aria-selected"), "false")
         self.assertEqual(page.get_attribute("#plbTabRegistered", "aria-selected"), "false")
         self.assertEqual(self._text(page, "#plbMoreBtn"), "More options (2)")
         self.assertEqual(page.get_attribute("#plbMoreBtn", "aria-expanded"), "false")
         self.assertTrue(page.locator("#plbMoreList").is_hidden())
         # The tab list holds tabs only; "More options" is a disclosure beside it.
         order = page.eval_on_selector_all("#plbTabs > *", "ns => ns.map(n => n.id)")
-        self.assertEqual(order, ["plbTab_B1", "plbTab_B2", "plbTab_B3", "plbTabRegistered"])
+        self.assertEqual(order, ["plbTab_C1", "plbTab_B1", "plbTab_C2", "plbTabRegistered"])
         roles = page.eval_on_selector_all(
             "#plbTabs > *", "ns => ns.map(n => n.getAttribute('role'))"
         )
@@ -152,17 +152,34 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
 
     def test_each_tab_says_its_three_lines_from_its_own_meetings(self) -> None:
         page, _ = self._built()
+        # The first of the order carries the Suggested label on its last line.
+        self.assertEqual(
+            self._tab_lines(page, "C1"),
+            [
+                "C1 Four afternoons 15 cr",
+                "4 days · Thu free",
+                "ends 14:00 · gap 2 h 30 min Suggested",
+            ],
+        )
         self.assertEqual(
             self._tab_lines(page, "B1"),
-            ["B1 · 15 cr", "4 days · Thu free", "ends 14:15 · gap 1 h 45 min"],
+            ["B1 Three afternoons 15 cr", "4 days · Thu free", "ends 14:15 · gap 1 h 45 min"],
         )
+        self.assertEqual(
+            self._tab_lines(page, "C2"),
+            ["C2 Two afternoons 15 cr", "5 days · no free day", "ends 14:00 · gap 3 h 30 min"],
+        )
+        # The two that wait under "More options": B2 leaves a course out and, reading like B3,
+        # goes without a name.
+        self._pick(page, "B2")
         self.assertEqual(
             self._tab_lines(page, "B2"),
-            ["B2 · 12 cr", "4 days · Thu free", "ends 14:00 · gap 45 min", "1 not scheduled"],
+            ["B2 12 cr", "4 days · Thu free", "ends 14:00 · gap 45 min", "1 not scheduled"],
         )
+        self._pick(page, "B3")
         self.assertEqual(
             self._tab_lines(page, "B3"),
-            ["B3 · 15 cr", "5 days · no free day", "ends 16:15 · gap 1 h"],
+            ["B3 15 cr", "5 days · no free day", "ends 16:15 · gap 1 h"],
         )
         # The Registered tab keeps what part one says.
         self.assertEqual(self._text(page, "#plbTabFacts1"), "4 days · Thu free")
@@ -176,18 +193,18 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         items = page.eval_on_selector_all(
             "#plbMoreList .plb-more-item", "ns => ns.map(n => n.dataset.more)"
         )
-        self.assertEqual(items, ["C1", "C2"])
-        page.click("#plbMoreList [data-more='C2']")
-        self.assertEqual(self._tab_names(page), ["B1", "B2", "B3", "C2", "(registered)"])
-        self.assertEqual(page.get_attribute("#plbTab_C2", "aria-selected"), "true")
+        self.assertEqual(items, ["B3", "B2"])
+        page.click("#plbMoreList [data-more='B3']")
+        self.assertEqual(self._tab_names(page), ["C1", "B1", "C2", "B3", "(registered)"])
+        self.assertEqual(page.get_attribute("#plbTab_B3", "aria-selected"), "true")
         self.assertEqual(self._text(page, "#plbMoreBtn"), "More options (1)")
         self.assertTrue(page.locator("#plbMoreList").is_hidden())
-        expect(page.locator("#plbTab_C2")).to_be_focused()
+        expect(page.locator("#plbTab_B3")).to_be_focused()
         self.assertEqual(self._cell(page, "AI331"), "§M2")
         self.assertEqual(self._cell(page, "AI342"), "§M1")
         self.assertEqual(
-            self._tab_lines(page, "C2"),
-            ["C2 · 15 cr", "5 days · no free day", "ends 14:00 · gap 3 h 30 min"],
+            self._tab_lines(page, "B3"),
+            ["B3 15 cr", "5 days · no free day", "ends 16:15 · gap 1 h"],
         )
         # Escape closes the list and gives the focus back to the button.
         page.click("#plbMoreBtn")
@@ -198,37 +215,42 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
 
     def test_arrow_keys_home_and_end_move_between_the_tabs(self) -> None:
         page, _ = self._built()
-        page.focus("#plbTab_B1")
+        page.focus("#plbTab_C1")
         page.keyboard.press("ArrowRight")
-        expect(page.locator("#plbTab_B2")).to_be_focused()
-        self.assertEqual(page.get_attribute("#plbTab_B2", "aria-selected"), "true")
-        self.assertEqual(page.get_attribute("#plbTab_B2", "tabindex"), "0")
-        self.assertEqual(page.get_attribute("#plbTab_B1", "tabindex"), "-1")
+        expect(page.locator("#plbTab_B1")).to_be_focused()
+        self.assertEqual(page.get_attribute("#plbTab_B1", "aria-selected"), "true")
+        self.assertEqual(page.get_attribute("#plbTab_B1", "tabindex"), "0")
+        self.assertEqual(page.get_attribute("#plbTab_C1", "tabindex"), "-1")
         page.keyboard.press("End")
         expect(page.locator("#plbTabRegistered")).to_be_focused()
         self.assertEqual(page.get_attribute("#plbTabRegistered", "aria-selected"), "true")
         page.keyboard.press("ArrowRight")  # wraps to the first
-        expect(page.locator("#plbTab_B1")).to_be_focused()
+        expect(page.locator("#plbTab_C1")).to_be_focused()
         page.keyboard.press("ArrowLeft")  # and back to the last
         expect(page.locator("#plbTabRegistered")).to_be_focused()
         page.keyboard.press("Home")
-        expect(page.locator("#plbTab_B1")).to_be_focused()
-        self.assertEqual(page.get_attribute("#plbWeekPanel", "aria-labelledby"), "plbTab_B1")
+        expect(page.locator("#plbTab_C1")).to_be_focused()
+        self.assertEqual(page.get_attribute("#plbWeekPanel", "aria-labelledby"), "plbTab_C1")
 
     # ── The week and the courses table follow the tab ───────────────────────
     def test_the_week_follows_the_selected_tab(self) -> None:
         page, _ = self._built()
-        # B1 is selected: six registered blocks and three planned ones.
+        # C1, the first of the order, is selected: six registered blocks and three planned ones.
         self.assertEqual(len(self._blocks(page, "reg")), 6)
         self.assertEqual(sorted(self._blocks(page, "new")), ["AI331 new", "AI331 new", "AI342 new"])
-        self.assertEqual(self._text(page, "#plbWeekName"), "Option B1")
+        self.assertEqual(self._text(page, "#plbWeekName"), "Option C1 · Four afternoons")
         self.assertEqual(self._text(page, "#plbLegend"), "Registered Planned")
         footers = page.eval_on_selector_all(
             "#plbWeek .plb-df", "fs => fs.map(f => f.innerText.replace(/\\s+/g, ' ').trim())"
         )
-        self.assertEqual(footers[0], "3 classes ends 14:15")
+        self.assertEqual(footers[0], "3 classes ends 13:15")
         self.assertEqual(footers[4], "No classes day off")
-        page.click("#plbTab_B3")
+        page.click("#plbTab_B1")
+        footers = page.eval_on_selector_all(
+            "#plbWeek .plb-df", "fs => fs.map(f => f.innerText.replace(/\\s+/g, ' ').trim())"
+        )
+        self.assertEqual(footers[0], "3 classes ends 14:15")
+        self._pick(page, "B3")
         self.assertEqual(len(self._blocks(page, "reg")), 6)
         self.assertEqual(sorted(self._blocks(page, "new")), ["AI331 new", "AI331 new", "AI342 new"])
         footers = page.eval_on_selector_all(
@@ -252,9 +274,10 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
 
     def test_the_section_cells_follow_the_tab_and_an_unplaced_course_says_so(self) -> None:
         page, _ = self._built()
+        page.click("#plbTab_B1")
         self.assertEqual(self._cell(page, "AI331"), "§M2")
         self.assertEqual(self._cell(page, "AI342"), "§M1")
-        page.click("#plbTab_B2")
+        self._pick(page, "B2")
         self.assertEqual(self._cell(page, "AI331"), "§M1")
         self.assertEqual(self._cell(page, "AI342"), "not scheduled in this option")
         self.assertEqual(self._tab_lines(page, "B2")[-1], "1 not scheduled")
@@ -279,12 +302,12 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         contexts = len(fake.context_bodies)
         page.click("#plbReview")
         expect(page.locator("#plbApplyDialog")).to_be_visible()
-        self.assertEqual(self._text(page, "#plbApplyTitle"), "Review and apply option B1")
+        self.assertEqual(self._text(page, "#plbApplyTitle"), "Review and apply option C1")
         rows = page.eval_on_selector_all(
             "#plbApplyList li", "ls => ls.map(l => l.textContent.replace(/\\s+/g, ' ').trim())"
         )
         self.assertEqual(len(rows), 2)
-        self.assertIn("AI331 §M2 Machine Learning", rows[0])
+        self.assertIn("AI331 §M1 Machine Learning", rows[0])
         self.assertIn("AI342 §M1 Computer Vision", rows[1])
         self.assertIn("Registered courses stay as they are (3)", self._text(page, "#plbApplyReg"))
         self.assertIn("CS301", self._text(page, "#plbApplyReg"))
@@ -369,7 +392,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(len(fake.context_bodies), contexts)
         page.click("#plbApplyCancel")
         expect(page.locator("#plbApplyDialog")).not_to_be_visible()
-        self.assertEqual(self._tab_names(page), ["B1", "B2", "B3", "(registered)"])
+        self.assertEqual(self._tab_names(page), ["C1", "B1", "C2", "(registered)"])
         # Other refusals read the way the current page reads them.
         fake.save_answer = lambda body: (500, {"ok": False, "error": "plain text refusal"})
         page.click("#plbReview")
@@ -430,16 +453,16 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
 
     def test_choosing_a_tab_keeps_the_focus_on_it(self) -> None:
         page, _ = self._built()
-        page.focus("#plbTab_B1")
+        page.focus("#plbTab_C1")
         page.keyboard.press("ArrowRight")
-        expect(page.locator("#plbTab_B2")).to_be_focused()
+        expect(page.locator("#plbTab_B1")).to_be_focused()
         # Enter on a tab redraws the strip: the keyboard must not fall to the top of the page.
         page.keyboard.press("Enter")
-        expect(page.locator("#plbTab_B2")).to_be_focused()
-        self.assertEqual(page.get_attribute("#plbTab_B2", "aria-selected"), "true")
-        page.click("#plbTab_B3")
-        expect(page.locator("#plbTab_B3")).to_be_focused()
-        self.assertEqual(page.get_attribute("#plbTab_B3", "aria-selected"), "true")
+        expect(page.locator("#plbTab_B1")).to_be_focused()
+        self.assertEqual(page.get_attribute("#plbTab_B1", "aria-selected"), "true")
+        page.click("#plbTab_C2")
+        expect(page.locator("#plbTab_C2")).to_be_focused()
+        self.assertEqual(page.get_attribute("#plbTab_C2", "aria-selected"), "true")
         page.click("#plbTabRegistered")
         expect(page.locator("#plbTabRegistered")).to_be_focused()
 
@@ -448,7 +471,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertTrue(page.locator("#plbReview").is_enabled())
         page.click("#plbTabRegistered")
         self.assertTrue(page.locator("#plbReview").is_disabled())
-        page.click("#plbTab_B2")
+        page.click("#plbTab_B1")
         self.assertTrue(page.locator("#plbReview").is_enabled())
 
     def test_comparison_only_builds_cannot_be_applied_and_say_why(self) -> None:
@@ -463,7 +486,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
             self._text(page, "#plbApplyWhy"),
             "Comparison only: other programmes' sections are included",
         )
-        page.click("#plbTab_B2")
+        page.click("#plbTab_B1")
         self.assertTrue(page.locator("#plbReview").is_disabled())
         self.assertEqual(fake.save_bodies, [])
 
@@ -578,7 +601,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         # A change to the plan or a rule now keeps the options, marked out of date
         # (tests/test_planner_board_detail_browser.py); another student still removes them.
         page, _ = self._built()
-        self.assertEqual(self._tab_names(page)[0], "B1")
+        self.assertEqual(self._tab_names(page)[0], "C1")
         self._fetch(page, OTHER_ID)
         self._assert_options_gone(page)
         self.assertEqual(self._cell(page, "AI331"), "any section")
@@ -588,13 +611,13 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         page.click("#plbEditRules")
         page.click("#plbRulesApply")
         expect(page.locator("#plbRulesDialog")).not_to_be_visible()
-        self.assertEqual(self._tab_names(page), ["B1", "B2", "B3", "(registered)"])
+        self.assertEqual(self._tab_names(page), ["C1", "B1", "C2", "(registered)"])
         self.assertTrue(page.locator("#plbReview").is_enabled())
 
     def test_a_rebuild_replaces_the_options_and_selects_the_first(self) -> None:
         fake = BuildFake()
         page, _ = self._built(fake)
-        page.click("#plbTab_B3")
+        page.click("#plbTab_C2")
         fake.build_answer = lambda body: (200, build_reply([C1, C2]))
         page.click("#plbBuild")
         expect(page.locator("#plbTab_C1")).to_be_visible()
@@ -616,29 +639,30 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("أعد البناء")
         self.assertEqual(self._text(page, "#plbMoreBtn"), "خيارات أخرى (2)")
+        self._pick(page, "B2")
         self.assertEqual(
             self._tab_lines(page, "B2"),
             [
-                "B2 · 12 ساعة",
+                "B2 12 ساعة",
                 "4 أيام · الخميس فارغ",
                 "تنتهي 14:00 · فجوة 45 د",
                 "مقرر واحد غير مجدول",
             ],
         )
-        self.assertEqual(self._text(page, "#plbWeekName"), "الخيار B1")
+        self.assertEqual(self._text(page, "#plbWeekName"), "الخيار B2")
         self.assertEqual(self._text(page, "#plbLegend"), "المسجّل المخطَّط")
-        page.click("#plbTab_B2")
         self.assertEqual(self._cell(page, "AI342"), "غير مجدول في هذا الخيار")
         # The keys mirror: in a right-to-left page the left arrow goes to the next tab.
-        page.focus("#plbTab_B2")
+        page.click("#plbTab_B1")
+        page.focus("#plbTab_B1")
         page.keyboard.press("ArrowLeft")
-        expect(page.locator("#plbTab_B3")).to_be_focused()
+        expect(page.locator("#plbTab_C2")).to_be_focused()
         # Tabs run from the right edge, and the dialog speaks Arabic.
-        first = page.locator("#plbTab_B1").bounding_box()
+        first = page.locator("#plbTab_C1").bounding_box()
         last = page.locator("#plbTabRegistered").bounding_box()
         self.assertGreater(first["x"], last["x"])
         page.click("#plbReview")
-        self.assertEqual(self._text(page, "#plbApplyTitle"), "مراجعة وتطبيق الخيار B3")
+        self.assertEqual(self._text(page, "#plbApplyTitle"), "مراجعة وتطبيق الخيار C2")
         self.assertEqual(self._text(page, "#plbApplyGo"), "تطبيق")
         self.assertIn("المقررات المسجّلة تبقى كما هي (3)", self._text(page, "#plbApplyReg"))
         self.assertGreater(page.locator("#plbApplyList bdi[dir='ltr']").count(), 3)
@@ -670,7 +694,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
                     expect(page.locator("#plbMoreList")).to_be_visible()
                     found = list(page.evaluate(OVERFLOWS))
                     page.keyboard.press("Escape")
-                    page.click("#plbTab_B2")
+                    page.click("#plbTab_B1")
                     found += page.evaluate(OVERFLOWS)
                     page.click("#plbReview")
                     expect(page.locator("#plbApplyDialog")).to_be_visible()
@@ -700,8 +724,8 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         )
         self.assertEqual([s for s in sizes if s[1] < 43.5], [])
         page.keyboard.press("Shift")
-        page.focus("#plbTab_B2")
+        page.focus("#plbTab_B1")
         self.assertNotEqual(
-            page.evaluate("getComputedStyle(document.getElementById('plbTab_B2')).outlineStyle"),
+            page.evaluate("getComputedStyle(document.getElementById('plbTab_B1')).outlineStyle"),
             "none",
         )

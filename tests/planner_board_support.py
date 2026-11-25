@@ -460,7 +460,7 @@ EXPECTED_SAVE_BODY = {
     "student_id": STUDENT_ID,
     "academic_year": "1448",
     "term": "1",
-    "term_section_ids": [12, 15],
+    "term_section_ids": [11, 15],
     "confirm_replace": True,
 }
 
@@ -528,6 +528,48 @@ class BuildFake(Fake):
         if status == 200:
             self.saved = True
         route.fulfill(status=status, json=payload)
+
+
+# ── Part five: options crafted for the order, the names and the guidance ──────────────────────
+PLAN_CODES = ("AI331", "AI342")  # the two courses of the plan the fixtures build
+
+
+def _tsid(name: str, k: int) -> int:
+    return int(f"{ord(name[0])}{name[1]}{k}")
+
+
+def week_option(name: str, first=None, second=None, *, sections=(None, None), tsids=None):
+    """An option that places AI331 as `first` and AI342 as `second`, each (days, start, end);
+    a course given as None is left out (and listed as unscheduled, as the server would)."""
+    placed, left = [], []
+    for k, (code, spec) in enumerate(zip(PLAN_CODES, (first, second), strict=True)):
+        if spec is None:
+            left.append({"course_code": code, "reason_code": "ALL_SECTIONS_CLASH"})
+            continue
+        days, start, end = spec
+        tsid = (tsids or {}).get(code) or _tsid(name, k)
+        placed.append(_mapping(code, sections[k] or f"{name}{k}", tsid, days, start, end))
+    return _option(name, placed, unscheduled=left)
+
+
+def catalog_with(*rows):
+    """A sections catalogue from (tsid, code, section, registered, capacity) rows."""
+    sections = [
+        _section(tsid, code, section, ["SUN"], "08:00", "09:15", registered, capacity)
+        for tsid, code, section, registered, capacity in rows
+    ]
+    return {"ok": True, "count": len(sections), "program_sections_only": True, "sections": sections}
+
+
+def board_fake(options, *, projection=None, catalog=None):
+    """A BuildFake whose build answers with these options (and its projection and catalogue)."""
+    fake = BuildFake()
+    fake.build_answer = lambda body: (200, build_reply(options))
+    if projection is not None:
+        fake.projection_answer = lambda body: (200, projection)
+    if catalog is not None:
+        fake.catalog_payload = catalog
+    return fake
 
 
 class PlannerBoardCase(StaticLiveServerTestCase):
@@ -615,6 +657,14 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         page.fill("#plbStudentId", student_id)
         page.click("#plbFetch")
 
+    #: After a build the page shows the first option of its own order (C1 for FIVE). A test class
+    #: that is about something else than the order names the tab it reads from here.
+    start_on: str | None = None
+
+    def _start(self, page) -> None:
+        if self.start_on and page.locator(f"#plbTabs [data-opt='{self.start_on}']").count():
+            page.click(f"#plbTabs [data-opt='{self.start_on}']")
+
     def _built(self, fake=None, **kwargs):
         fake = fake or BuildFake()
         page = self._open(fake, **kwargs)
@@ -623,6 +673,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             "Rebuild" if kwargs.get("language", "en") == "en" else "أعد البناء"
         )
         expect(page.locator("#plbBuild")).to_be_enabled()
+        self._start(page)
         return page, fake
 
     def _projected(self, reply=None, fake=None, **kwargs):
@@ -675,6 +726,39 @@ class PlannerBoardCase(StaticLiveServerTestCase):
     @staticmethod
     def _text(page, selector: str) -> str:
         return re.sub(r"\s+", " ", (page.locator(selector).first.text_content() or "").strip())
+
+    def _board(
+        self,
+        options,
+        *,
+        ignore=True,
+        projection=None,
+        catalog=None,
+        hold_projection=False,
+        **kwargs,
+    ):
+        """A board built from exactly these options (the registered week ignored unless asked)."""
+        fake = board_fake(options, projection=projection, catalog=catalog)
+        if hold_projection:
+            fake.hold_projection = 1
+        page = self._open(fake, **kwargs)
+        if ignore:
+            self._rules(page, mode="ignore")
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_have_text(
+            "Rebuild" if kwargs.get("language", "en") == "en" else "أعد البناء"
+        )
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        return page, fake
+
+    @staticmethod
+    def _pick(page, name: str) -> None:
+        """Select an option, from its tab or from "More options"."""
+        if page.locator(f"#plbTabs [data-opt='{name}']").count():
+            page.click(f"#plbTabs [data-opt='{name}']")
+        else:
+            page.click("#plbMoreBtn")
+            page.click(f"#plbMoreList [data-more='{name}']")
 
     @staticmethod
     def _rules(page, **values) -> None:
