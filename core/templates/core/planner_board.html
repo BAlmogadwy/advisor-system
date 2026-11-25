@@ -68,7 +68,7 @@
             </div>
           </div>
 
-          <div class="plb-acts" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات وتطبيقها{% else %}Build and apply{% endif %}">
+          <div class="plb-acts" id="plbActs" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات وتطبيقها{% else %}Build and apply{% endif %}">
             <div class="plb-acts-row">
               <button type="button" class="btn btn-primary" id="plbBuild" disabled>{% if LANGUAGE_CODE == 'ar' %}ابنِ الخيارات{% else %}Build options{% endif %}</button>
               <button type="button" class="btn btn-neutral" id="plbReview" aria-haspopup="dialog" disabled>{% if LANGUAGE_CODE == 'ar' %}مراجعة وتطبيق{% else %}Review and apply{% endif %}</button>
@@ -76,6 +76,8 @@
             <p class="plb-acts-note plb-acts-why" id="plbApplyWhy" hidden></p>
             <p class="plb-acts-note" id="plbBuildLine" role="status" aria-live="polite"></p>
             <p class="plb-acts-note" id="plbLastBuild" hidden></p>
+            <button type="button" class="plb-lk plb-why-btn" id="plbWhyBtn" aria-expanded="false" aria-controls="plbWhy" hidden>{% if LANGUAGE_CODE == 'ar' %}لماذا هذه الخيارات{% else %}Why these options{% endif %}</button>
+            <div class="plb-why" id="plbWhy" hidden></div>
             <p class="plb-acts-note plb-acts-safe">{% if LANGUAGE_CODE == 'ar' %}لا يُحفظ شيء ولا يُحجز أي مقعد حتى تضغط تطبيق.{% else %}Nothing is saved and no seat is held until you apply.{% endif %}</p>
           </div>
 
@@ -114,7 +116,7 @@
             <div id="plbWeek"></div>
           </section>
 
-          <aside class="plb-detail" id="plbDetail" hidden></aside>
+          <aside class="plb-detail" id="plbDetail" role="region" aria-labelledby="plbDetailTitle" hidden></aside>
         </div>
       </div>
 
@@ -197,5 +199,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=2"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=3"></script>
 {% endblock %}

@@ -183,6 +183,52 @@
     clashSaved: (n) => (IS_AR
       ? pluralAr(n, forms('يتعارض لقاء واحد مع الجدول المسجّل', 'يتعارض لقاءان مع الجدول المسجّل', 'تتعارض {n} لقاءات مع الجدول المسجّل', 'يتعارض {n} لقاءً مع الجدول المسجّل'))
       : `${n} ${n === 1 ? 'class clashes' : 'classes clash'} with the registered timetable`),
+    // Where a save went (the code: StudentTermSection rows with source "planner" are the WORKING
+    // snapshot class; registrar rows outrank them when this page reads the student back).
+    savedWhere: (n, year, term) => (IS_AR
+      ? [`تم حفظ ${pluralAr(n, forms('شعبة واحدة', 'شعبتين', '{n} شعب', '{n} شعبة'))} كجدول مخطَّط لهذا الطالب للفصل `, bdi(`${year}/${term}`), '. المقررات المسجّلة لم تتغيّر.']
+      : [`Saved ${n} ${n === 1 ? 'section' : 'sections'} as this student's planned timetable for `, bdi(`${year}/${term}`), '. Registered courses are unchanged.']),
+    savedShown: IS_AR
+      ? 'لا جدول مسجّل لهذا الطالب في هذا الفصل، لذا تعرض هذه الصفحة الشُعب المحفوظة كأسبوعه.'
+      : 'No registered timetable is on file for this term, so this page now shows the saved sections as the week.',
+    // The out-of-date build.
+    stale: IS_AR ? 'تغيّرت الخطة منذ هذا البناء. أعد البناء قبل التطبيق.' : 'The plan changed since this build. Rebuild to apply.',
+    staleOld: IS_AR ? 'مضى على هذا البناء أكثر من 30 دقيقة. أعد البناء قبل التطبيق.' : 'This build is over 30 minutes old. Rebuild before applying.',
+    notInBuild: IS_AR ? 'ليس في هذا البناء' : 'not in this build',
+    // The course detail panel.
+    close: IS_AR ? 'إغلاق' : 'Close',
+    detailTitle: (code) => (IS_AR ? `تفاصيل ${code}` : `Details for ${code}`),
+    detailSections: IS_AR ? 'الشعبة' : 'Section',
+    anySectionOpt: IS_AR ? 'أي شعبة' : 'Any section',
+    anySectionHint: IS_AR ? 'يختار البناء الشعبة المناسبة.' : 'The build chooses the section.',
+    seatsTaken: (taken, max) => (IS_AR ? `${taken} من ${max} مشغولة` : `${taken} of ${max} taken`),
+    seatsFull: IS_AR ? 'ممتلئة' : 'Full',
+    seatsUnknown: IS_AR ? 'السعة غير معروفة' : 'seats unknown',
+    clashFlag: IS_AR ? 'يتعارض مع مقرر مسجّل' : 'Clashes with a registered class',
+    inOptions: (names) => [IS_AR ? 'في ' : 'in ', ...names.flatMap((n, i) => (i ? [IS_AR ? '، ' : ', ', bdi(n)] : [bdi(n)]))],
+    cannotFull: IS_AR ? 'غير متاحة: الشُعب الممتلئة غير مسموحة في القواعد.' : 'Not available: full sections are off in the rules.',
+    cannotClash: IS_AR ? 'غير متاحة: تتعارض مع مقرر مسجّل، والمسجّل مُبقى عليه.' : 'Not available: it clashes with a registered class, and registered courses are kept.',
+    pinBroken: IS_AR ? 'مثبّتة، لكن لم يعد استخدامها ممكنًا. ' : 'Pinned, but it can no longer be used. ',
+    pinGone: IS_AR ? 'مثبّتة، لكنها ليست في قائمة الشُعب الحالية.' : 'Pinned, but it is not in the current section list.',
+    noCatalog: IS_AR ? 'بيانات الشُعب غير متاحة.' : 'Section data is not available.',
+    readOnlyHint: IS_AR ? 'هذا المقرر ليس في الخطة بعد. أضفه لتثبيت شعبة.' : 'This course is not in the plan yet. Add it to pin a section.',
+    removeFromPlan: IS_AR ? 'إزالة من الخطة' : 'Remove from plan',
+    addToPlan: IS_AR ? 'إضافة إلى الخطة' : 'Add to plan',
+    pinnedSet: (code, section) => (IS_AR ? ['ثُبّتت الشعبة ', bdi(`${code} §${section}`), '.'] : ['Pinned ', bdi(`${code} §${section}`), '.']),
+    pinnedCleared: (code) => (IS_AR ? [bdi(code), ': أي شعبة.'] : [bdi(code), ': any section.']),
+    // Why these options.
+    whyButton: IS_AR ? 'لماذا هذه الخيارات' : 'Why these options',
+    whyMethod: {
+      A: IS_AR ? 'تحاول جدولة أكبر عدد ممكن من مقررات الخطة.' : 'Tries to schedule as many courses of the plan as it can.',
+      B: IS_AR ? 'تبحث عن أسبوع مضغوط: أيام أقل وفجوات أقل معًا.' : 'Looks for a compact week: few days and few gaps together.',
+      C: IS_AR ? 'تقلّل أيام الحضور أولًا ثم الفجوات.' : 'Uses the fewest days first, then the fewest gaps.',
+    },
+    whyMethodName: (letter) => (IS_AR ? ['الطريقة ', bdi(letter)] : ['Method ', bdi(letter)]),
+    whyCount: (n) => (IS_AR
+      ? (n ? pluralAr(n, forms('خيار واحد', 'خياران', '{n} خيارات', '{n} خيارًا')) : 'لم تُرجع خيارًا')
+      : (n ? `${n} ${n === 1 ? 'option' : 'options'}` : 'no option returned')),
+    whyUnscheduled: IS_AR ? 'مقررات غير مجدولة' : 'Courses left unscheduled',
+    whyAllPlaced: IS_AR ? 'جُدول كل مقرر في الخطة في كل خيار.' : 'Every course in the plan was scheduled in each option.',
   };
 
   const DAY_ORDER = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -223,15 +269,19 @@
     shownElig: null,   // the eligibility the suggestions on screen were loaded with
     defaults: { ...DEFAULT_RULES },
     focus: null,       // {kind, code}: where focus goes after the next redraw
-    // The build loop. `build` is null until a reply is accepted, and again whenever the plan or
-    // the rules it was built from change: {options, shortlist, rules, at, ...}.
+    // The build loop. `build` is null until a reply is accepted, and again when another student
+    // loads or a save lands: {options, shortlist, rules, at, madeAt, stale, ...}. A change to the
+    // plan or the rules keeps it and sets `stale` ('changed'; 'old' after 30 minutes).
     build: null,
     selected: null,    // name of the option tab on screen; null = the Registered tab
     buildGen: 0,       // bumped whenever a reply in flight must no longer be believed
     inflight: 0,       // build requests not yet answered: the button waits for all of them
     applying: false,   // a save request is in flight
     moreOpen: false,   // the "More options" disclosure
+    detail: null,      // {code, name, credits}: the course whose detail panel is open
+    whyOpen: false,    // the "Why these options" disclosure
   };
+  const STALE_AFTER_MS = 30 * 60 * 1000;
 
   /* ── Small helpers ─────────────────────────────────────────────────────── */
   function el(tag, cls, ...kids) {
@@ -278,6 +328,7 @@
     lock: [['rect', { x: 5, y: 11, width: 14, height: 9, rx: 2 }], ['path', { d: 'M8 11V8a4 4 0 0 1 8 0v3' }]],
     plus: [['path', { d: 'M12 5v14M5 12h14' }]],
     x: [['path', { d: 'M6 6l12 12M18 6L6 18' }]],
+    chev: [['path', { d: 'M6 9l6 6 6-6' }]],
   };
   const norm = (code) => String(code || '').replace(/\s+/g, '').toUpperCase();
   const finitePositive = (value) => {
@@ -316,6 +367,22 @@
     if (max === null || taken === null) return { known: false, full: false, remaining: null };
     const remaining = Math.max(0, max - taken);
     return { known: true, full: remaining === 0, remaining };
+  }
+  // 1 to SEAT_WARNING seats left. An unknown capacity is never a warning, and a full one is not "few".
+  const fewSeats = (cap) => cap.known && cap.remaining >= 1 && cap.remaining <= SEAT_WARNING;
+  // A duration never breaks across two lines ("1 س 45 د" stays together).
+  function nb(text) {
+    const node = document.createElement('span');
+    node.className = 'plb-nb';
+    node.textContent = String(text);
+    return node;
+  }
+  function findSection(tsid) {
+    if (!state.catalog || tsid === null || tsid === undefined) return null;
+    for (const list of state.catalog.values()) {
+      for (const section of list) if (String(section.term_section_id) === String(tsid)) return section;
+    }
+    return null;
   }
   function durationText(mins) {
     if (mins < 60) return T.minutes(mins);
@@ -396,8 +463,8 @@
     };
     closeRulesDialog();
     renderRules();
-    // Options built under other rules are not options for these.
-    if (Object.keys(DEFAULT_RULES).some((key) => state.rules[key] !== before[key])) dropBuild(true);
+    // Options built under other rules are not options for these: they stay, marked out of date.
+    if (Object.keys(DEFAULT_RULES).some((key) => state.rules[key] !== before[key])) planChanged();
     // The other rules apply at once, whatever happens to the reload below.
     renderCourses();
     if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
@@ -552,7 +619,7 @@
       first: `${T.dayWord(model.campusDays)} · ${free}`,
       second: [
         `${T.ends} `, bdi(hhmm(model.lastEnd)), ' · ',
-        model.longestGap > 0 ? `${T.gap} ${durationText(model.longestGap)}` : T.noGap,
+        ...(model.longestGap > 0 ? [`${T.gap} `, nb(durationText(model.longestGap))] : [T.noGap]),
       ],
     };
   }
@@ -690,15 +757,45 @@
   function optionIds(opt) {
     return (opt.mappings || []).map((m) => m.term_section_id).filter(Boolean);
   }
-  function optionTab(opt) {
+  // The fewest seats left in any section the option uses, when that is a warning; else null.
+  function fewestSeats(opt) {
+    let least = null;
+    for (const mapping of opt.mappings || []) {
+      const section = findSection(mapping.term_section_id);
+      if (!section) continue;
+      const cap = sectionCapacity(section);
+      if (fewSeats(cap) && (least === null || cap.remaining < least)) least = cap.remaining;
+    }
+    return least;
+  }
+  const modelKey = (model) => JSON.stringify([model.campusDays, model.freeDays, model.lastEnd, model.longestGap]);
+  const sectionKey = (m) => `${courseKeyOf(m) || norm(m.course_code)}|${String(m.section || '').trim()}`;
+  // For a tab that reads like another: the sections it does not share with every other option.
+  function differenceLine(opt, options) {
+    const others = options.filter((o) => o !== opt).map((o) => new Set((o.mappings || []).map(sectionKey)));
+    const unique = (opt.mappings || []).filter((m) => others.some((set) => !set.has(sectionKey(m))));
+    if (!unique.length) return null;
+    const parts = [];
+    unique.slice(0, 2).forEach((m, i) => {
+      const section = String(m.section || '').trim();
+      if (i) parts.push(', ');
+      parts.push(bdi(`${courseKeyOf(m) || norm(m.course_code)}${section ? ` §${section}` : ''}`));
+    });
+    if (unique.length > 2) parts.push(' ', bdi(`+${unique.length - 2}`));
+    return el('span', 'plb-tab-x plb-tab-diff', ...parts);
+  }
+  function optionTab(opt, alike) {
     const facts = factsOf(weekModel(weekMeetings(opt)));
     const unplaced = unplacedFor(opt).length;
+    const seats = fewestSeats(opt);
+    const flags = [unplaced ? T.notScheduled(unplaced) : null, seats === null ? null : T.seatsLeft(seats)].filter(Boolean);
     const selected = state.selected === opt.name;
     const tab = el('button', 'plb-tab',
       el('span', 'plb-tab-n', bdi(opt.name), ' ', el('span', 'plb-tab-cr', `· ${T.credits(optionCredits(opt))}`)),
       el('span', 'plb-tab-x', facts.first),
       el('span', 'plb-tab-x', ...facts.second),
-      unplaced ? el('span', 'plb-tab-x plb-tab-warn', T.notScheduled(unplaced)) : null);
+      alike ? differenceLine(opt, state.build.options) : null,
+      flags.length ? el('span', 'plb-tab-x plb-tab-warn', flags.join(' · ')) : null);
     tab.type = 'button';
     tab.id = tabId(opt.name);
     tab.dataset.opt = opt.name;
@@ -745,7 +842,13 @@
     const chosen = options.findIndex((o) => o.name === state.selected);
     if (chosen >= 3) shown.push(options[chosen]);
     const hidden = options.filter((o) => !shown.includes(o));
-    for (const opt of shown) tabs.insertBefore(optionTab(opt), registered);
+    // Tabs whose three facts are the same each say what sets them apart.
+    const keys = shown.map((opt) => modelKey(weekModel(weekMeetings(opt))));
+    shown.forEach((opt, i) => {
+      tabs.insertBefore(optionTab(opt, keys.filter((k) => k === keys[i]).length > 1), registered);
+    });
+    if (state.build && state.build.stale) strip.dataset.stale = state.build.stale;
+    else delete strip.dataset.stale;
     // "More options" is a disclosure, not a tab: it sits beside the tab list, never inside it.
     if (hidden.length) strip.append(moreNode(hidden));
     else state.moreOpen = false;
@@ -814,7 +917,7 @@
     if (caps.every((c) => c.known && c.full)) return T.allFull;
     if (sections.length === 1) {
       const days = [...new Set((sections[0].meetings || []).map((m) => normDay(m.day)).filter(Boolean))];
-      const left = caps[0].known && caps[0].remaining < SEAT_WARNING ? caps[0].remaining : null;
+      const left = fewSeats(caps[0]) ? caps[0].remaining : null;
       const parts = [];
       if (days.length) parts.push(days.map((d) => DAY_SHORT[d]).join(' '));
       if (left !== null) parts.push(T.seatsLeft(left));
@@ -829,6 +932,18 @@
     button.title = label;
     button.dataset.act = act;
     button.dataset.code = norm(code);
+    return button;
+  }
+  // The section line of a course row opens that course's detail panel.
+  function sectionButton(code, parts, miss) {
+    const open = !!state.detail && state.detail.code === norm(code);
+    const button = el('button', `plb-sc plb-sc-btn${miss ? ' plb-sc--miss' : ''}`,
+      el('span', 'plb-sc-t', ...parts), svg(ICONS.chev, 12));
+    button.type = 'button';
+    button.dataset.act = 'detail';
+    button.dataset.code = norm(code);
+    button.setAttribute('aria-expanded', String(open));
+    button.setAttribute('aria-controls', 'plbDetail');
     return button;
   }
   function groupBody(name, left, right) {
@@ -875,6 +990,8 @@
       table.append(body);
       renderCreditsHeader();
       state.focus = null;
+      state.detail = null;
+      renderDetail();
       return;
     }
     const keep = state.rules.mode === 'keep';
@@ -903,14 +1020,22 @@
     for (const item of state.shortlist) {
       const code = item.course_code;
       const pin = item.pinned_sections && item.pinned_sections.length ? item.pinned_sections[0] : null;
-      const sectionCell = el('span', 'plb-sc');
+      const parts = [];
+      let miss = false;
       const chosen = opt ? mappingFor(opt, code) : null;
       if (opt) {
         // On an option's tab the cell says what that option did with the course.
-        if (chosen) sectionCell.append(bdi(`§${String(chosen.section || '').trim() || '?'}`));
-        else { sectionCell.classList.add('plb-sc--miss'); sectionCell.append(T.notScheduledHere); }
-      } else if (pin && pin.section) sectionCell.append(`${T.pinned} `, bdi(`§${pin.section}`));
-      else sectionCell.append(T.anySection);
+        if (chosen) {
+          parts.push(bdi(`§${String(chosen.section || '').trim() || '?'}`));
+          const section = findSection(chosen.term_section_id);
+          const cap = section ? sectionCapacity(section) : null;
+          if (cap && fewSeats(cap)) parts.push(' · ', el('span', 'plb-few', T.seatsLeft(cap.remaining)));
+        } else if (!state.build.shortlist.some((c) => norm(c.course_code) === norm(code))) {
+          parts.push(T.notInBuild);       // added after this build was made
+        } else { miss = true; parts.push(T.notScheduledHere); }
+      } else if (pin && pin.section) parts.push(`${T.pinned} `, bdi(`§${pin.section}`));
+      else parts.push(T.anySection);
+      const sectionCell = sectionButton(code, parts, miss);
       const box = el('input', 'plb-tick');
       box.type = 'checkbox';
       box.checked = !!item.must_take;
@@ -918,8 +1043,10 @@
       box.dataset.act = 'must';
       box.dataset.code = norm(code);
       const remove = iconButton('x', T.removeCourse(code), 'remove', code);
-      newBody.append(courseRow(code, item.course_name, sectionCell,
-        [el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)]));
+      const row = courseRow(code, item.course_name, sectionCell,
+        [el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)]);
+      if (state.detail && state.detail.code === norm(code)) row.dataset.open = 'true';
+      newBody.append(row);
     }
     table.append(newBody);
 
@@ -936,8 +1063,10 @@
       const body = groupBody('could', T.couldAdd, couldLeft);
       for (const course of pool) {
         const add = iconButton('plus', T.addCourse(course.code), 'add', course.code, 'plb-ib--add');
-        body.append(courseRow(course.code, course.name,
-          el('span', 'plb-sc', sectionInfo(course.code)), [el('td'), el('td', 'plb-act', add)]));
+        const row = courseRow(course.code, course.name,
+          sectionButton(course.code, [sectionInfo(course.code)]), [el('td'), el('td', 'plb-act', add)]);
+        if (state.detail && state.detail.code === course.code) row.dataset.open = 'true';
+        body.append(row);
       }
       table.append(body);
     }
@@ -952,6 +1081,7 @@
       table.append(body);
     }
     renderCreditsHeader();
+    renderDetail();
     restoreFocus();
   }
   function renderCreditsHeader() {
@@ -976,20 +1106,21 @@
     if (!target) target = $('plbAdd');
     if (target && !target.disabled) target.focus();
   }
-  function addCourseToPlan(item) {
+  function addCourseToPlan(item, keepFocus) {
     if (inShortlist(item.course_code)) return;
     state.shortlist.push(item);
-    dropBuild(true);
-    state.focus = { kind: 'remove', code: item.course_code };
+    planChanged();
+    // From the detail panel focus stays in the panel (it lands on its heading), not on the row.
+    state.focus = keepFocus ? null : { kind: 'remove', code: item.course_code };
     setStatus('ok', ...T.added(item.course_code));
     renderCourses();
   }
-  function removeCourseFromPlan(code) {
+  function removeCourseFromPlan(code, keepFocus) {
     const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
     if (at < 0) return;
     const [gone] = state.shortlist.splice(at, 1);
-    dropBuild(true);
-    state.focus = { kind: 'add', code: gone.course_code };
+    planChanged();
+    state.focus = keepFocus ? null : { kind: 'add', code: gone.course_code };
     setStatus('ok', ...T.removed(gone.course_code));
     renderCourses();
   }
@@ -1161,9 +1292,12 @@
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
-    dropBuild(true);   // options belong to the student and the plan they were built from
-
     const previousId = state.student ? String(state.student.student_id) : null;
+    // Options belong to the student they were built for. The same student reloaded (a rule that
+    // reloads the suggestions) keeps them, marked out of date; another student removes them.
+    if (reuse && previousId === String(data.student.student_id)) planChanged();
+    else { dropBuild(true); state.detail = null; }
+
     state.ctx = { studentId: String(data.student.student_id || studentId), year: String(data.year || year), term: String(data.term || term) };
     state.student = data.student;
     state.baseline = Array.isArray(data.baseline) ? data.baseline : [];
@@ -1235,6 +1369,35 @@
     if (reviewing && !$('plbBuild').disabled) $('plbBuild').focus();
   }
 
+  // The plan or a rule changed: a build in flight was made for the old plan and is not believed;
+  // a build on screen stays, marked out of date, and can no longer be applied.
+  function planChanged() {
+    state.buildGen += 1;
+    setStale('changed');
+  }
+  function setStale(kind) {
+    const build = state.build;
+    if (!build || build.stale === 'changed' || build.stale === kind) return;
+    build.stale = kind;
+    // A review left open lists a build that can no longer be applied: close it and say why.
+    const reviewing = $('plbApplyDialog').open && !state.applying;
+    if (reviewing) closeApply();
+    setBuildLine('warn', kind === 'old' ? T.staleOld : T.stale);
+    renderStrip();
+    renderWeek();
+    renderCourses();
+    renderActions();
+    if (reviewing && !$('plbBuild').disabled) $('plbBuild').focus();
+  }
+  // A build older than 30 minutes is out of date. Checked when Review and apply is pressed, when
+  // the page becomes visible again, and once a minute: there is no other timer.
+  function checkAge() {
+    const build = state.build;
+    if (!build || build.stale || Date.now() - build.madeAt < STALE_AFTER_MS) return false;
+    setStale('old');
+    return true;
+  }
+
   function reasonLines(build) {
     const lines = [];
     for (const f of build.failures) {
@@ -1257,6 +1420,7 @@
   function applicability() {
     const opt = currentOption();
     const build = state.build;
+    if (build && build.stale) return { ok: false, why: null };       // the status line says why
     if (build && build.options.length && !build.rules.programOnly) return { ok: false, why: T.comparisonOnly };
     if (!opt) return { ok: false, why: null };
     if (!optionIds(opt).length) return { ok: false, why: T.nothingToSave };
@@ -1273,6 +1437,11 @@
     const why = $('plbApplyWhy');
     why.textContent = verdict.why || '';
     why.hidden = !verdict.why;
+    const stale = !!(state.build && state.build.stale);
+    $('plbActs').dataset.stale = stale ? state.build.stale : '';
+    if (stale) $('plbReview').setAttribute('aria-describedby', 'plbBuildLine');
+    else $('plbReview').removeAttribute('aria-describedby');
+    renderWhy();
     const last = $('plbLastBuild');
     if (state.build) last.replaceChildren(`${T.lastBuild} `, bdi(state.build.at));
     else last.replaceChildren();
@@ -1287,6 +1456,43 @@
       note.replaceChildren();
       note.hidden = true;
     }
+  }
+
+  const methodOf = (opt) => String(opt.method || opt.name || '').charAt(0).toUpperCase();
+  // "Why these options": what each method tries to do, how many options it gave, and what was left out.
+  function renderWhy() {
+    const build = state.build;
+    const button = $('plbWhyBtn');
+    const panel = $('plbWhy');
+    if (!build) state.whyOpen = false;
+    button.hidden = !build;
+    button.setAttribute('aria-expanded', String(state.whyOpen));
+    panel.hidden = !build || !state.whyOpen;
+    if (panel.hidden) { panel.replaceChildren(); return; }
+    const lines = [];
+    for (const opt of build.options) {
+      const groups = new Map();
+      for (const u of opt.unscheduled || []) {
+        const why = T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+        if (!groups.has(why)) groups.set(why, []);
+        if (u.course_code) groups.get(why).push(String(u.course_code));
+      }
+      for (const [why, codes] of groups) lines.push([bdi(opt.name), ': ', ...(codes.length ? [...T.notScheduledList(codes), ' — '] : []), why]);
+    }
+    if (build.failures.length || build.unscheduled.length) lines.push(...reasonLines(build));
+    const allPlaced = !lines.length && build.options.length && build.options.every((o) => !unplacedFor(o).length);
+    panel.replaceChildren(
+      el('ul', 'plb-why-list', ...['A', 'B', 'C'].map((letter) => el('li', '',
+        el('b', '', ...T.whyMethodName(letter)), ' ', T.whyMethod[letter], ' ',
+        el('span', 'plb-why-n', T.whyCount(build.options.filter((o) => methodOf(o) === letter).length))))),
+      lines.length ? el('p', 'plb-why-h', T.whyUnscheduled) : null,
+      lines.length ? el('ul', 'plb-why-list', ...lines.map((parts) => el('li', '', ...parts))) : null,
+      allPlaced ? el('p', 'plb-why-p', T.whyAllPlaced) : null);
+  }
+  function setWhy(open, focus) {
+    state.whyOpen = open;
+    renderWhy();
+    if (focus) $('plbWhyBtn').focus();
   }
 
   // Exactly the body the current page posts for the same choices (page-planner.js, runBuilderRequest).
@@ -1314,6 +1520,7 @@
     state.build = null;
     state.selected = null;
     state.moreOpen = false;
+    state.whyOpen = false;
     const gen = ++state.buildGen;
     const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly };
     const shortlist = JSON.parse(JSON.stringify(state.shortlist));
@@ -1347,6 +1554,8 @@
         options: feasible ? options : [],
         shortlist,
         rules,
+        madeAt: now.getTime(),
+        stale: null,
         at: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
         failures: Array.isArray(summary.hard_constraint_failures) ? summary.hard_constraint_failures : [],
         unscheduled: Array.isArray(data.unscheduled) ? data.unscheduled : [],
@@ -1363,6 +1572,7 @@
   }
 
   function openApply() {
+    if (checkAge()) return;
     const opt = currentOption();
     if (!opt || !applicability().ok || state.applying) return;
     const build = state.build;
@@ -1404,13 +1614,16 @@
   }
   async function runApply() {
     if (state.applying) return;                     // a second click cannot post twice
+    checkAge();
     const opt = currentOption();
     if (!opt || !applicability().ok) {
-      // Nothing applicable is left to save (the options went while this was open): never go quiet.
+      // Nothing applicable is left to save (the options went, or went out of date, while this
+      // was open): never go quiet. A stale build already says why in the status line.
       closeApply();
-      setBuildLine('warn', T.planChanged);
+      if (!(state.build && state.build.stale)) setBuildLine('warn', T.planChanged);
       return;
     }
+    const savedIds = optionIds(opt);
     const ctx = { ...state.ctx };
     state.applying = true;
     renderApplyButtons();
@@ -1447,19 +1660,24 @@
     renderApplyButtons();
     closeApply();
     dropBuild(false);
-    const said = [T.saved];
+    // Where the plan went: the sections are saved as the student's planned (working) timetable.
+    // The registered rows are not touched, and the registrar's rows outrank these when the page
+    // reads the student back (Snapshot.EFFECTIVE), so a student with registrations looks unchanged.
+    const sentences = [T.savedWhere(savedIds.length, ctx.year, ctx.term)];
     if (removed.length) {
-      said.push('. ', T.removedPlanned(removed.length), ' (',
-        ...removed.flatMap((x, i) => [i ? ', ' : '', bdi(`${x.course_code || ''} ${x.section || ''}`.trim())]), ')');
+      sentences.push([T.removedPlanned(removed.length), ' (',
+        ...removed.flatMap((x, i) => [i ? ', ' : '', bdi(`${x.course_code || ''} ${x.section || ''}`.trim())]), ').']);
     }
     if (clashes.length) {
-      said.push('. ', T.clashSaved(clashes.length), ' (',
-        ...clashes.flatMap((x, i) => [i ? ', ' : '', bdi(`${x.course_code || ''} ${x.section || ''} · ${x.clashes_with || ''}`.trim())]), ')');
+      sentences.push([T.clashSaved(clashes.length), ' (',
+        ...clashes.flatMap((x, i) => [i ? ', ' : '', bdi(`${x.course_code || ''} ${x.section || ''} · ${x.clashes_with || ''}`.trim())]), ').']);
     }
-    if (removed.length || clashes.length) said.push('.');
     setBuildLine('busy', T.loading);
     const reloaded = state.ctx && state.ctx.studentId === ctx.studentId ? await loadStudent({ reuse: true }) : false;
     if (reloaded) {
+      // With no registrar timetable the saved sections are what this page reads back as the week.
+      if (state.baseline.some((row) => String(row.source || '') === 'planner')) sentences.splice(1, 0, [T.savedShown]);
+      const said = sentences.flatMap((parts, i) => (i ? [' ', ...parts] : parts));
       setBuildLine(removed.length || clashes.length ? 'warn' : 'ok', ...said);
       setStatus('ok', T.saved);
     } else {
@@ -1468,6 +1686,210 @@
     renderActions();
     const build = $('plbBuild');
     if (!build.disabled) build.focus();
+  }
+
+  /* ── The course detail panel ───────────────────────────────────────────── */
+  function detailInfo() {
+    const d = state.detail;
+    if (!d) return null;
+    const item = state.shortlist.find((c) => norm(c.course_code) === d.code);
+    if (item) return { inPlan: true, item, name: String(item.course_name || ''), credits: Number(item.credits) || 0 };
+    const course = planPool().find((c) => c.code === d.code);
+    if (course) return { inPlan: false, course, name: course.name, credits: course.credits };
+    // While the plan reloads the pool is empty for a moment: the panel waits instead of closing.
+    if (state.planState === 'loading') return { inPlan: false, course: null, name: d.name, credits: d.credits };
+    return null;
+  }
+  function sectionClashes(section) {
+    const registered = registeredMeetings();
+    return (section.meetings || []).some((mm) => {
+      const day = normDay(mm.day);
+      const st = toMins(mm.start_time);
+      const en = toMins(mm.end_time);
+      return !!day && st !== null && en !== null && en > st
+        && registered.some((r) => r.day === day && st < r.en && r.st < en);
+    });
+  }
+  // What the panel says about one section.
+  function sectionModel(section) {
+    const cap = sectionCapacity(section);
+    const reasons = [];
+    if (cap.known && cap.full && !state.rules.allowFull) reasons.push(T.cannotFull);
+    const clash = state.rules.mode === 'keep' && sectionClashes(section);
+    if (clash) reasons.push(T.cannotClash);
+    const taken = finiteNonNegative(section.registered_count);
+    const max = finiteNonNegative(section.available_capacity);
+    let seats = T.seatsUnknown;
+    if (cap.known) seats = cap.full ? T.seatsFull : T.seatsTaken(taken, max);
+    const days = [...new Set((section.meetings || []).map((m) => normDay(m.day)).filter(Boolean))];
+    const times = [...new Set((section.meetings || []).map((m) => `${m.start_time}-${m.end_time}`))];
+    const options = state.build
+      ? state.build.options.filter((o) => (o.mappings || []).some((m) => String(m.term_section_id) === String(section.term_section_id))).map((o) => o.name)
+      : [];
+    return {
+      id: String(section.term_section_id), label: String(section.section || '').trim(), cap, clash, reasons, seats,
+      days: days.map((d) => DAY_SHORT[d]).join(' '), times: times.join(' / '), options,
+    };
+  }
+  function sectionRow(model, mode, pinned) {
+    const inPlan = mode !== 'read';
+    const row = el(inPlan ? 'label' : 'div', 'plb-dt-sec');
+    const usable = !model.reasons.length;
+    const input = el('input', 'plb-dt-radio');
+    input.type = 'radio';
+    input.name = 'plbPin';
+    input.value = model.id;
+    input.dataset.fk = `sec-${model.id}`;
+    input.checked = pinned;
+    input.disabled = !usable && !pinned;       // a pin that became unusable stays selected, flagged
+    const flags = [];
+    if (model.cap.known && model.cap.full) flags.push(el('span', 'plb-flag plb-flag--bad', T.seatsFull));
+    if (fewSeats(model.cap)) flags.push(el('span', 'plb-flag plb-flag--warn', T.seatsLeft(model.cap.remaining)));
+    if (model.clash) flags.push(el('span', 'plb-flag plb-flag--bad', T.clashFlag));
+    if (model.options.length) flags.push(el('span', 'plb-flag', ...T.inOptions(model.options)));
+    row.dataset.tsid = model.id;
+    if (!usable) row.dataset.unusable = 'true';
+    row.append(
+      inPlan ? input : null,
+      el('span', 'plb-dt-sec-body',
+        el('span', 'plb-dt-sec-main', bdi(`§${model.label || '?'}`),
+          model.days || model.times ? ' ' : null, model.days, model.days && model.times ? ' ' : null, model.times ? bdi(model.times) : null),
+        el('span', 'plb-dt-sec-seats', model.seats),
+        flags.length ? el('span', 'plb-dt-flags', ...flags) : null,
+        !usable ? el('span', 'plb-dt-why', pinned ? T.pinBroken : null, model.reasons.join(' ')) : null));
+    return row;
+  }
+  function renderDetail() {
+    const aside = $('plbDetail');
+    const body = aside.parentElement;
+    const inside = aside.contains(document.activeElement);
+    const focusKey = inside ? (document.activeElement.dataset.fk || 'title') : null;
+    const info = detailInfo();
+    if (!info) {
+      state.detail = null;
+      aside.hidden = true;
+      aside.replaceChildren();
+      body.classList.add('plb-body--nodetail');
+      // Focus was inside a panel that has gone: put it on the field that adds a course.
+      if (inside && !$('plbAdd').disabled) $('plbAdd').focus();
+      return;
+    }
+    const code = state.detail.code;
+    const item = info.item || null;
+    const pin = item && item.pinned_sections && item.pinned_sections.length ? item.pinned_sections[0] : null;
+    const pinnedId = pin ? String(pin.term_section_id) : null;
+    const title = el('h3', 'plb-dt-title', bdi(code), info.name ? ' ' : null, info.name ? isolate(info.name) : null,
+      el('span', 'plb-dt-cr', ` · ${T.credits(info.credits)}`));
+    title.id = 'plbDetailTitle';
+    title.tabIndex = -1;
+    title.dataset.fk = 'title';
+    const close = el('button', 'plb-dt-close', T.close);
+    close.type = 'button';
+    close.dataset.act = 'dt-close';
+    close.dataset.fk = 'close';
+    const parts = [el('div', 'plb-dt-head', title, close)];
+
+    const list = (state.catalog ? state.catalog.get(code) || [] : null);
+    const group = el(info.inPlan ? 'fieldset' : 'div', 'plb-dt-group');
+    if (info.inPlan) group.append(el('legend', 'plb-mic', T.detailSections));
+    else group.append(el('p', 'plb-mic', T.detailSections));
+    if (info.inPlan) {
+      const any = el('label', 'plb-dt-sec');
+      const input = el('input', 'plb-dt-radio');
+      input.type = 'radio';
+      input.name = 'plbPin';
+      input.value = 'any';
+      input.checked = !pin;
+      input.dataset.fk = 'any';
+      any.append(input, el('span', 'plb-dt-sec-body',
+        el('span', 'plb-dt-sec-main', T.anySectionOpt), el('span', 'plb-dt-sec-seats', T.anySectionHint)));
+      group.append(any);
+    } else {
+      group.append(el('p', 'plb-dt-hint', T.readOnlyHint));
+    }
+    if (list === null) group.append(el('p', 'plb-dt-hint', T.noCatalog));
+    else if (!list.length) group.append(el('p', 'plb-dt-hint', T.noSections));
+    else {
+      const sorted = list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
+      for (const section of sorted) group.append(sectionRow(sectionModel(section), info.inPlan ? 'pick' : 'read', pinnedId === String(section.term_section_id)));
+    }
+    // A pin whose section is not in the list any more is flagged, never silently dropped.
+    if (pin && !(list || []).some((section) => String(section.term_section_id) === pinnedId)) {
+      const gone = el('label', 'plb-dt-sec');
+      gone.dataset.unusable = 'true';
+      gone.dataset.tsid = pinnedId;
+      const input = el('input', 'plb-dt-radio');
+      input.type = 'radio';
+      input.name = 'plbPin';
+      input.value = pinnedId;
+      input.checked = true;
+      input.dataset.fk = `sec-${pinnedId}`;
+      gone.append(input, el('span', 'plb-dt-sec-body',
+        el('span', 'plb-dt-sec-main', bdi(`§${pin.section || '?'}`)), el('span', 'plb-dt-why', T.pinGone)));
+      group.append(gone);
+    }
+    parts.push(group);
+
+    const foot = el('div', 'plb-dt-foot');
+    if (info.inPlan) {
+      const box = el('input', 'plb-tick');
+      box.type = 'checkbox';
+      box.checked = !!item.must_take;
+      box.dataset.act = 'dt-must';
+      box.dataset.fk = 'must';
+      const remove = el('button', 'btn btn-sm btn-neutral', T.removeFromPlan);
+      remove.type = 'button';
+      remove.dataset.act = 'dt-remove';
+      remove.dataset.fk = 'remove';
+      foot.append(el('label', 'plb-dt-must', box, ' ', T.mustTake), remove);
+    } else {
+      const add = el('button', 'btn btn-sm btn-primary', T.addToPlan);
+      add.type = 'button';
+      add.dataset.act = 'dt-add';
+      add.dataset.fk = 'add';
+      add.disabled = !info.course;
+      foot.append(add);
+    }
+    parts.push(foot);
+    aside.replaceChildren(...parts);
+    aside.hidden = false;
+    body.classList.remove('plb-body--nodetail');
+    if (focusKey) {
+      const target = [...aside.querySelectorAll('[data-fk]')].find((n) => n.dataset.fk === focusKey && !n.disabled) || title;
+      target.focus();
+    }
+  }
+  function openDetail(code) {
+    const key = norm(code);
+    const item = state.shortlist.find((c) => norm(c.course_code) === key);
+    const course = item ? null : planPool().find((c) => c.code === key);
+    if (!item && !course) return;
+    state.detail = {
+      code: key,
+      name: item ? String(item.course_name || '') : course.name,
+      credits: item ? Number(item.credits) || 0 : course.credits,
+    };
+    renderCourses();
+    $('plbDetailTitle').focus();
+  }
+  function closeDetail(returnFocus) {
+    const code = state.detail ? state.detail.code : null;
+    state.detail = null;
+    renderCourses();
+    if (!returnFocus || !code) return;
+    const button = document.querySelector(`#plbTable [data-act="detail"][data-code="${CSS.escape(code)}"]`);
+    if (button) button.focus();
+  }
+  // Exactly the shape the current page pins a section in (page-planner.js, the section row click).
+  function setPin(code, section) {
+    const item = state.shortlist.find((c) => norm(c.course_code) === norm(code));
+    if (!item) return;
+    if (section) item.pinned_sections = [{ term_section_id: Number(section.term_section_id), section: String(section.section || '').trim() }];
+    else delete item.pinned_sections;
+    planChanged();
+    if (section) setStatus('ok', ...T.pinnedSet(item.course_code, String(section.section || '').trim()));
+    else setStatus('ok', ...T.pinnedCleared(item.course_code));
+    renderCourses();
   }
 
   /* ── Wiring ────────────────────────────────────────────────────────────── */
@@ -1482,7 +1904,10 @@
       const target = event.target.closest('[data-act]');
       if (!target || target.tagName !== 'BUTTON') return;
       const code = target.dataset.code;
-      if (target.dataset.act === 'remove') removeCourseFromPlan(code);
+      if (target.dataset.act === 'detail') {
+        if (state.detail && state.detail.code === code) closeDetail(true);
+        else openDetail(code);
+      } else if (target.dataset.act === 'remove') removeCourseFromPlan(code);
       else if (target.dataset.act === 'add') {
         const course = planPool().find((c) => c.code === code);
         if (course) addCourseToPlan(itemFromPlan(course));
@@ -1495,11 +1920,50 @@
       if (!item) return;
       item.must_take = target.checked;
       if (state.build || state.inflight) {
-        dropBuild(true);
+        planChanged();
         state.focus = { kind: 'must', code: item.course_code };
         renderCourses();
       }
     });
+
+    // The detail panel: one delegated listener per kind of event.
+    const detail = $('plbDetail');
+    detail.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-act]');
+      if (!target || !state.detail) return;
+      const code = state.detail.code;
+      if (target.dataset.act === 'dt-close') closeDetail(true);
+      else if (target.dataset.act === 'dt-remove') removeCourseFromPlan(code, true);
+      else if (target.dataset.act === 'dt-add') {
+        const course = planPool().find((c) => c.code === code);
+        if (course) addCourseToPlan(itemFromPlan(course), true);
+      }
+    });
+    detail.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!state.detail || !target) return;
+      const code = state.detail.code;
+      if (target.dataset.act === 'dt-must') {
+        const item = state.shortlist.find((c) => norm(c.course_code) === code);
+        if (!item) return;
+        item.must_take = target.checked;
+        planChanged();
+        renderCourses();
+      } else if (target.name === 'plbPin') {
+        if (target.value === 'any') { setPin(code, null); return; }
+        const list = state.catalog ? state.catalog.get(code) || [] : [];
+        const section = list.find((x) => String(x.term_section_id) === target.value);
+        if (section) setPin(code, section);
+      }
+    });
+    $('plbWhyBtn').addEventListener('click', () => setWhy(!state.whyOpen, false));
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+      if (event.target.closest && event.target.closest('#plbDetail')) { event.preventDefault(); closeDetail(true); return; }
+      if (state.whyOpen) { event.preventDefault(); setWhy(false, true); }
+    });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkAge(); });
+    setInterval(checkAge, 60 * 1000);
 
     // The options: tabs (arrow keys, Home and End), "More options", Build and Review and apply.
     $('plbBuild').addEventListener('click', runBuild);
