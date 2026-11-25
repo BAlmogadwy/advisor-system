@@ -657,6 +657,14 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         page.fill("#plbStudentId", student_id)
         page.click("#plbFetch")
 
+    @staticmethod
+    def _fetch_forced(page, student_id: str) -> None:
+        """Submit the load form although Fetch is disabled (a load is in flight): the page's own
+        code can still start a newer load (a rule that reloads the suggestions), and its answers
+        must still win."""
+        page.fill("#plbStudentId", student_id)
+        page.evaluate("document.getElementById('plbLoad').requestSubmit()")
+
     #: After a build the page shows the first option of its own order (C1 for FIVE). A test class
     #: that is about something else than the order names the tab it reads from here.
     start_on: str | None = None

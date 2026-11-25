@@ -8712,6 +8712,7 @@ html[data-theme="dark"] .plb {
   border: 0; background: none; cursor: pointer;
   font-size: var(--text-xs); font-weight: 600; line-height: 16px; color: var(--text-brand); white-space: nowrap;
 }
+.plb-lk:disabled { color: var(--t3); cursor: default; }
 
 /* one three-column grid shared by the band, the option strip and the panes */
 .plb-band, .plb-opts, .plb-body {
@@ -8911,8 +8912,12 @@ html[data-theme="dark"] .plb {
 
 /* the course detail panel, seat warnings, the out-of-date build, "Why these options" */
 .plb-sc-btn {
-  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: var(--control-h-sm); margin-block: -8px;
-  padding: 0; border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; text-align: start;
+  /* The click target is the text plus padding that an equal negative margin gives back to the row:
+     right for any number of lines (a min-height with a fixed negative margin let a wrapped line
+     spill over the course name). */
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: calc((var(--control-h-sm) - 16px) / 2) 0; margin-block: calc((16px - var(--control-h-sm)) / 2);
+  border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; text-align: start;
   font: inherit; font-size: var(--text-xs); line-height: 16px; color: var(--t3);
 }
 .plb-sc-btn .plb-sc-t { min-width: 0; overflow-wrap: anywhere; }
@@ -9182,7 +9187,7 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
   .plb-gh .plb-lk { margin-block: 0; }
   .plb-view { margin-block: 0; }
   .plb-load .btn.btn-sm { min-height: var(--control-h-lg); }
-  .plb-sc-btn { min-height: var(--control-h-lg); margin-block: -14px; }
+  .plb-sc-btn { padding-block: calc((var(--control-h-lg) - 16px) / 2); margin-block: calc((16px - var(--control-h-lg)) / 2); }
   .plb-dt-close, .plb-dt-sec, .plb-dt-must, .plb-why-btn, .plb .plb-detail .btn { min-height: var(--control-h-lg); }
 }
 

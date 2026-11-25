@@ -87,9 +87,27 @@
     courseWord: (n) => (IS_AR
       ? pluralAr(n, forms('مقرر واحد', 'مقرران', '{n} مقررات', '{n} مقررًا'))
       : `${n} ${n === 1 ? 'course' : 'courses'}`),
-    untimed: (n) => (IS_AR
-      ? `${pluralAr(n, forms('مقرر مسجّل واحد', 'مقرران مسجّلان', '{n} مقررات مسجّلة', '{n} مقررًا مسجّلًا'))} بلا مواعيد في الجدول.`
-      : `${n} registered ${n === 1 ? 'course has' : 'courses have'} no timetable slots.`),
+    // "2 registered courses have no timetable slots (CS340, CS341)."
+    untimed: (codes) => {
+      const n = codes.length;
+      const list = codes.flatMap((c, i) => (i ? [IS_AR ? '، ' : ', ', bdi(c)] : [bdi(c)]));
+      const lead = IS_AR
+        ? `${pluralAr(n, forms('مقرر مسجّل واحد', 'مقرران مسجّلان', '{n} مقررات مسجّلة', '{n} مقررًا مسجّلًا'))} بلا مواعيد في الجدول`
+        : `${n} registered ${n === 1 ? 'course has' : 'courses have'} no timetable slots`;
+      return [`${lead} (`, ...list, ').'];
+    },
+    // The registrar's timetable was mapped to sections only in part (n rows came from a fallback).
+    mappingPartial: (n) => (IS_AR ? `جودة الربط: جزئي (${n} احتياطي)` : `Mapping quality: partial (${n} fallback)`),
+    advisor: IS_AR ? 'المرشد' : 'Advisor',
+    // A section's programmes: "For AI / DS"; in Arabic «لبرنامج AI», «لبرامج AI / DS»; none: "Unassigned".
+    forProgrammes: (list) => {
+      if (!list.length) return [IS_AR ? 'غير مرتبط ببرنامج' : 'Unassigned'];
+      return [IS_AR ? (list.length === 1 ? 'لبرنامج ' : 'لبرامج ') : 'For ', bdi(list.join(' / '))];
+    },
+    resetPlan: IS_AR ? 'العودة إلى المقترح' : 'Reset to suggestions',
+    resetDone: (n) => (IS_AR
+      ? `أُعيدت المقررات إلى المقترح (${n}).`
+      : `Courses reset to the ${n} suggested.`),
     rulesChanged: (n) => (IS_AR
       ? pluralAr(n, forms('قاعدة واحدة تغيّرت', 'قاعدتان تغيّرتا', '{n} قواعد تغيّرت', '{n} قاعدة تغيّرت'))
       : `${n} ${n === 1 ? 'rule' : 'rules'} changed`),
@@ -131,6 +149,26 @@
     failMust: IS_AR ? 'تعذر إدراج المقرر الإلزامي ضمن القيود الحالية.' : 'The must-take course could not be placed under the current constraints.',
     failPinned: IS_AR ? 'تعذر استخدام الشُعب المحدَّدة.' : 'The chosen sections could not be used.',
     failCredits: IS_AR ? 'يتعارض حد الساعات مع القيود المطلوبة.' : 'The credit limit conflicts with the required constraints.',
+    // In keep mode the limit covers the registered courses too. A course that only lacks room is
+    // said so with the numbers, or it reads as a clash (the old page's sentences, #287).
+    noRoomUnderLimit: IS_AR
+      ? 'لا يمكن إضافة مقررات: المقررات المسجلة تستنفد حد الساعات كاملًا.'
+      : 'Nothing can be added: the registered courses use the whole credit limit.',
+    overLimit: (credits, limit) => (IS_AR
+      ? `${credits} ساعات، أعلى من حد ${limit} ساعة لهذا البناء`
+      : `${credits} credits, above the ${limit}-credit limit of this build`),
+    noRoom: (limit, kept) => (IS_AR
+      ? `لا متّسع ضمن حد ${limit} ساعة: الساعات المسجلة ${kept}`
+      : `No room left under the ${limit}-credit limit: ${kept} credits are registered`),
+    aboveRoom: (credits, room, limit, kept) => (IS_AR
+      ? `${credits} ساعات، والمتبقي من حد ${limit} ساعة ${room} فقط (المسجّل ${kept})`
+      : `${credits} credits, above the ${room} left of the ${limit}-credit limit (${kept} registered)`),
+    besideOthers: (limit, kept) => (IS_AR
+      ? `تعذّر إدراجه ضمن حد ${limit} ساعة (المسجّل منها ${kept})، أو أن شُعبه متعارضة`
+      : `Could not fit within the ${limit}-credit limit (${kept} of it registered), or its sections clash`),
+    withinLimit: (limit) => (IS_AR
+      ? `تعذّر إدراجه ضمن حد ${limit} ساعة، أو أن شُعبه متعارضة`
+      : `Could not fit within the ${limit}-credit limit, or its sections clash`),
     notScheduledList: (codes) => [IS_AR ? 'غير مجدولة: ' : 'Not scheduled: ', ...codes.flatMap((c, i) => (i ? [', ', bdi(c)] : [bdi(c)]))],
     reason: {
       DID_NOT_FIT: IS_AR ? 'تعذّر إدراجه ضمن حد الساعات، أو أن شُعبه متعارضة' : 'Could not fit within the credit limit, or its sections clash',
@@ -417,6 +455,7 @@
     planState: 'idle', // idle | loading | ready | error
     catalog: null,     // Map normalised course code -> [section]; null = unknown
     shortlist: [],
+    suggested: [],     // the courses the page suggested when the student loaded ("Reset to suggestions")
     rules: { ...DEFAULT_RULES },
     shownElig: null,   // the eligibility the suggestions on screen were loaded with
     defaults: { ...DEFAULT_RULES },
@@ -429,6 +468,7 @@
     buildGen: 0,       // bumped whenever a reply in flight must no longer be believed
     inflight: 0,       // build requests not yet answered: the button waits for all of them
     applying: false,   // a save request is in flight
+    fetchKeyboard: false, // Fetch had the keyboard when a load disabled it (see releaseFetch)
     moreOpen: false,   // the "More options" disclosure
     detail: null,      // {code, name, credits, only}: the course whose detail panel is open
     altShown: null,    // what the week drew as dashed blocks last (see syncAlt)
@@ -514,6 +554,35 @@
     const v = String(value || '').trim();
     return DAY_ALIASES[v.toUpperCase()] || DAY_ALIASES[v] || null;
   };
+  // A section's meetings, one group per distinct start and end: the days that share it (week order)
+  // and the range, earliest first. A meeting with no usable time keeps its day in a group of its own.
+  function meetingGroups(meetings) {
+    const byTime = new Map();
+    for (const m of meetings || []) {
+      const st = toMins(m.start_time);
+      const en = toMins(m.end_time);
+      const range = st !== null && en !== null ? `${hhmm(st)}-${hhmm(en)}` : '';
+      const day = normDay(m.day);
+      if (!range && !day) continue;
+      if (!byTime.has(range)) byTime.set(range, { range, start: range ? st : 1e9, days: [] });
+      const group = byTime.get(range);
+      if (day && !group.days.includes(day)) group.days.push(day);
+    }
+    const rank = (day) => DAY_ORDER.indexOf(day);
+    for (const group of byTime.values()) group.days.sort((a, b) => rank(a) - rank(b));
+    return [...byTime.values()].sort((a, b) => a.start - b.start || rank(a.days[0]) - rank(b.days[0]));
+  }
+  // "Sun 08:00-09:15 · Tue 10:00-11:15"; one group reads "Mon Wed 10:00-11:15". Times are isolated.
+  function whenNodes(meetings) {
+    const parts = [];
+    meetingGroups(meetings).forEach((group, i) => {
+      if (i) parts.push(' · ');
+      const days = group.days.map((d) => DAY_SHORT[d]).join(' ');
+      parts.push(...present(days || null, days && group.range ? ' ' : null, group.range ? bdi(group.range) : null));
+    });
+    return parts;
+  }
+  const programmesOf = (section) => [...new Set(((section && section.programs) || []).map((p) => String(p).trim()).filter(Boolean))];
   function courseKeyOf(row) {
     const key = norm(row && row.course_key);
     if (key) return key;
@@ -659,10 +728,12 @@
     const registered = registeredCredits();
     const cap = finitePositive(st.credit_cap);
     const reg = finitePositive(st.regulatory_max_credits);
+    const advisor = st.advisor_id === null || st.advisor_id === undefined ? '' : String(st.advisor_id).trim();
     host.replaceChildren(
       el('div', 'plb-who',
         el('div', 'plb-sn', st.name ? String(st.name) : T.unnamed),
-        el('div', 'plb-smeta', `${T.idLabel} `, bdi(st.student_id), st.program ? ' · ' : null, st.program ? bdi(st.program) : null)),
+        el('div', 'plb-smeta', `${T.idLabel} `, bdi(st.student_id), st.program ? ' · ' : null, st.program ? bdi(st.program) : null,
+          advisor ? ` · ${T.advisor} ` : null, advisor ? bdi(advisor) : null)),
       el('div', 'plb-stats',
         stat(gpa === null ? '—' : gpa.toFixed(2), T.gpa),
         stat(registered === null ? '—' : String(registered), T.registeredCredits),
@@ -691,6 +762,15 @@
       if (normDay(row.day) && toMins(row.start_time) !== null && toMins(row.end_time) !== null) entry.timed = true;
     }
     return [...seen.values()];
+  }
+  // Registered rows the registrar's timetable took from a fallback mapping: how many sections.
+  function fallbackRows() {
+    const keys = new Set();
+    for (const row of state.baseline) {
+      if (!String(row.source || '').toLowerCase().includes('fallback')) continue;
+      keys.add(String(row.term_section_id || `${courseKeyOf(row)}|${row.section || ''}`));
+    }
+    return keys.size;
   }
   function registeredMeetings() {
     const meetings = [];
@@ -903,10 +983,18 @@
     $('plbWeekPanel').setAttribute('aria-labelledby', opt ? tabId(opt.name) : 'plbTabRegistered');
     if (!state.ctx) { host.replaceChildren(el('p', 'plb-empty', T.loadFirstWeek)); return; }
     const showRegistered = !opt || state.build.rules.mode === 'keep';
-    const untimed = showRegistered ? registeredCourses().filter((c) => !c.timed).length : 0;
+    // One entry per course (CODE::NAME, never the bare code); a code two courses share is told
+    // apart by the name.
+    const untimedRows = showRegistered
+      ? [...new Map(registeredCourses().filter((c) => !c.timed).map((c) => [`${c.code}::${c.name}`, c])).values()]
+      : [];
+    const sharedCodes = new Set(untimedRows.map((c) => c.code).filter((code, i, all) => all.indexOf(code) !== i));
+    const untimed = untimedRows.map((c) => (sharedCodes.has(c.code) && c.name ? `${c.code} ${c.name}` : c.code));
+    const partial = showRegistered ? fallbackRows() : 0;
     const clashes = opt ? weekMeetings(opt).filter((m) => m.kind === 'new' && m.clash).length : 0;
     const notes = [
-      untimed ? el('p', 'plb-note', T.untimed(untimed)) : null,
+      untimed.length ? el('p', 'plb-note', ...T.untimed(untimed)) : null,
+      partial ? el('p', 'plb-note', T.mappingPartial(partial)) : null,
       clashes ? el('p', 'plb-note', T.clashNote(clashes)) : null,
     ].filter(Boolean);
     const model = opt ? weekModel(weekMeetings(opt)) : regModel;
@@ -1425,20 +1513,18 @@
     return (registered || 0) + planCredits();
   }
   function sectionInfo(code) {
-    if (!state.catalog) return T.unknown;
+    if (!state.catalog) return [T.unknown];
     const sections = state.catalog.get(norm(code)) || [];
-    if (!sections.length) return T.noSections;
+    if (!sections.length) return [T.noSections];
     const caps = sections.map(sectionCapacity);
-    if (caps.every((c) => c.known && c.full)) return T.allFull;
+    if (caps.every((c) => c.known && c.full)) return [T.allFull];
     if (sections.length === 1) {
-      const days = [...new Set((sections[0].meetings || []).map((m) => normDay(m.day)).filter(Boolean))];
       const left = fewSeats(caps[0]) ? caps[0].remaining : null;
-      const parts = [];
-      if (days.length) parts.push(days.map((d) => DAY_SHORT[d]).join(' '));
-      if (left !== null) parts.push(T.seatsLeft(left));
-      return parts.length ? parts.join(' · ') : T.sectionWord(1);
+      const when = whenNodes(sections[0].meetings);
+      if (!when.length && left === null) return [T.sectionWord(1)];
+      return [...when, ...(when.length && left !== null ? [' · '] : []), ...(left !== null ? [T.seatsLeft(left)] : [])];
     }
-    return T.sectionWord(sections.length);
+    return [T.sectionWord(sections.length)];
   }
   function iconButton(icon, label, act, code, extra) {
     const button = el('button', `plb-ib ${extra || ''}`.trim(), svg(ICONS[icon]));
@@ -1588,7 +1674,7 @@
       for (const course of pool) {
         const add = iconButton('plus', T.addCourse(course.code), 'add', course.code, 'plb-ib--add');
         const row = courseRow(course.code, course.name,
-          sectionButton(course.code, [sectionInfo(course.code)]), [el('td'), el('td', 'plb-act', add)], false,
+          sectionButton(course.code, sectionInfo(course.code)), [el('td'), el('td', 'plb-act', add)], false,
           opt ? effectNode(course.code, 'could') : null);
         if (state.detail && state.detail.code === course.code) row.dataset.open = 'true';
         body.append(row);
@@ -1609,7 +1695,23 @@
     renderDetail();
     restoreFocus();
   }
+  // The list is the suggested one (every field the build reads, in the same order): nothing to reset.
+  const isSuggested = () => JSON.stringify(state.shortlist) === JSON.stringify(state.suggested);
+  function renderReset() {
+    $('plbReset').disabled = !state.ctx || isSuggested();
+  }
+  function resetToSuggestions() {
+    if (!state.ctx || isSuggested()) return;
+    state.shortlist = JSON.parse(JSON.stringify(state.suggested));
+    if (state.detail) delete state.detail.only;
+    planChanged();
+    setStatus('ok', T.resetDone(state.shortlist.length));
+    renderCourses();
+    if (state.build) renderWeek();
+    if ($('plbReset').disabled && !$('plbAdd').disabled) $('plbAdd').focus();
+  }
   function renderCreditsHeader() {
+    renderReset();
     const header = $('plbCredits');
     delete header.dataset.over;                // "over" is only ever said against a known cap
     if (!state.ctx) { header.textContent = ''; return; }
@@ -1789,6 +1891,15 @@
   }
 
   /* ── Loading a student ─────────────────────────────────────────────────── */
+  // Disabling the button that has the keyboard drops the keyboard on the page: it comes back to
+  // Fetch when the load ends, unless the user has moved on meanwhile.
+  function releaseFetch() {
+    const button = $('plbFetch');
+    button.disabled = false;
+    const lost = !document.activeElement || document.activeElement === document.body;
+    if (state.fetchKeyboard && lost) button.focus();
+    state.fetchKeyboard = false;
+  }
   async function loadStudent(options) {
     const reuse = !!(options && options.reuse && state.ctx);
     const studentId = reuse ? state.ctx.studentId : $('plbStudentId').value.trim();
@@ -1799,6 +1910,7 @@
 
     const mine = ++state.ctxGen;
     const failed = (line) => {
+      releaseFetch();
       $('plbRoot').removeAttribute('aria-busy');
       setStatus('error', line);
       // The page still shows what the last accepted reply brought, so the rule goes back to
@@ -1809,6 +1921,8 @@
       }
     };
     $('plbRoot').setAttribute('aria-busy', 'true');
+    if (document.activeElement === $('plbFetch')) state.fetchKeyboard = true;
+    $('plbFetch').disabled = true;             // one load at a time; the newest request frees it
     setStatus('loading', T.loading);
     let result;
     try {
@@ -1827,6 +1941,7 @@
       return;
     }
     $('plbRoot').removeAttribute('aria-busy');
+    releaseFetch();
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
@@ -1850,6 +1965,7 @@
     state.defaults.maxCredits = cap;
     if (previousId !== String(data.student.student_id)) state.rules.maxCredits = cap;
     state.shortlist = shortlistFromRecs(state.recs);
+    state.suggested = JSON.parse(JSON.stringify(state.shortlist));
     state.planCourses = null;
     state.catalog = null;
     $('plbRoot').dataset.loaded = 'true';
@@ -1961,9 +2077,32 @@
     return true;
   }
 
+  // Why a course was not scheduled. DID_NOT_FIT names the limit and, in keep mode, how much of it the
+  // registered courses use (the reply's details since #287); a reply without them reads as before.
+  function whyNotScheduled(u) {
+    const code = String(u.reason_code || '');
+    const detail = Array.isArray(u.details) && isObj(u.details[0]) ? u.details[0] : {};
+    const limit = Number(detail.credit_limit);
+    if (code === 'DID_NOT_FIT' && Number.isFinite(limit) && limit > 0) {
+      const credits = Number(detail.course_credits);
+      const kept = Number(detail.registered_credits);
+      if (Number.isFinite(credits) && credits > limit) return T.overLimit(credits, limit);
+      if (Number.isFinite(kept) && kept > 0) {
+        const room = Math.max(0, limit - kept);
+        if (room === 0) return T.noRoom(limit, kept);
+        if (Number.isFinite(credits) && credits > room) return T.aboveRoom(credits, room, limit, kept);
+        return T.besideOthers(limit, kept);
+      }
+      return T.withinLimit(limit);
+    }
+    return T.reason[code] || String(u.reason || '') || T.noReason;
+  }
   function reasonLines(build) {
     const lines = [];
+    // With no room left at all, the lead and the courses' own line say it, with the numbers.
+    const noRoom = build.constraints.credit_room === 0;
     for (const f of build.failures) {
+      if (noRoom && f.kind === 'max_credits') continue;
       const code = String(f.course_code || '');
       let reason;
       if (IS_AR) reason = f.kind === 'must_take' ? T.failMust : (f.kind === 'pinned_section' ? T.failPinned : T.failCredits);
@@ -1972,12 +2111,12 @@
     }
     const groups = new Map();
     for (const u of build.unscheduled) {
-      const why = T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+      const why = whyNotScheduled(u);
       if (!groups.has(why)) groups.set(why, []);
       if (u.course_code) groups.get(why).push(String(u.course_code));
     }
     for (const [why, codes] of groups) lines.push(codes.length ? [...T.notScheduledList(codes), ' — ', why] : [why]);
-    if (!lines.length) lines.push([T.noFeasible]);
+    if (!lines.length && !noRoom) lines.push([T.noFeasible]);
     return lines;
   }
   function applicability() {
@@ -2026,7 +2165,7 @@
     const note = $('plbBuildNote');
     if (state.build && !state.build.options.length) {
       note.replaceChildren(
-        el('p', 'plb-buildnote-lead', T.noOption),
+        el('p', 'plb-buildnote-lead', state.build.constraints.credit_room === 0 ? T.noRoomUnderLimit : T.noOption),
         el('ul', 'plb-buildnote-list', ...reasonLines(state.build).map((parts) => el('li', '', ...parts))));
       note.hidden = false;
     } else {
@@ -2047,7 +2186,7 @@
     panel.hidden = !build || !state.whyOpen;
     if (panel.hidden) { panel.replaceChildren(); return; }
     const lines = [];
-    const reasonOf = (u) => T.reason[String(u.reason_code || '')] || String(u.reason || '') || T.noReason;
+    const reasonOf = whyNotScheduled;
     // What the build as a whole left out is said once, below: not again under every option.
     const everywhere = new Set(build.unscheduled.map((u) => `${String(u.course_code || '')}|${reasonOf(u)}`));
     for (const opt of build.options) {
@@ -2602,6 +2741,7 @@
         at: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
         failures: Array.isArray(summary.hard_constraint_failures) ? summary.hard_constraint_failures : [],
         unscheduled: Array.isArray(data.unscheduled) ? data.unscheduled : [],
+        constraints: isObj(data.constraints) ? data.constraints : {},
         token: typeof data.graduation_projection_token === 'string' ? data.graduation_projection_token : '',
         projection: null,
         projRun: 0,
@@ -2632,11 +2772,9 @@
     $('plbApplyList').replaceChildren(...(opt.mappings || []).filter((m) => m.term_section_id).map((m) => {
       const key = courseKeyOf(m) || String(m.course_code || '');
       const item = build.shortlist.find((c) => norm(c.course_code) === key);
-      const days = [...new Set((m.meetings || []).map((mm) => normDay(mm.day)).filter(Boolean))];
-      const times = [...new Set((m.meetings || []).map((mm) => `${mm.start_time}-${mm.end_time}`))];
       return el('li', 'plb-apply-row',
         el('span', '', bdi(key), ...(m.section ? [' ', bdi(`§${String(m.section).trim()}`)] : []), ...(item && item.course_name ? [' ', isolate(item.course_name)] : [])),
-        el('span', 'plb-apply-when', days.map((d) => DAY_SHORT[d]).join(' '), ...(days.length && times.length ? [' '] : []), ...(times.length ? [bdi(times.join(' / '))] : [])));
+        el('span', 'plb-apply-when', ...whenNodes(m.meetings)));
     }));
     const registered = registeredCourses();
     $('plbApplyReg').replaceChildren(build.rules.mode === 'keep'
@@ -2772,14 +2910,12 @@
     const max = finiteNonNegative(section.available_capacity);
     let seats = T.seatsUnknown;
     if (cap.known) seats = cap.full ? T.seatsFull : T.seatsTaken(taken, max);
-    const days = [...new Set((section.meetings || []).map((m) => normDay(m.day)).filter(Boolean))];
-    const times = [...new Set((section.meetings || []).map((m) => `${m.start_time}-${m.end_time}`))];
     const options = state.build
       ? state.build.options.filter((o) => (o.mappings || []).some((m) => String(m.term_section_id) === String(section.term_section_id))).map((o) => o.name)
       : [];
     return {
       id: String(section.term_section_id), label: String(section.section || '').trim(), cap, clash, reasons, seats,
-      days: days.map((d) => DAY_SHORT[d]).join(' '), times: times.join(' / '), options,
+      when: whenNodes(section.meetings), programmes: programmesOf(section), options,
     };
   }
   // The allowed sections of a course: [{term_section_id, section}], at most MAX_ONLY.
@@ -2814,9 +2950,8 @@
     row.append(...present(
       inPlan ? input : null,
       el('span', 'plb-dt-sec-body',
-        el('span', 'plb-dt-sec-main', bdi(`§${model.label || '?'}`),
-          model.days || model.times ? ' ' : null, model.days, model.days && model.times ? ' ' : null, model.times ? bdi(model.times) : null),
-        el('span', 'plb-dt-sec-seats', model.seats),
+        el('span', 'plb-dt-sec-main', bdi(`§${model.label || '?'}`), model.when.length ? ' ' : null, ...model.when),
+        el('span', 'plb-dt-sec-seats', ...T.forProgrammes(model.programmes), ' · ', model.seats),
         flags.length ? el('span', 'plb-dt-flags', ...flags) : null,
         !usable ? el('span', 'plb-dt-why', ticked ? T.tickBroken : null, model.reasons.join(' ')) : null)));
     return row;
@@ -3022,6 +3157,9 @@
   /* ── Wiring ────────────────────────────────────────────────────────────── */
   function wire() {
     $('plbLoad').addEventListener('submit', (event) => { event.preventDefault(); loadStudent(); });
+    $('plbReset').addEventListener('click', resetToSuggestions);
+    // A click anywhere during a load means the user has moved on: Fetch does not take the keyboard back.
+    document.addEventListener('pointerdown', () => { state.fetchKeyboard = false; }, true);
     $('plbEditRules').addEventListener('click', openRulesDialog);
     $('plbRulesCancel').addEventListener('click', closeRulesDialog);
     $('plbRulesReset').addEventListener('click', () => fillRulesDialog(state.defaults));
@@ -3046,6 +3184,7 @@
       const item = state.shortlist.find((c) => norm(c.course_code) === target.dataset.code);
       if (!item) return;
       item.must_take = target.checked;
+      renderReset();
       if (state.build || state.inflight) {
         planChanged();
         state.focus = { kind: 'must', code: item.course_code };
