@@ -200,6 +200,7 @@ class Fake:
     def __init__(self) -> None:
         self.context_bodies: list[dict] = []
         self.catalog_bodies: list[dict] = []
+        self.plan_urls: list[str] = []
         self.pending: list = []  # routes a test holds back to answer later
         self.hold_ids: set[str] = set()
         self.context_answer = lambda body: (
@@ -225,6 +226,7 @@ class Fake:
         route.fulfill(status=status, json=payload)
 
     def plan(self, route) -> None:
+        self.plan_urls.append(route.request.url)
         if self.hold_plan:
             self.hold_plan -= 1
             self.pending_plan.append(route)

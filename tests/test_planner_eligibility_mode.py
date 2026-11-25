@@ -210,14 +210,14 @@ def test_builder_propagates_eligibility_mode_without_overloading_registration_mo
     assert relaxed_response.json()["eligibility_mode"] == "relaxed"
 
 
-def test_planner_ui_and_both_student_plan_consumers_carry_the_selected_mode() -> None:
+def test_planner_board_offers_strict_first_and_defaults_its_rules_to_strict() -> None:
+    # What each student request carries is measured in a browser:
+    # tests/test_planner_board_guards_browser.py (PlannerBoardEligibilityRequestTests).
     root = Path(__file__).resolve().parents[1]
     template = (root / "core/templates/core/planner_board.html").read_text(encoding="utf-8")
     script = (root / "static/js/page-planner-board.js").read_text(encoding="utf-8")
 
     assert 'id="plbRuleElig"' in template
     assert '<option value="strict">' in template
+    assert template.index('<option value="strict">') < template.index('<option value="relaxed">')
     assert "mode: 'keep', eligibility: 'strict'" in script
-    assert "&eligibility_mode=${encodeURIComponent(state.rules.eligibility)}" in script
-    assert "term, eligibility_mode: state.rules.eligibility," in script
-    assert "eligibility_mode: state.rules.eligibility," in script

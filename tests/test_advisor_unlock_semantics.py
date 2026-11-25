@@ -713,7 +713,7 @@ def test_my_plan_by_term_does_not_write_into_the_payload_it_was_handed(plan):
     """The rows it decorates are the ones `report_views` serves to two screens.
 
     `_build_student_plan_payload` is shared with `page-dashboard.js` and
-    `page-planner.js`; writing `prerequisites_satisfied` into those dicts would leak
+    `page-planner-board.js`; writing `prerequisites_satisfied` into those dicts would leak
     a field into the browser's JSON from a change made for a language model.
     """
     from core.report_views import _build_student_plan_payload

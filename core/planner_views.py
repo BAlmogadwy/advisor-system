@@ -275,7 +275,7 @@ def _planner_context_inner(
         "advisor_id": student["advisor_id"] or "",
         "gpa": student["gpa"],
         "registered_credits": student["total_registered_credits"] or 0,
-        # The SUGGESTED cap, not the university's limit. page-planner.js labels this
+        # The SUGGESTED cap, not the university's limit. The planner board labels this
         # "الحد الأعلى للساعات" and planner_builder turns it into a hard
         # sum(credits) <= cap constraint, so a literal 18 here silently forbade the
         # 19th unit a student is entitled to. Both figures are sent; the UI decides.

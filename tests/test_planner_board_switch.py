@@ -48,9 +48,10 @@ class TestBoardIsThePage:
         assert _templates(response).count(BOARD) == 1
         assert not [name for name in _templates(response) if name == "core/planner" + ".html"]
 
-    def test_the_page_loads_its_own_script_and_the_deep_link_keeps_working(
+    def test_the_page_loads_its_own_script_and_not_the_retired_one(
         self, staff_client: Client
     ) -> None:
+        # The deep link itself is measured in a browser: test_planner_board_guards_browser.py.
         html = staff_client.get("/planner/?student=4500000").content.decode()
         assert "js/page-planner-board.js?v=9" in html
         assert "js/page-planner.js" not in html
