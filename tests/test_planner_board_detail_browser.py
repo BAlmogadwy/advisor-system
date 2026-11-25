@@ -560,9 +560,9 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbBuild")).to_have_text("Rebuild")
         self.assertEqual(self._tab_names(page), ["A1", "B1", "C2", "(registered)"])
         self.assertEqual(
-            self._text(page, "#plbTab_A1 .plb-tab-n"), "A1 | C1 | B2 Four lighter days 15 cr"
+            self._text(page, "#plbTab_A1 .plb-tab-n"), "A1 | C1 | B2 Three afternoons 15 cr"
         )
-        self.assertEqual(self._text(page, "#plbTab_B1 .plb-tab-n"), "B1 Three afternoons 15 cr")
+        self.assertEqual(self._text(page, "#plbTab_B1 .plb-tab-n"), "B1 15 cr")
         self.assertEqual(self._text(page, "#plbMoreBtn"), "More options (3)")
         page.click("#plbMoreBtn")
         hidden = page.eval_on_selector_all(

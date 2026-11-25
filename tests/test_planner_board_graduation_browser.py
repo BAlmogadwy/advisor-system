@@ -410,7 +410,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         page.click("#plbMoreBtn")
         self.assertEqual(
             self._text(page, "#plbMoreList [data-more='B3']"),
-            "B3 Two afternoons · 15 cr · 6 terms · 5 days · no free day",
+            "B3 · 15 cr · 6 terms · 5 days · no free day",
         )
         self.assertEqual(
             self._text(page, "#plbMoreList [data-more='B2']"),
@@ -424,7 +424,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         page.click("#plbMoreBtn")
         self.assertEqual(
             self._text(page, "#plbMoreList [data-more='B3']"),
-            "B3 Two afternoons · 15 cr · 5 days · no free day",
+            "B3 · 15 cr · 5 days · no free day",
         )
         fake.pending_projection.pop().fulfill(
             json=_reply(
