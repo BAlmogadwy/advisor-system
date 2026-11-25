@@ -455,6 +455,28 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                 expect(page.locator("#plbFetch")).to_be_enabled()
                 expect(page.locator("#plbFetch")).to_be_focused()
 
+    def test_a_click_during_the_load_keeps_fetch_from_taking_the_keyboard_back(self) -> None:
+        fake = _fake()
+        fake.hold_ids = {STUDENT_ID}
+        page = self._open(fake, load=False)
+        page.fill("#plbStudentId", STUDENT_ID)
+        page.focus("#plbFetch")
+        page.keyboard.press("Enter")
+        expect(page.locator("#plbFetch")).to_be_disabled()
+        for _ in range(250):
+            if fake.pending:
+                break
+            page.wait_for_timeout(20)
+        # A click on plain text during the load: the user has moved on, and the keyboard stays put.
+        box = page.locator("h1").first.bounding_box()
+        page.mouse.click(box["x"] + 2, box["y"] + box["height"] / 2)
+        body, route = fake.pending.pop()
+        status, payload = fake.context_answer(body)
+        route.fulfill(status=status, json=payload)
+        expect(page.locator("#plbFetch")).to_be_enabled()
+        page.wait_for_timeout(100)
+        expect(page.locator("#plbFetch")).not_to_be_focused()
+
     def test_two_untimed_courses_that_share_a_code_are_named_apart(self) -> None:
         baseline = [
             *BASELINE,

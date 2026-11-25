@@ -3158,6 +3158,8 @@
   function wire() {
     $('plbLoad').addEventListener('submit', (event) => { event.preventDefault(); loadStudent(); });
     $('plbReset').addEventListener('click', resetToSuggestions);
+    // A click anywhere during a load means the user has moved on: Fetch does not take the keyboard back.
+    document.addEventListener('pointerdown', () => { state.fetchKeyboard = false; }, true);
     $('plbEditRules').addEventListener('click', openRulesDialog);
     $('plbRulesCancel').addEventListener('click', closeRulesDialog);
     $('plbRulesReset').addEventListener('click', () => fillRulesDialog(state.defaults));
