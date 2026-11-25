@@ -35,6 +35,102 @@ LOADING = "Calculating projected completion…"
 NONE = "Build options to see the projection."
 SESSION = "Your session has expired. Sign in again, then retry."
 
+# ── measuring the runway (the fit tests) ─────────────────────────────────────
+_GAPS = """
+  const g = document.getElementById('plbGrad');
+  const runway = g.querySelector('.plb-rw');
+  const band = g.getBoundingClientRect();
+  const textBox = (n) => { const r = document.createRange(); r.selectNodeContents(n); return r.getBoundingClientRect(); };
+  const least = (nodes) => {
+    const b = nodes.filter((n) => n.textContent.trim()).map(textBox).sort((x, y) => x.left - y.left);
+    let m = 1e9;
+    for (let i = 1; i < b.length; i += 1) m = Math.min(m, b[i].left - b[i - 1].right);
+    return m;
+  };
+  const cells = [...runway.querySelectorAll('.plb-ax')];
+  const axisGap = () => least(cells);
+  const tickGap = () => Math.min(
+    least([...runway.querySelectorAll('.plb-rwl--opt .plb-tk')]),
+    least([...runway.querySelectorAll('.plb-rwl--reg .plb-tk')]));
+  const insideBand = (n) => { const r = n.getBoundingClientRect(); return r.left >= band.left - 1 && r.right <= band.right + 1; };
+  const inside = () => [...runway.querySelectorAll('.plb-rl, .plb-land, .plb-land > *')].every(insideBand);
+  const isRow = () => getComputedStyle(runway).display === 'grid';
+  const won = runway.querySelector('.plb-rwl--opt .plb-won');
+  const wonState = () => {
+    if (!won) return {oneLine: null, wonInside: null};
+    const r = won.getBoundingClientRect();
+    return {oneLine: r.height < parseFloat(getComputedStyle(won).lineHeight) * 1.5, wonInside: insideBand(won)};
+  };
+"""
+MEASURE = (
+    "() => {"
+    + _GAPS
+    + """
+  const unit = runway.querySelector('.plb-u');
+  return {
+    row: isRow(), fit: runway.dataset.fit || '', unit: runway.dataset.unit || '',
+    unitShown: !!unit && getComputedStyle(unit).display !== 'none',
+    columns: cells.length,
+    labelled: cells.map((c, i) => (c.textContent.trim() ? i : -1)).filter((i) => i >= 0),
+    axisGap: axisGap(), tickGap: tickGap(), inside: inside(),
+    result: won ? won.dataset.result : null,
+    size: won ? (won.dataset.size || '') : null,
+    fontSize: won ? getComputedStyle(won).fontSize : null,
+    ...wonState(),
+  };
+}"""
+)
+# The band is given a width (null = the page's own), and the script is left the frames it needs
+# to notice and fit again.
+RESIZE = """async (w) => {
+  const g = document.getElementById('plbGrad');
+  g.style.width = w === null ? '' : w + 'px';
+  g.style.justifySelf = w === null ? '' : 'start';
+  for (let i = 0; i < 3; i += 1) await new Promise((done) => requestAnimationFrame(done));
+}"""
+# What one step more would have cost. Each changes the runway; a redraw puts it back.
+PROBE_LABELS = (
+    "(step) => {"
+    + _GAPS
+    + """
+  cells.forEach((c, i) => { c.textContent = c.dataset.term && i % step === 0 ? c.dataset.term : ''; });
+  return axisGap();
+}"""
+)
+PROBE_UNIT = "() => {" + _GAPS + " delete runway.dataset.unit; return tickGap(); }"
+PROBE_ROW = (
+    "() => {"
+    + _GAPS
+    + """
+  delete runway.dataset.fit;
+  runway.dataset.unit = 'off';
+  cells.forEach((c, i) => { c.textContent = c.dataset.term && i % 2 === 0 ? c.dataset.term : ''; });
+  return {row: isRow(), tickGap: tickGap(), axisGap: axisGap(), inside: inside()};
+}"""
+)
+PROBE_SIZE = "(size) => {" + _GAPS + " won.dataset.size = size; return wonState(); }"
+# One style element whose rules exaggerate a text; replaced on each call.
+STRESS = """(css) => {
+  let style = document.getElementById('plbStress');
+  if (!style) { style = document.createElement('style'); style.id = 'plbStress'; document.head.append(style); }
+  style.textContent = css;
+}"""
+TEXT_WIDTH = """(selector) => {
+  const r = document.createRange();
+  r.selectNodeContents(document.querySelector(selector));
+  return r.getBoundingClientRect().width;
+}"""
+# The result may never sit on top of a tick of its own line.
+TOUCHES_A_TICK = """() => {
+  const line = document.querySelector('#plbGrad .plb-rwl--opt');
+  const won = line.querySelector('.plb-won');
+  if (!won) return [];
+  const w = won.getBoundingClientRect();
+  return [...line.querySelectorAll('.plb-tk')].map((t) => t.getBoundingClientRect())
+    .filter((t) => !(w.left >= t.right - 1 || w.right <= t.left + 1 || w.bottom <= t.top + 1 || w.top >= t.bottom - 1))
+    .map((t) => [Math.round(t.left), Math.round(t.top)]);
+}"""
+
 
 def _reply(**options):
     """READY with some options replaced."""
@@ -751,7 +847,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             "، نفس فصل التسجيل الحالي.", self._text(page, "#plbGrad .plb-rwl--opt .sr-only")
         )
 
-    def test_data_span_and_the_every_other_label_rule(self) -> None:
+    def test_data_span_and_one_axis_cell_per_column(self) -> None:
         for columns, span in ((5, "s"), (6, "m"), (8, "m"), (9, "l"), (14, "l"), (15, "xl")):
             page, _fake = self._projected(_reply(B1=forecast([9] * columns, delta=0)), width=1440)
             self.assertEqual(page.get_attribute("#plbGrad .plb-rw", "data-span"), span, columns)
@@ -763,18 +859,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             )
             labels = self._grad(page, ".plb-ax")
             self.assertEqual(len(labels), max(columns, 5))
-            if max(columns, 5) > 8:
-                self.assertEqual(
-                    [i for i, text in enumerate(labels) if text], list(range(0, len(labels), 2))
-                )
-                self.assertEqual(labels[0], "1448/1")
-                self.assertEqual(labels[2], "1449/1")
-            else:
-                self.assertTrue(all(labels))
-            # Past eight columns the unit no longer fits beside the first number: the caption says it.
-            self.assertEqual(
-                page.locator("#plbGrad .plb-rwl--opt .plb-u").is_visible(), max(columns, 5) <= 8
-            )
+            self.assertEqual(labels[0], "1448/1")
             self.assertTrue(page.locator("#plbGrad .plb-axn").is_visible())
             # The ticks keep a title, labelled or not.
             self.assertTrue(
@@ -1098,94 +1183,212 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(self._tab_lines(page, "A1")[1][:7], "4 terms")
         self.assertIn("Option A1: 4 terms", self._text(page, "#plbGrad .plb-rwl--opt .sr-only"))
 
-    # ── the result's size, and where it may go ──────────────────────────────
-    def test_the_result_steps_its_size_and_never_leaves_the_band(self) -> None:
-        # The result is the largest text of the page only where its line leaves room for it. The
-        # steps were measured with the real fonts, which this server does not load, so what is
-        # pinned here holds in any font: the size at each step, on both sides of its threshold,
-        # and that the text stays inside the band and clear of the ticks even where a wider font
-        # makes it wrap. "wide" stands in for the fonts of the CI machines.
-        def sooner(registered: int) -> dict:
-            reply = _reply(B1=forecast([15] + [18] * (registered - 3) + [12], delta=-1))
-            reply["baseline"] = forecast(
-                [6] + [18] * (registered - 2) + [9], kind="registered_timetable", reason_code=None
-            )
-            return reply
+    # ── the runway is fitted by measurement ─────────────────────────────────
+    # Text widths depend on the language and on the fonts that loaded, and this server loads none
+    # of the web fonts. So nothing here expects a particular outcome at a particular width in the
+    # machine's own fonts. Each rule is pinned twice: by what must hold whatever was chosen, and
+    # by a style that exaggerates one text until the outcome is certain in any font.
+    def _fit(self, page, width="keep") -> dict:
+        if width != "keep":
+            page.evaluate(RESIZE, width)
+        return page.evaluate(MEASURE)
 
-        size = "n => getComputedStyle(n).fontSize"
-        resize = (
-            "w => { const g = document.getElementById('plbGrad');"
-            " g.style.width = w === null ? '' : w + 'px';"
-            " g.style.justifySelf = w === null ? '' : 'start'; }"
+    def _check_fit(self, page, state: dict, where) -> None:
+        """What must hold whatever the script chose, and that it chose the most that fits."""
+        columns, labelled = state["columns"], state["labelled"]
+        steps = {tuple(range(0, columns, step)): step for step in (4, 2, 1)}
+        steps.setdefault((0,), 0)
+        self.assertIn(tuple(labelled), steps, where)
+        step = steps[tuple(labelled)]
+        if len(labelled) > 1:
+            self.assertGreaterEqual(state["axisGap"], 4 - 0.01, where)
+        if state["row"]:
+            self.assertEqual(state["fit"], "", where)
+            self.assertIn(step, (1, 2), where)
+            self.assertGreaterEqual(state["tickGap"], 2 - 0.01, where)
+            self.assertTrue(state["inside"], where)
+        elif state["tickGap"] < 2 - 0.01:
+            self.assertEqual(state["unit"], "off", where)  # nothing more to give up
+        if state["size"]:
+            self.assertTrue(state["row"] and state["result"] == "sooner", where)
+            self.assertTrue(state["oneLine"] and state["wonInside"], where)
+        # The most that fits: one step denser, the unit back, the row layout back, one size up.
+        if step != 1 and columns > 1:
+            denser = {2: 1, 4: 2, 0: 4}[step]
+            self.assertLess(page.evaluate(PROBE_LABELS, denser), 4, (where, "labels"))
+        if state["unit"] == "off":
+            self.assertLess(page.evaluate(PROBE_UNIT), 2, (where, "unit"))
+        if state["fit"] == "stacked":
+            forced = page.evaluate(PROBE_ROW)
+            self.assertTrue(forced["row"], where)
+            self.assertTrue(
+                forced["tickGap"] < 2 or forced["axisGap"] < 4 or not forced["inside"],
+                (where, forced),
+            )
+        if state["row"] and state["result"] == "sooner" and state["size"] != "xl":
+            bigger = page.evaluate(PROBE_SIZE, "lg" if state["size"] == "" else "xl")
+            self.assertFalse(bigger["oneLine"] and bigger["wonInside"], (where, bigger))
+
+    def _sooner(self, registered: int) -> dict:
+        reply = _reply(B1=forecast([15] + [18] * (registered - 3) + [12], delta=-1))
+        reply["baseline"] = forecast(
+            [6] + [18] * (registered - 2) + [9], kind="registered_timetable", reason_code=None
         )
-        # (tab, the band's width or None for the page's own, layout, the result's size in English)
-        short = (
-            ("B1", None, "grid", "22px"),
-            ("B1", 640, "grid", "22px"),
-            ("B1", 639, "grid", "18px"),
-            ("B1", 560, "grid", "18px"),
-            ("B1", 559, "grid", "15px"),
-            ("B1", 440, "grid", "15px"),
-            ("B3", None, "grid", "15px"),
-            ("B3", 580, "grid", "15px"),
-            ("B3", 470, "flex", "15px"),
-            ("B2", 440, "grid", "13px"),
-        )
-        middle = (
-            ("B1", 850, "grid", "22px"),
-            ("B1", 849, "grid", "18px"),
-            ("B1", 730, "grid", "18px"),
-            ("B1", 729, "grid", "15px"),
-            ("B1", 580, "grid", "15px"),
-        )
-        long = (
-            ("B1", 1050, "grid", "18px"),
-            ("B1", 1049, "grid", "15px"),
-            ("B1", 620, "grid", "15px"),
-        )
-        longest = (("B1", 1100, "grid", "15px"), ("B1", 900, "grid", "15px"))
-        for reply, cases in (
-            (READY, short),
-            (sooner(8), middle),
-            (sooner(14), long),
-            (sooner(16), longest),
-        ):
+        return reply
+
+    # A band so wide that five columns have room to spare in any font (the page's own band at
+    # this viewport is about 810 px; the row needs under 610 px even in the widest font measured).
+    ROOMY = 1150
+
+    def test_with_room_to_spare_nothing_is_given_up(self) -> None:
+        for language in ("en", "ar"):
+            page, _fake = self._projected(language=language)
+            state = self._fit(page, self.ROOMY)
+            where = (language, state)
+            self.assertTrue(state["row"], where)
+            self.assertEqual(state["labelled"], [0, 1, 2, 3, 4], where)
+            self.assertTrue(state["unitShown"], where)
+            self.assertEqual(state["size"], "xl", where)
+            self.assertEqual(state["fontSize"], "22px", where)
+            self.assertTrue(state["oneLine"] and state["wonInside"], where)
+            self._check_fit(page, state, where)
+
+    def test_whatever_the_width_language_or_font_the_runway_fits(self) -> None:
+        for registered in (5, 8, 14, 20):
+            reply = READY if registered == 5 else self._sooner(registered)
             for language, font in (("en", "app"), ("ar", "app"), ("en", "wide"), ("ar", "wide")):
                 page, _fake = self._projected(reply, language=language, font=font)
-                for tab, width, layout, expected in cases:
-                    where = (language, font, tab, width)
+                for width in (None, 440, 500, 580, 620, 700, 900, 1000):
+                    state = self._fit(page, width)
+                    where = (registered, language, font, width)
+                    self.assertEqual(state["columns"], registered, where)
+                    self._check_fit(page, state, where)
+                    page.click("#plbTab_B1")  # a redraw undoes what the probes changed
+        for registered in (5, 8, 16, 24):
+            reply = READY if registered == 5 else self._sooner(registered)
+            for language in ("en", "ar"):
+                page, _fake = self._projected(
+                    reply, language=language, width=390, height=900, font="wide"
+                )
+                state = self._fit(page)
+                where = (registered, language, "phone")
+                self.assertFalse(state["row"], where)
+                self._check_fit(page, state, where)
+                self.assertEqual(page.evaluate(OVERFLOWS), [], where)
+
+    def test_ticks_that_touch_cost_the_unit_first_and_then_the_row_layout(self) -> None:
+        # Every stretch is taken from the measured width of a tick, so it works in any font.
+        tick = (
+            "() => document.querySelector('#plbGrad .plb-rwl--opt .plb-tk')"
+            ".getBoundingClientRect().width"
+        )
+        page, _fake = self._projected()
+        self.assertTrue(self._fit(page, self.ROOMY)["unitShown"])
+        # A unit wider than two ticks goes; the row layout stays.
+        page.evaluate(
+            STRESS, f"#plbGrad .plb-u {{ letter-spacing: {page.evaluate(tick)}px !important; }}"
+        )
+        state = self._fit(page, self.ROOMY + 1)
+        self.assertEqual(
+            (state["row"], state["unit"], state["unitShown"]), (True, "off", False), state
+        )
+        self._check_fit(page, state, "unit")
+        # Numbers wider than their ticks: the runway is stacked, where each tick is wider.
+        page, _fake = self._projected(self._sooner(14))
+        self.assertTrue(self._fit(page, self.ROOMY)["row"])
+        spacing = page.evaluate(tick) * 0.45
+        page.evaluate(STRESS, f"#plbGrad .plb-tk {{ letter-spacing: {spacing}px !important; }}")
+        state = self._fit(page, self.ROOMY + 1)
+        self.assertEqual((state["row"], state["fit"]), (False, "stacked"), state)
+        self._check_fit(page, state, "ticks")
+        # With the numbers back to normal it is a row again.
+        page.evaluate(STRESS, "")
+        state = self._fit(page, self.ROOMY + 2)
+        self.assertEqual((state["row"], state["fit"]), (True, ""), state)
+
+    def test_labels_that_crowd_are_thinned_and_then_the_runway_is_stacked(self) -> None:
+        page, _fake = self._projected()
+        self.assertEqual(self._fit(page, self.ROOMY)["labelled"], [0, 1, 2, 3, 4])
+        # Every stretch is taken from the measured widths of a column and of a label.
+        cell = page.evaluate(
+            "() => document.querySelector('#plbGrad .plb-ax').getBoundingClientRect().width"
+        )
+        label = page.evaluate(TEXT_WIDTH, "#plbGrad .plb-ax")
+        # Labels wider than one column, narrower than two: every other one, still a row.
+        spacing = (cell * 1.4 - label) / 6
+        page.evaluate(STRESS, f"#plbGrad .plb-ax {{ letter-spacing: {spacing}px !important; }}")
+        state = self._fit(page, self.ROOMY + 1)
+        self.assertEqual((state["row"], state["labelled"]), (True, [0, 2, 4]), state)
+        self._check_fit(page, state, "every other")
+        # Wider than two columns of the row layout: stacked, and as many labels as fit there.
+        spacing = (cell * 2.6 - label) / 6
+        page.evaluate(STRESS, f"#plbGrad .plb-ax {{ letter-spacing: {spacing}px !important; }}")
+        state = self._fit(page, self.ROOMY + 2)
+        self.assertEqual((state["row"], state["fit"]), (False, "stacked"), state)
+        self.assertLess(len(state["labelled"]), 5, state)
+        self._check_fit(page, state, "stacked")
+
+    def test_a_text_that_is_not_drawn_does_not_count_as_outside_the_band(self) -> None:
+        # An element that is not drawn has an empty box at the page's origin.
+        page, _fake = self._projected()
+        page.evaluate(STRESS, "#plbGrad .plb-land b { display: none !important; }")
+        state = self._fit(page, self.ROOMY)
+        self.assertEqual((state["row"], state["fit"]), (True, ""), state)
+
+    def test_the_result_is_as_large_as_its_line_allows(self) -> None:
+        sizes = {"xl": "22px", "lg": "18px", "": "15px"}
+        page, _fake = self._projected()
+        state = self._fit(page, self.ROOMY)
+        self.assertEqual((state["size"], state["fontSize"]), ("xl", "22px"), state)
+        # Stretch the text a pixel per letter at a time: the size steps down once, then again,
+        # and never back up. Each state is checked for being the largest that fits.
+        seen: list[str] = []
+        wrapped = False
+        for spacing in range(41):
+            page.evaluate(
+                STRESS, f"#plbGrad .plb-won {{ letter-spacing: {spacing}px !important; }}"
+            )
+            page.click("#plbTab_B1")  # a redraw fits the runway again
+            state = self._fit(page)
+            if not state["row"]:
+                break  # a single word no longer fits its line: stacked (the next test)
+            self.assertEqual(state["fontSize"], sizes[state["size"]], state)
+            self._check_fit(page, state, ("result", spacing))
+            if not seen or seen[-1] != state["size"]:
+                seen.append(state["size"])
+            wrapped = wrapped or (state["size"] == "" and not state["oneLine"])
+        self.assertEqual(seen, ["xl", "lg", ""], seen)
+        # Too wide for one line even at reading size, it wraps where it is: the runway stays a
+        # row (and inside the band, which _check_fit asserted) until a single word has no room.
+        self.assertTrue(wrapped)
+        # Bad news and "same term" are never enlarged; stacked, nothing is.
+        page, _fake = self._projected()
+        for tab, kind, size in (("B3", "later", "15px"), ("B2", "same", "13px")):
+            page.click(f"#plbTab_{tab}")
+            state = self._fit(page)
+            self.assertEqual((state["result"], state["size"], state["fontSize"]), (kind, "", size))
+        page, _fake = self._projected(width=390, height=900)
+        state = self._fit(page)
+        self.assertEqual((state["row"], state["size"]), (False, ""))
+        self.assertLessEqual(float(state["fontSize"][:-2]), 15)  # reading size, a phone's own
+
+    def test_the_result_and_the_completion_terms_never_leave_the_band(self) -> None:
+        for registered in (5, 8, 14):
+            reply = READY if registered == 5 else self._sooner(registered)
+            for language, font in (("en", "wide"), ("ar", "wide")):
+                page, _fake = self._projected(reply, language=language, font=font)
+                # Even with a text far too wide for any size, and whatever the layout.
+                page.add_style_tag(
+                    content="#plbGrad .plb-won, #plbGrad .plb-land b { letter-spacing: 5px !important; }"
+                )
+                for tab in ("B1", "B2", "B3") if registered == 5 else ("B1",):
                     page.click(f"#plbTab_{tab}")
-                    page.evaluate(resize, width)
-                    self.assertEqual(
-                        page.evaluate(
-                            "getComputedStyle(document.querySelector('#plbGrad .plb-rw')).display"
-                        ),
-                        layout,
-                        where,
-                    )
-                    won = page.locator("#plbGrad .plb-rwl--opt .plb-won")
-                    if language == "en":  # Arabic type is a step larger
-                        self.assertEqual(won.evaluate(size), expected, where)
-                    grad = self._boxes(page, "#plbGrad")[0]
-                    box = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-won")[0]
-                    completion = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-land b")[0]
-                    for part in (box, completion):
-                        self.assertLessEqual(part["right"], grad["right"] + 1, where)
-                        self.assertGreaterEqual(part["left"], grad["left"] - 1, where)
-                    for tick in self._boxes(page, "#plbGrad .plb-rwl--opt .plb-tk"):
-                        apart = (
-                            box["left"] >= tick["right"] - 1
-                            or box["right"] <= tick["left"] + 1
-                            or box["bottom"] <= tick["top"] + 1
-                            or box["top"] >= tick["bottom"] - 1
-                        )
-                        self.assertTrue(apart, (where, box, tick))
-                    if width is None and font == "app":
-                        # With room to spare it is one line, whatever the font.
-                        line_height = float(
-                            won.evaluate("n => getComputedStyle(n).lineHeight")[:-2]
-                        )
-                        self.assertLess(box["bottom"] - box["top"], line_height * 1.5, where)
+                    for width in (440, 520, 620, 800):
+                        state = self._fit(page, width)
+                        where = (registered, language, tab, width)
+                        self.assertTrue(state["wonInside"], where)
+                        self.assertTrue(state["inside"], where)
+                        self.assertEqual(page.evaluate(TOUCHES_A_TICK), [], where)
 
     def test_stacked_ticks_stay_on_one_row_for_any_number_of_columns(self) -> None:
         for columns in (6, 7, 11, 13, 16):

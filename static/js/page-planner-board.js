@@ -1767,11 +1767,13 @@
   function gradAxis(list, cols) {
     const axis = el('div', 'plb-rwl plb-rwl--ax', el('span', 'plb-axn plb-mic', T.gradPerTerm), el('i', 'plb-brk'));
     axis.setAttribute('aria-hidden', 'true');
-    // Past eight columns every other label is dropped, starting from the first; the ticks keep a title.
-    const every = cols > 8 ? 2 : 1;
+    // Every column starts with its label; fitRunway() thins them to what the cells have room for.
+    // The ticks keep a title either way.
     for (let i = 0; i < cols; i += 1) {
       const entry = list[i];
-      axis.append(el('span', `plb-ax${i === 0 ? ' plb-ax--now' : ''}`, entry && i % every === 0 ? bdi(termLabel(entry)) : null));
+      const cell = el('span', `plb-ax${i === 0 ? ' plb-ax--now' : ''}`, entry ? bdi(termLabel(entry)) : null);
+      if (entry) cell.dataset.term = termLabel(entry);
+      axis.append(cell);
     }
     return axis;
   }
@@ -1793,6 +1795,88 @@
     runway.dataset.span = spanOf(cols);
     runway.style.setProperty('--plb-cols', String(Math.max(cols, 1)));
     return runway;
+  }
+
+  /* Fitting the runway. Whether the row layout has room for its texts, how many term labels the
+     axis can carry, whether the first tick can keep its unit and how large the result can be all
+     depend on the language and on the fonts that actually loaded. So they are measured, not
+     assumed: after every draw, when the band's width changes, and when the web fonts arrive. The
+     stylesheet makes only the first guess (the row layout from a width per number of columns). */
+  const AXIS_GAP = 4;  // least room, in px, between two neighbouring term labels
+  const TICK_GAP = 2;  // and between the texts of two neighbouring ticks
+  function textBox(node) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return range.getBoundingClientRect();
+  }
+  // The least horizontal room between neighbouring texts; Infinity when there are fewer than two.
+  function leastGap(nodes) {
+    const boxes = nodes.filter((node) => node.textContent.trim()).map(textBox).sort((a, b) => a.left - b.left);
+    let least = Infinity;
+    for (let i = 1; i < boxes.length; i += 1) least = Math.min(least, boxes[i].left - boxes[i - 1].right);
+    return least;
+  }
+  // A label on every `step`-th column, counted from the first; 0 keeps the first label only.
+  function labelAxis(runway, step) {
+    runway.querySelectorAll('.plb-ax').forEach((cell, i) => {
+      const show = cell.dataset.term && (step ? i % step === 0 : i === 0);
+      cell.replaceChildren(...(show ? [bdi(cell.dataset.term)] : []));
+    });
+  }
+  const axisFits = (runway) => leastGap([...runway.querySelectorAll('.plb-ax')]) >= AXIS_GAP;
+  const ticksFit = (runway) => [...runway.querySelectorAll('.plb-rwl--opt, .plb-rwl--reg')]
+    .every((line) => leastGap([...line.querySelectorAll('.plb-tk')]) >= TICK_GAP);
+  const within = (box, outer) => box.left >= outer.left - 0.5 && box.right <= outer.right + 0.5;
+  function fitRunway() {
+    const grad = $('plbGrad');
+    const runway = grad.querySelector('.plb-rw');
+    if (!runway) return;
+    const band = grad.getBoundingClientRect();
+    if (!band.width) return;                      // not laid out: nothing to measure
+    const won = runway.querySelector('.plb-rwl--opt .plb-won[data-result="sooner"]');
+    const isRow = () => getComputedStyle(runway).display === 'grid';
+    // Start from the stylesheet's own choice, with every label, the unit, and the result at
+    // reading size.
+    delete runway.dataset.fit;
+    delete runway.dataset.unit;
+    if (won) delete won.dataset.size;
+    labelAxis(runway, 1);
+    if (isRow()) {
+      // The row layout may drop the unit (the caption says it) and thin its labels to every
+      // other one. If its ticks still touch, its labels still crowd or a text leaves the band,
+      // the runway is stacked instead.
+      if (!ticksFit(runway)) runway.dataset.unit = 'off';
+      if (!axisFits(runway)) labelAxis(runway, 2);
+      // (An element that is not drawn has an empty box at the origin: it is not "outside".)
+      const inBand = (node) => {
+        const box = node.getBoundingClientRect();
+        return (!box.width && !box.height) || within(box, band);
+      };
+      const texts = [...runway.querySelectorAll('.plb-rl, .plb-land, .plb-land > *, .plb-rwn')];
+      if (!ticksFit(runway) || !axisFits(runway) || !texts.every(inBand)) {
+        runway.dataset.fit = 'stacked';
+        delete runway.dataset.unit;
+        labelAxis(runway, 1);
+      }
+    }
+    if (!isRow()) {
+      if (!ticksFit(runway)) runway.dataset.unit = 'off';
+      for (const step of [2, 4, 0]) {
+        if (axisFits(runway)) break;
+        labelAxis(runway, step);
+      }
+      return;
+    }
+    // The result is the page's largest teal text where its line has room for it on one line.
+    // Its size cannot undo what was fitted above: only a "sooner" result is enlarged, and that
+    // belongs to the shorter line, whose landing spans a free column and so sizes no column.
+    if (!won) return;
+    for (const size of ['xl', 'lg']) {
+      won.dataset.size = size;
+      const box = won.getBoundingClientRect();
+      if (box.height < parseFloat(getComputedStyle(won).lineHeight) * 1.5 && within(box, band)) return;
+    }
+    delete won.dataset.size;
   }
 
   function renderGrad() {
@@ -1859,6 +1943,7 @@
     const open = items.length > 0 && (disclosure ? state.gradWhy : true);
     why.hidden = !open;
     why.replaceChildren(...(open ? items.map((parts) => el('li', '', ...parts)) : []));
+    fitRunway();
 
     // A control that was just hidden took the keyboard with it: keep it in the band.
     if (hadFocus) {
@@ -2398,6 +2483,21 @@
         setGradWhy(false, true);
       }
     });
+    // The runway is fitted again when the band's width changes (the window, a column appearing)
+    // and when the web fonts arrive after the first draw: both change what has room.
+    if (typeof ResizeObserver === 'function') {
+      let width = 0;
+      new ResizeObserver((entries) => {
+        const now = Math.round(entries[0].contentRect.width);
+        if (now === width) return;
+        width = now;
+        requestAnimationFrame(fitRunway);
+      }).observe($('plbGrad'));
+    }
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(fitRunway, () => {});
+      if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', fitRunway);
+    }
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkAge(); });
     setInterval(checkAge, 60 * 1000);
 
