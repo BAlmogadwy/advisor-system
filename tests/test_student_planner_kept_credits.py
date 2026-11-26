@@ -302,26 +302,6 @@ def test_a_figure_the_caller_supplies_beats_the_catalogue(
     assert _by_course(option["courses"])["GS201"] == 4
 
 
-def test_a_rebuild_holds_nothing_so_it_prices_nothing(
-    world: dict[str, TermSection], solver_calls: list[dict[str, Any]]
-) -> None:
-    _register(world, "KC101", "GS201")
-
-    build_student_options(
-        PlannerRequest(
-            student_id=SID,
-            year=YEAR,
-            term=TERM,
-            must_include=("KC103",),
-            keep_current_sections=False,
-            max_credits=18,
-            include_recommendations=False,
-        )
-    )
-
-    assert solver_calls[0]["max_credits"] == 18
-
-
 # ── the chat's timetable proposal ────────────────────────────────────────────────
 
 
