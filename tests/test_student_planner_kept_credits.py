@@ -365,3 +365,20 @@ def test_the_chat_proposal_counts_a_kept_course_no_source_knows_at_the_fallback(
 
     assert result["baseline_credit_hours"] == 3 + DEFAULT_CREDITS
     assert _by_course(result["baseline_sections"]) == {"KC101": 3, "ZZ900": DEFAULT_CREDITS}
+
+
+def test_the_chat_proposal_counts_a_plan_row_with_no_hours_as_the_adapter_does(
+    world: dict[str, TermSection],
+) -> None:
+    """The chat counted such a row as 0 and the adapter as the fallback, so
+    `proposed_credit_hours` (the adapter's total minus the chat's baseline) came out
+    larger than the courses added."""
+    ProgrammeRequirement.objects.filter(program=PROG, course_code="KC101").update(credit_hours=None)
+    _register(world, "KC101")
+
+    result = _proposal({"course_codes": ["KC103"], "max_credits": 18})
+
+    assert result["baseline_credit_hours"] == DEFAULT_CREDITS
+    option = result["alternatives"][0]
+    assert option["proposed_credit_hours"] == 3
+    assert option["total_credit_hours"] == DEFAULT_CREDITS + 3
