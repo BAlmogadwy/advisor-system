@@ -251,9 +251,10 @@ class PlannerBoardGapsTests(PlannerBoardCase):
 
     def test_reset_is_disabled_without_a_student_and_in_arabic_it_is_said_in_arabic(self) -> None:
         page = self._open(_fake(), load=False)
-        expect(page.locator("#plbReset")).to_be_disabled()
+        expect(page.locator("#plbReset")).to_have_count(0)  # no student: no group, no link
         page.context.close()
         page = self._open(_fake(), language="ar")
+        expect(page.locator("#plbReset")).to_be_disabled()  # loaded, the list is the suggested one
         expect(page.locator("#plbReset")).to_have_text("العودة إلى المقترح")
         page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
         page.click("#plbReset")

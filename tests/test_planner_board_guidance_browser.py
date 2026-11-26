@@ -822,7 +822,16 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         self.assertTrue(state["review"]["disabled"])
         self.assertEqual(
             page.evaluate("() => getComputedStyle(document.getElementById('plbBuild')).color"),
-            page.evaluate("() => getComputedStyle(document.getElementById('plbEditRules')).color"),
+            page.evaluate(
+                """() => {
+                  const probe = document.createElement('span');
+                  probe.style.color = 'var(--text-brand)';
+                  document.body.append(probe);
+                  const colour = getComputedStyle(probe).color;
+                  probe.remove();
+                  return colour;
+                }"""
+            ),
         )
         # Rebuilding gives the fill back to Review and apply.
         page.click("#plbBuild")

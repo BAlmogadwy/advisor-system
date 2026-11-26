@@ -173,9 +173,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
     # ── The rules ────────────────────────────────────────────────────────────
     def test_the_rules_summary_and_the_cap_default(self) -> None:
         page = self._open(Fake())
-        self.assertEqual(
-            self._text(page, "#plbRules1"), "Keep Registered · Strict eligibility · Max credits 18"
-        )
+        self.assertEqual(self._rules_now(page), {"mode": "keep", "elig": "strict", "max": "18"})
         self.assertEqual(
             self._text(page, "#plbRules2"), "This programme only · No full sections · No swaps"
         )
@@ -193,7 +191,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             context_for(str(body["student_id"]), credit_cap=16, regulatory_max_credits=17),
         )
         page = self._open(fake)
-        self.assertIn("Max credits 16", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["max"], "16")
         self.assertTrue(page.locator("#plbRulesChanged").is_hidden())
         self.assertEqual(self._text(page, "#plbCredits"), "15 of 16 cr · 1 free")
         # A student whose cap is not known: nothing is shown as zero, nothing crashes.
@@ -202,7 +200,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             context_for(str(body["student_id"]), credit_cap=None, regulatory_max_credits=None),
         )
         self._fetch(page, OTHER_ID)
-        expect(page.locator("#plbRules1")).to_contain_text("Max credits not set")
+        expect(page.locator("#plbMaxIn")).to_have_value("")
         self.assertEqual(self._text(page, "#plbCredits"), "15 cr")
         self.assertIn("—", self._text(page, ".plb-stat:nth-child(3)"))
         self.assertNotIn("Credit cap 0", self._text(page, "#plbStudent"))
@@ -212,7 +210,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             context_for(str(body["student_id"]), credit_cap=20),
         )
         self._fetch(page, "4500002")
-        expect(page.locator("#plbRules1")).to_contain_text("Max credits 20")
+        expect(page.locator("#plbMaxIn")).to_have_value("20")
 
     def test_the_rules_dialog_round_trips_each_value_and_counts_the_changes(self) -> None:
         fake = Fake()
@@ -220,20 +218,17 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         before = len(fake.context_bodies)
         self._rules(page, mode="ignore")
         expect(page.locator("#plbRulesDialog")).to_be_hidden()
-        self.assertIn("Ignore Registered", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["mode"], "ignore")
         self.assertEqual(self._text(page, "#plbRulesChanged"), "1 rule changed")
         self._rules(page, max=15)
-        self.assertIn("Max credits 15", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["max"], "15")
         self.assertEqual(self._text(page, "#plbRulesChanged"), "2 rules changed")
         self._rules(page, prog=False)
         self.assertIn("Any programme", self._text(page, "#plbRules2"))
         self._rules(page, full=True)
         self.assertIn("Full sections allowed", self._text(page, "#plbRules2"))
         self._rules(page, swap=True)
-        self.assertEqual(
-            self._text(page, "#plbRules1"),
-            "Ignore Registered · Strict eligibility · Max credits 15",
-        )
+        self.assertEqual(self._rules_now(page), {"mode": "ignore", "elig": "strict", "max": "15"})
         self.assertEqual(
             self._text(page, "#plbRules2"), "Any programme · Full sections allowed · Suggest swaps"
         )
@@ -251,15 +246,13 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         # Cancel throws edits away.
         page.select_option("#plbRuleMode", "keep")
         page.click("#plbRulesCancel")
-        self.assertIn("Ignore Registered", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["mode"], "ignore")
         # Reset to defaults, then Apply: nothing is changed any more.
         page.click("#plbEditRules")
         page.click("#plbRulesReset")
         self.assertEqual(page.input_value("#plbRuleMax"), "18")
         page.click("#plbRulesApply")
-        self.assertEqual(
-            self._text(page, "#plbRules1"), "Keep Registered · Strict eligibility · Max credits 18"
-        )
+        self.assertEqual(self._rules_now(page), {"mode": "keep", "elig": "strict", "max": "18"})
         self.assertTrue(page.locator("#plbRulesChanged").is_hidden())
 
     def test_the_max_credits_field_is_validated_and_the_dialog_stays_open(self) -> None:
@@ -274,11 +267,11 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             expect(page.locator("#plbRuleMaxErr")).to_have_text(
                 "Enter a whole number from 1 to 19."
             )
-            self.assertIn("Max credits 18", self._text(page, "#plbRules1"))
+            self.assertEqual(self._rules_now(page)["max"], "18")
         page.fill("#plbRuleMax", "")
         page.click("#plbRulesApply")
         expect(page.locator("#plbRulesDialog")).to_be_hidden()
-        self.assertIn("Max credits not set", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["max"], "")
 
     def test_changing_eligibility_says_so_then_reloads_and_keeps_the_other_rules(self) -> None:
         fake = Fake()
@@ -305,7 +298,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbRuleEligNote")).to_be_visible()
         page.select_option("#plbRuleElig", "relaxed")
         page.click("#plbRulesApply")
-        expect(page.locator("#plbRules1")).to_contain_text("Relaxed eligibility")
+        expect(page.locator("#plbEligRelaxed")).to_be_checked()
         expect(
             page.locator("#plbTable tbody[data-group='new'] tr[data-code='AI431']")
         ).to_be_visible()
@@ -315,7 +308,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         # The suggestions were reloaded (the removed course is back), and the
         # max credits the adviser chose is still the max credits.
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342", "AI431"])
-        self.assertIn("Max credits 16", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["max"], "16")
         self.assertEqual(self._text(page, "#plbRulesChanged"), "2 rules changed")
 
     def test_a_failed_eligibility_reload_puts_the_old_rule_back(self) -> None:
@@ -330,7 +323,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             "The student could not be loaded. Try again."
         )
         # The page still shows the strict suggestions, so the summary must say strict ...
-        expect(page.locator("#plbRules1")).to_contain_text("Strict eligibility")
+        expect(page.locator("#plbEligStrict")).to_be_checked()
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
         # ... while the other rule changed in the same dialog is kept and applied.
         self.assertEqual(self._text(page, "#plbRulesChanged"), "1 rule changed")
@@ -347,13 +340,13 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         fake.context_answer = lambda body: (404, {"error": {"code": "STUDENT_NOT_FOUND"}})
         self._fetch_forced(page, "4999999")
         expect(page.locator("#plbStatus")).to_have_text("No student found with that ID.")
-        expect(page.locator("#plbRules1")).to_contain_text("Strict eligibility")
+        expect(page.locator("#plbEligStrict")).to_be_checked()
         # The overtaken reload then answers: it is too late to change anything.
         _body, route = fake.pending.pop()
         route.fulfill(json=context_for(STUDENT_ID, eligibility_mode="relaxed"))
         page.wait_for_timeout(400)
         page.evaluate("new Promise(r => requestAnimationFrame(() => r(true)))")
-        self.assertIn("Strict eligibility", self._text(page, "#plbRules1"))
+        self.assertEqual(self._rules_now(page)["elig"], "strict")
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
         self.assertEqual(self._text(page, "#plbRulesChanged"), "")
 
@@ -384,7 +377,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         page = self._open(fake)
         page.fill("#plbStudentId", "9999999")  # typed, never fetched
         self._rules(page, elig="relaxed")
-        expect(page.locator("#plbRules1")).to_contain_text("Relaxed eligibility")
+        expect(page.locator("#plbEligRelaxed")).to_be_checked()
         self.assertEqual(fake.context_bodies[-1]["student_id"], STUDENT_ID)
 
     # ── The courses ──────────────────────────────────────────────────────────
@@ -522,7 +515,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertFalse(fake.catalog_bodies[-1]["program_sections_only"])
         # ... and a second change is answered at once.
         self._rules(page, mode="ignore")
-        expect(page.locator("#plbRules1")).to_contain_text("Ignore Registered")
+        expect(page.locator("#plbRegIgnore")).to_be_checked()
         self.assertEqual(len(fake.catalog_bodies), 3)
         # The slow reply then arrives, saying there are no sections at all.
         fake.pending_catalog.pop().fulfill(json={"ok": True, "sections": []})
@@ -654,9 +647,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertEqual(self._text(page, "#plbStatus"), "تم تحميل بيانات الطالب.")
         self.assertIn("المعدل التراكمي", self._text(page, "#plbStudent"))
         self.assertIn("إرشادي · الأقصى 19", self._text(page, "#plbStudent"))
-        self.assertEqual(
-            self._text(page, "#plbRules1"), "الإبقاء على المسجّل · أهلية صارمة · الحد الأقصى 18"
-        )
+        self.assertEqual(self._rules_now(page), {"mode": "keep", "elig": "strict", "max": "18"})
         self.assertEqual(
             self._text(page, "#plbRules2"), "شُعب البرنامج فقط · بلا شُعب ممتلئة · بلا تبديلات"
         )
@@ -710,7 +701,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbStatus")).to_have_text("أدخل رقم الطالب.")
         page.click("#plbEditRules")
         self.assertIn("أهلية المقررات", self._text(page, "#plbRulesDialog"))
-        self.assertIn("تعديل", self._text(page, "#plbEditRules"))
+        self.assertIn("قواعد أخرى", self._text(page, "#plbEditRules"))
         page.fill("#plbRuleMax", "x")
         page.click("#plbRulesApply")
         expect(page.locator("#plbRuleMaxErr")).to_have_text("أدخل عددًا صحيحًا من 1 إلى 99.")

@@ -8740,8 +8740,33 @@ html[data-theme="dark"] .plb {
 .plb-stat span { font-size: var(--text-xs); font-weight: 500; line-height: 16px; color: var(--t3); }
 .plb-rules { display: flex; flex-direction: column; margin-top: 4px; }
 .plb-rh { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 16px; }
-.plb-rh .plb-lk { margin-block: -8px; }
 .plb-rl { margin: 0; font-size: var(--text-xs); line-height: 16px; color: var(--t2); }
+/* The rules an adviser changes on almost every student, one click away: two two-way switches and a number. */
+.plb-rc { display: flex; flex-direction: column; gap: 4px; margin-block: 6px 4px; }
+.plb-rc-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; min-width: 0; }
+.plb-rc-l { font-size: var(--text-xs); font-weight: 600; line-height: 16px; color: var(--t2); }
+.plb-seg { display: inline-flex; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--control-edge); }
+.plb-seg-o {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--control-h-sm); padding-inline: 12px; cursor: pointer;
+  font-size: var(--text-xs); font-weight: 600; line-height: 16px; color: var(--t2);
+}
+.plb-seg-o:first-child { border-start-start-radius: var(--radius-sm); border-end-start-radius: var(--radius-sm); }
+.plb-seg-o:last-child { border-start-end-radius: var(--radius-sm); border-end-end-radius: var(--radius-sm); }
+.plb-seg-o input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.plb-seg-o:has(input:checked) { background: var(--brand-soft); color: var(--text-brand); box-shadow: inset 0 0 0 1px var(--text-brand); }
+.plb-seg-o:has(input:focus-visible) { outline: 2px solid var(--text-brand); outline-offset: 2px; }
+.plb-rc-in {
+  width: 7ch; min-height: var(--control-h-sm); padding: 0 8px; margin: 0; border: 0; border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--control-edge); background: transparent;
+  font: inherit; font-size: var(--text-sm); color: var(--ink); text-align: end;
+}
+.plb-rc-in:focus { outline: 0; box-shadow: inset 0 0 0 2px var(--text-brand); }
+.plb-rc-in[aria-invalid="true"] { box-shadow: inset 0 0 0 2px var(--sev-critical); }
+.plb-rc-hint { margin: 0; font-size: var(--text-xs); line-height: 16px; color: var(--t3); text-align: end; }
+.plb-rc-hint:empty { display: none; }
+.plb-rc + .plb-rl { margin-top: 2px; }
+#plbRuleEligNote[data-flag="true"] { color: var(--sev-warning-ink); font-weight: 600; }
 .plb-changed { margin: 2px 0 0; font-size: var(--text-xs); font-weight: 700; line-height: 16px; color: var(--sev-warning-ink); }
 .plb-changed[hidden] { display: none; }
 
@@ -8973,6 +8998,10 @@ div.plb-dt-sec { cursor: default; }
 .plb-why-p { margin: 0; }
 .plb-stat:lang(ar) { padding-inline: 6px; }
 .plb-grp .plb-grp-end { white-space: nowrap; }
+/* "Reset to suggestions": a row of its own under the group's title, at the end of the line. */
+.plb-tbl .plb-grp-act { padding: 0; text-align: end; }
+.plb-grp-act .plb-lk { margin-block: -6px; }
+.plb-grp-link + .plb-tr > td { border-top: 0; }
 
 /* the guidance column, option names, and the planned blocks of the week that open the detail.
    Everything wraps: nothing here is sized to a text width. */
@@ -8989,6 +9018,8 @@ div.plb-dt-sec { cursor: default; }
 .plb-gv { display: flex; flex-direction: column; min-width: 0; }
 .plb-gt { font-size: var(--text-base); font-weight: 700; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; }
 .plb-gv-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; min-width: 0; }
+/* The Suggested row: the reason, then the view link on a line of its own. */
+.plb-gv-row--own > .plb-gx { flex-basis: 100%; }
 .plb-gx { flex: 1 1 12ch; min-width: 0; font-size: var(--text-xs); line-height: 16px; color: var(--t2); overflow-wrap: anywhere; }
 .plb-wb { display: flex; align-items: flex-start; gap: 6px; font-size: var(--text-sm); font-weight: 700; line-height: 18px; color: var(--sev-warning-ink); overflow-wrap: anywhere; }
 .plb-wb svg { flex: none; margin-top: 2px; }
@@ -9180,12 +9211,11 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
   .plb-sc { white-space: normal; }
 }
 @media (max-width: 768px) {
-  .plb-cap, .plb-lk, .plb-check, .plb-tab, .plb-opt, .plb-more-btn, .plb-more-item, .plb-acts-row .btn { min-height: var(--control-h-lg); }
+  .plb-cap, .plb-lk, .plb-check, .plb-tab, .plb-opt, .plb-more-btn, .plb-more-item, .plb-acts-row .btn, .plb-seg-o, .plb-rc-in, .plb .plb-rh .btn { min-height: var(--control-h-lg); }
   .plb-ib, .plb-tickwrap { min-width: var(--control-h-lg); min-height: var(--control-h-lg); }
   .plb-ib { width: var(--control-h-lg); height: var(--control-h-lg); }
-  .plb-rh .plb-lk { margin-block: 0; }
   .plb-gh .plb-lk { margin-block: 0; }
-  .plb-view { margin-block: 0; }
+  .plb-view, .plb-grp-act .plb-lk { margin-block: 0; }
   .plb-load .btn.btn-sm { min-height: var(--control-h-lg); }
   .plb-sc-btn { padding-block: calc((var(--control-h-lg) - 16px) / 2); margin-block: calc((16px - var(--control-h-lg)) / 2); }
   .plb-dt-close, .plb-dt-sec, .plb-dt-must, .plb-why-btn, .plb .plb-detail .btn { min-height: var(--control-h-lg); }

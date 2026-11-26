@@ -104,7 +104,7 @@ class TestSwitch:
         self, staff_client: Client
     ) -> None:
         html = staff_client.get("/planner/?layout=board&student=4500000").content.decode()
-        assert "js/page-planner-board.js?v=9" in html
+        assert "js/page-planner-board.js?v=10" in html
         assert "js/page-planner.js" not in html
 
     @override_settings(PLANNER_BOARD_ENABLED=False)
@@ -116,7 +116,7 @@ class TestSwitch:
         assert 'lang="ar"' in html
         assert 'dir="rtl"' in html
         assert "التخرّج المتوقع" in html
-        assert "تعديل القواعد" in html
+        assert "قواعد أخرى" in html
 
 
 @pytest.mark.django_db
