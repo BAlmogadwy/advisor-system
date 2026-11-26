@@ -1119,9 +1119,13 @@ def test_planner_build_maps_controls_to_programme_and_capacity_contracts(
     assert calls[0]["program"] == "AI"
     assert calls[0]["strict_per_course"] is False
     assert calls[0]["consider_capacity"] is True
+    # Nothing is registered for this student: the whole cap is room.
+    assert calls[0]["kept_credits"] == 0
     assert strict_result["constraints"] == {
         "program_sections_only": True,
         "allow_full_sections": False,
+        "registered_credits": 0,
+        "credit_room": 18,
     }
 
     assert calls[1]["program"] is None
@@ -1130,6 +1134,8 @@ def test_planner_build_maps_controls_to_programme_and_capacity_contracts(
     assert relaxed_result["constraints"] == {
         "program_sections_only": False,
         "allow_full_sections": True,
+        "registered_credits": 0,
+        "credit_room": 18,
     }
 
 

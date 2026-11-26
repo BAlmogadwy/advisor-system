@@ -160,6 +160,28 @@ def _eligibility_mode(
     return mode, None
 
 
+def _registered_load(rows: list[dict[str, object]]) -> tuple[int, int]:
+    """How many courses a baseline holds and their credit hours, each section once.
+
+    ONE count for the page and for the build. The page shows it as the registered
+    load and sets it against the cap; the build leaves the shortlist only the room
+    it does not use. Counted twice, by two rules, the page could say "3 over" about
+    a plan the build had just called within the limit.
+    """
+    seen: set[tuple[str, str, str]] = set()
+    credits_total = 0
+    for row in rows:
+        key = (
+            str(row.get("course_code", "")),
+            str(row.get("course_number", "")),
+            str(row.get("section", "")),
+        )
+        if key not in seen:
+            seen.add(key)
+            credits_total += int(row.get("credits", 0) or 0)  # type: ignore[call-overload]
+    return len(seen), credits_total
+
+
 def _kept_timetable_digest(rows: list[dict[str, object]]) -> str:
     # Include section identity, source and the occupied times used by the build.
     fields = ("term_section_id", "course_key", "source", "day", "start_time", "end_time")
@@ -420,24 +442,14 @@ def _planner_context_inner(
             }
         )
 
-    seen_keys: set[tuple[str, str, str]] = set()
-    credits_total = 0
-    for r in baseline:
-        row_key = (
-            str(r.get("course_code", "")),
-            str(r.get("course_number", "")),
-            str(r.get("section", "")),
-        )
-        if row_key not in seen_keys:
-            seen_keys.add(row_key)
-            credits_total += int(r.get("credits", 0) or 0)  # type: ignore[call-overload]
+    courses_total, credits_total = _registered_load(baseline)
 
     return _ok(
         {
             "student": student_summary,
             "baseline": baseline,
             "baseline_totals": {
-                "courses": len(seen_keys),
+                "courses": courses_total,
                 "credits": credits_total,
             },
             "recommendations": recommendations,
@@ -1016,7 +1028,18 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                 status=409,
             )
 
+    # THE CAP IS THE STUDENT'S WHOLE LOAD. What is kept already uses part of it,
+    # and the shortlist gets only the rest. The build used to hand the solver the
+    # cap untouched, and the solver counts the shortlist alone, so a student
+    # holding 15 hours under a cap of 18 was given 18 more. The kept load is
+    # counted exactly as the page shows it (the same rows, the same function),
+    # so the page's "N of 18" and the build cannot disagree.
     try:
+        kept_credits = 0
+        if keep_registered and student_id_for_baseline is not None:
+            _kept_courses, kept_credits = _registered_load(
+                append_unmapped_studying_courses(str(student_id_for_baseline), effective_baseline)
+            )
         result = build_plans(
             year,
             term,
@@ -1030,6 +1053,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             strict_per_course=False,
             consider_capacity=enforce_capacity,
             max_credits=max_credits,
+            kept_credits=kept_credits,
             gender=gender,
             program=program,
         )
@@ -1038,6 +1062,10 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
         result["constraints"] = {
             "program_sections_only": program_sections_only,
             "allow_full_sections": allow_full_sections,
+            # What the cap was measured against: the kept load, and the room it
+            # left for the shortlist (None when no cap was set).
+            "registered_credits": kept_credits,
+            "credit_room": max(0, max_credits - kept_credits) if max_credits > 0 else None,
         }
         if result.get("options") and student_id_for_baseline is not None:
             # A later request can use only the exact sections this build returned.

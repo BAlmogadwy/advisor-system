@@ -182,6 +182,105 @@ NO_PLAN = {
     "swap_suggestions": [],
 }
 
+# "Keep registered" with 15 hours kept under a limit of 18: the limit is the whole
+# load, so each reason carries the hours already registered (the build's own shape).
+_KEPT_FIT = {**_FIT, "registered_credits": 15}
+_KEPT_FIT_EN = (
+    "Could not fit alongside the other courses within the 18-credit limit "
+    "(15 of it registered), or its sections clash"
+)
+KEPT_BUILD = {
+    "summary": {
+        "scheduled": 1,
+        "target": 4,
+        "conflicts": 3,
+        "swaps_required": 0,
+        "best_feasible": True,
+        "hard_constraint_failures": [],
+    },
+    "options": [
+        _option(
+            "A1",
+            1,
+            [
+                _lost("PHYS103", _KEPT_FIT_EN, "DID_NOT_FIT", _KEPT_FIT),
+                _lost("ENG102", _KEPT_FIT_EN, "DID_NOT_FIT", _KEPT_FIT),
+                # alone it is more than the 3 hours the registered courses leave
+                _lost(
+                    "GS101",
+                    "GS101 is 4 credits, above the 18-credit limit set for this build "
+                    "(15 of it registered)",
+                    "DID_NOT_FIT",
+                    {"course_credits": 4, "credit_limit": 18, "registered_credits": 15},
+                ),
+            ],
+        )
+    ],
+    "unscheduled": [],
+    "swap_suggestions": [],
+}
+
+
+def _no_room(registered: int) -> dict:
+    """The build's reply when the registered load leaves nothing of an 18-hour limit."""
+    sentence = f"No room left under the 18-credit limit: {registered} credits are registered"
+    return {
+        "summary": {
+            "scheduled": 0,
+            "target": 2,
+            "conflicts": 2,
+            "swaps_required": 0,
+            "best_feasible": False,
+            "hard_constraint_failures": [
+                {"kind": "max_credits", "course_code": "", "reason": sentence}
+            ],
+        },
+        "options": [],
+        "unscheduled": [
+            _lost(
+                code,
+                sentence,
+                "DID_NOT_FIT",
+                {"course_credits": credits, "credit_limit": 18, "registered_credits": registered},
+            )
+            for code, credits in (("PHYS103", 4), ("CS112", 3))
+        ],
+        "swap_suggestions": [],
+        "constraints": {
+            "program_sections_only": True,
+            "allow_full_sections": False,
+            "registered_credits": registered,
+            "credit_room": 0,
+        },
+    }
+
+
+# What the page says when a build has no option at all: in general, and when the
+# registered courses already fill the limit.
+NO_RESULT_SAID = {
+    "en": (
+        "No valid result satisfies every must-take course and exact pinned section "
+        "under the current constraints."
+    ),
+    "ar": "لا توجد نتيجة صالحة تحقق جميع المقررات الإلزامية والشُعب المثبّتة ضمن القيود الحالية.",
+}
+NO_ROOM_SAID = {
+    "en": "Nothing can be added: the registered courses use the whole credit limit.",
+    "ar": "لا يمكن إضافة مقررات: المقررات المسجلة تستنفد حد الساعات كاملًا.",
+}
+# The status strip and the options area; then the summary's inner width and the width
+# of each line it holds after its four figures (failures, the heading, the reasons).
+# Those were squeezed into columns a few words wide.
+NO_RESULT_SHOWN = r"""() => {
+  const text = id => document.querySelector(id).textContent.replace(/\s+/g, ' ').trim();
+  const box = document.getElementById('builderSummary');
+  const cs = getComputedStyle(box);
+  return { status: text('#statusBanner'), options: text('#optionCards .planner-banner'),
+           inner: Math.round(box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)),
+           lines: [...box.children].slice(4).map(c => Math.round(c.getBoundingClientRect().width)) };
+}"""
+
+
 METHOD_NAMES = {
     "en": {
         "A1": "Most courses scheduled",
@@ -256,6 +355,9 @@ PAGE_TEXT = r"""() => {
 }"""
 
 PLANNER_READY_AGAIN = "() => !document.getElementById('fetchBtn').disabled"
+
+# Per reason line, the text of each isolated run (<bdi>), in order.
+ISOLATED_PER_LINE = "ns => ns.map(n => [...n.querySelectorAll('bdi')].map(b => b.textContent))"
 
 
 class PlannerListsBrowserTests(StaticLiveServerTestCase):
@@ -658,9 +760,107 @@ class PlannerListsBrowserTests(StaticLiveServerTestCase):
                 found.append(f"the plain reason is missing: {text!r}")
             if language == "ar" and "تعذّر إدراجه ضمن حد" not in text:
                 found.append(f"the Arabic reason is missing: {text!r}")
+            found += self._no_result_findings(page, NO_RESULT_SAID[language])
             if found:
                 problems[language] = found
             page.context.close()
+        self._assert_no_findings(problems)
+
+    @staticmethod
+    def _no_result_findings(page, sentence: str) -> list[str]:
+        """A build with no option: what the page says twice, and a summary one can read."""
+        shown = page.evaluate(NO_RESULT_SHOWN)
+        found = []
+        for where in ("status", "options"):
+            if shown[where] != sentence:
+                found.append(f"the {where} area reads {shown[where]!r}")
+        # each failure, the heading and the reasons take the summary's full width
+        narrow = [width for width in shown["lines"] if abs(width - shown["inner"]) > 1]
+        if narrow or len(shown["lines"]) < 2:
+            found.append(f"the summary's lines are {shown['lines']}px in {shown['inner']}px")
+        return found
+
+    def test_a_reason_says_how_much_of_the_limit_is_registered(self) -> None:
+        """Keep registered: the limit covers the kept hours, and each reason says so.
+
+        Without it a course that only lacks room reads "or its sections clash", and the
+        adviser goes looking for a clash that is not there.
+        """
+        want = {
+            "en": {
+                "beside": (
+                    "Not scheduled (2): PHYS103, ENG102 — Could not fit within the "
+                    "18-credit limit (15 of it registered), or its sections clash"
+                ),
+                "alone": (
+                    "Not scheduled (1): GS101 — 4 credits, above the 3 left of the "
+                    "18-credit limit (15 registered)"
+                ),
+                "full": "No room left under the 18-credit limit: {registered} credits are registered",
+            },
+            "ar": {
+                "beside": "تعذّر إدراجه ضمن حد 18 ساعة (المسجّل منها 15)، أو أن شُعبه متعارضة",
+                "alone": "4 ساعات، والمتبقي من حد 18 ساعة 3 فقط (المسجّل 15)",
+                "full": "لا متّسع ضمن حد 18 ساعة: الساعات المسجلة {registered}",
+            },
+        }
+        problems: dict[str, list[str]] = {}
+        for language in LANGUAGES:
+            found: list[str] = []
+
+            page = self._load(language, build=KEPT_BUILD)
+            self._build(page, options=1)
+            lines = self._reason_lines(page, "A1")
+            if len(lines) != 2:
+                found.append(f"A1 has {len(lines)} reason lines: {lines}")
+            for case in ("beside", "alone"):
+                sentence = want[language][case]
+                exact = language == "en"
+                if not any((line == sentence) if exact else (sentence in line) for line in lines):
+                    found.append(f"A1 lacks the {case!r} sentence: {lines}")
+            if language == "ar":
+                if any("credit" in line or "Could not" in line for line in lines):
+                    found.append(f"A1 (ar) has English: {lines}")
+                # every number of each sentence is isolated, so it reads left to right
+                isolated = page.eval_on_selector_all(
+                    '#builderOptions [data-diag="A1"] .opt-reason', ISOLATED_PER_LINE
+                )
+                if isolated != [
+                    ["2", "PHYS103", "ENG102", "18", "15"],
+                    ["1", "GS101", "4", "18", "3", "15"],
+                ]:
+                    found.append(f"A1 (ar) isolates {isolated}")
+            page.context.close()
+
+            # a load at the limit, and one already above it
+            for registered in (18, 21):
+                page = self._load(language, build=_no_room(registered))
+                self._build(page, options=0)
+                text = page.eval_on_selector(
+                    "#builderSummary", "n => n.textContent.replace(/\\s+/g, ' ')"
+                )
+                # one line for both courses, whatever their hours: neither has any room
+                if "PHYS103, CS112" not in text:
+                    found.append(f"{registered}: one line for both courses is missing: {text!r}")
+                if want[language]["full"].format(registered=registered) not in text:
+                    found.append(f"{registered}: the no-room reason is missing: {text!r}")
+                if "clash" in text or "متعارضة" in text:
+                    found.append(f"{registered}: a full load is blamed on a clash: {text!r}")
+                if language == "ar":
+                    isolated = page.eval_on_selector_all(
+                        "#builderSummary .opt-reason", ISOLATED_PER_LINE
+                    )
+                    if isolated != [["2", "PHYS103", "CS112", "18", str(registered)]]:
+                        found.append(f"{registered}: the no-room line (ar) isolates {isolated}")
+                # said where the adviser looks first, not as a must-take problem
+                found += [
+                    f"{registered}: {finding}"
+                    for finding in self._no_result_findings(page, NO_ROOM_SAID[language])
+                ]
+                page.context.close()
+
+            if found:
+                problems[language] = found
         self._assert_no_findings(problems)
 
     # ── 8. No false affordances ──────────────────────────────────────────────
