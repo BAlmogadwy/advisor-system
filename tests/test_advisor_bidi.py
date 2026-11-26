@@ -39,6 +39,7 @@ from core.models import (
     Student,
 )
 from core.services.rbac import ensure_role_groups
+from tests.live_server_idle import live_server_paused
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 sync_playwright = playwright_api.sync_playwright
@@ -237,18 +238,21 @@ class AdvisorBidiTests(StaticLiveServerTestCase):
         return context.new_page()
 
     def _seed(self, answer: str, question: str = "ما شعبتي؟") -> AdvisorConversation:
-        conversation = AdvisorConversation.objects.create(student_id=MINE)
-        with mock.patch(
-            "core.services.student_advisor_v2.answer_student_advisor",
-            return_value=_reply(answer),
-        ):
-            response = self._client().post(
-                reverse("advisor_conversation_send", args=[conversation.id]),
-                data=json.dumps({"message": question}),
-                content_type="application/json",
-            )
-        assert response.status_code == 201, response.content
-        RateLimitBucket.objects.all().delete()
+        # A page opened before may still be fetching its conversation list, and
+        # every advisor GET writes its rate-limit bucket in a transaction.
+        with live_server_paused(self.server_thread):
+            conversation = AdvisorConversation.objects.create(student_id=MINE)
+            with mock.patch(
+                "core.services.student_advisor_v2.answer_student_advisor",
+                return_value=_reply(answer),
+            ):
+                response = self._client().post(
+                    reverse("advisor_conversation_send", args=[conversation.id]),
+                    data=json.dumps({"message": question}),
+                    content_type="application/json",
+                )
+            assert response.status_code == 201, response.content
+            RateLimitBucket.objects.all().delete()
         return conversation
 
     def _open(self, page, conversation: AdvisorConversation) -> None:

@@ -31,6 +31,7 @@ from django.urls import reverse
 from core import authz, models
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ensure_role_groups
 from tests import exam_linked_parity_corpus as corpus
+from tests.live_server_idle import live_server_paused
 from tests.test_exam_rosters_browser import WIDE_FONT
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -223,12 +224,15 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
         forced=False,
         height=900,
     ):
-        user = get_user_model().objects.create_user(
-            username=f"locks-{language}-{get_user_model().objects.count()}"
-        )
-        user.groups.add(Group.objects.get(name=ROLE_EXAM_COMMITTEE))
-        client = Client()
-        client.force_login(user)
+        # The pages opened before stay open, and may still be asking for the
+        # run list, the job panel or a lock's draft impact.
+        with live_server_paused(self.server_thread):
+            user = get_user_model().objects.create_user(
+                username=f"locks-{language}-{get_user_model().objects.count()}"
+            )
+            user.groups.add(Group.objects.get(name=ROLE_EXAM_COMMITTEE))
+            client = Client()
+            client.force_login(user)
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             extra_http_headers={"Accept-Language": language},

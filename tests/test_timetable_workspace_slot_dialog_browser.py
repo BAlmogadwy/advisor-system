@@ -44,6 +44,7 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase  # noqa:
 
 from core.models import SectionPlacement, TimetableScenario  # noqa: E402
 from tests import one_teacher_support as fx  # noqa: E402
+from tests.live_server_idle import live_server_paused  # noqa: E402
 from tests.test_timetable_workspace_frame_browser import CONTRAST  # noqa: E402
 from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin  # noqa: E402
 
@@ -251,9 +252,11 @@ class SlotDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
 
     def test_sdb2_the_keyboard_alone_marks_fixes_and_saves(self) -> None:
         for language in ("en", "ar"):
-            TimetableScenario.objects.filter(pk=self.scenario.pk).update(
-                slot_config=[], lab_slot_config=[]
-            )
+            # The last page's save may still have its readiness check running.
+            with live_server_paused(self.server_thread):
+                TimetableScenario.objects.filter(pk=self.scenario.pk).update(
+                    slot_config=[], lab_slot_config=[]
+                )
             page, sent, errors = self._load(language, "light", 1440, 790)
             page.focus("#twMoreMenu")
             page.keyboard.press("Enter")
@@ -330,9 +333,10 @@ class SlotDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
         )
         late = SectionPlacement.objects.get(term_section__course_code="AI333")
         for language in ("en", "ar"):
-            TimetableScenario.objects.filter(pk=self.scenario.pk).update(
-                slot_config=[], lab_slot_config=[]
-            )
+            with live_server_paused(self.server_thread):
+                TimetableScenario.objects.filter(pk=self.scenario.pk).update(
+                    slot_config=[], lab_slot_config=[]
+                )
             page, sent, errors = self._load(language, "light", 1440, 790, cards=5)
             self.assertTrue(
                 page.evaluate(
