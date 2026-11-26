@@ -3508,11 +3508,12 @@ def _exec_build_timetable_proposal(
     # The planner's own lookup for a held course, not a table of this function's own:
     # `build_student_options` subtracts the same hours from the cap and the exact
     # target, and `proposed_credits` below is its total minus this figure, so the two
-    # have to be the one number. A course outside the plan counts at its real hours.
+    # have to be the one number. A course outside the plan counts at its real hours,
+    # and a course counts once however many of its sections are held, as it does in
+    # the adapter's total and the staff planner's.
     held_credits = kept_course_credits(program, held_codes)
     baseline_credits = sum(
-        held_credits.get(normalize_code(row.get("course_code") or ""), DEFAULT_CREDITS)
-        for row in baseline_section_rows
+        held_credits.get(code, DEFAULT_CREDITS) for code in dict.fromkeys(held_codes) if code
     )
 
     policy_cap = credit_ceiling(int(term))

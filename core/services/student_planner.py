@@ -222,12 +222,12 @@ def _course_credits(program: str) -> dict[str, int]:
 def kept_course_credits(program: str, course_codes: Iterable[object]) -> dict[str, int]:
     """What the planner counts for each course the student already holds.
 
-    THE one lookup for a held course. The adapter below and the chat's timetable
-    proposal both read it, so they cannot price one registration two ways, and both
-    agree with the staff planner, whose registered total is the sum of the baseline
-    rows' ``credits``: `student_sections.programme_course_credits` is what gives those
-    rows their hours (the plan, then the programme's elective catalogue, then the
-    course table).
+    The lookup for a held course. The adapter below and the chat's timetable proposal
+    (``build_timetable_proposal``) both read it, so they cannot price one registration
+    two ways, and both agree with the staff planner, whose registered total is the sum
+    of the baseline rows' ``credits``: `student_sections.programme_course_credits` is
+    what gives those rows their hours (the plan, then the programme's elective
+    catalogue, then the course table).
 
     The plan alone is not enough. A course taken against an elective row, or a
     general-studies elective, is in no plan, and the plan-only table this replaces

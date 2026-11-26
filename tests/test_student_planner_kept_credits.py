@@ -40,7 +40,11 @@ from core.services.student_planner import (
     build_student_options,
     kept_course_credits,
 )
-from core.services.student_sections import get_student_term_registration_summary
+from core.services.student_sections import (
+    get_student_term_baseline,
+    get_student_term_registration_summary,
+)
+from core.services.timetable_snapshots import Snapshot
 from core.services.virtual_advisor_capabilities import get_default_registry
 
 pytestmark = pytest.mark.django_db
@@ -58,7 +62,6 @@ SECTIONS: dict[str, tuple[tuple[str, ...], str, str]] = {
     "GS201": (("SUN", "TUE"), "10:00", "11:15"),
     "ZZ900": (("MON", "WED"), "10:00", "11:15"),
     "KC103": (("SUN", "TUE"), "12:00", "13:15"),
-    "KC104": (("MON", "WED"), "12:00", "13:15"),
 }
 
 
@@ -73,8 +76,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, TermSection]:
         status="ACTIVE",
     )
     # The plan: KC101 3, KC102 4 (the course table says 3 for it: the plan answers
-    # first), and two courses the student may add.
-    for code, hours in (("KC101", 3), ("KC102", 4), ("KC103", 3), ("KC104", 3)):
+    # first), and KC103, a course the student may add.
+    for code, hours in (("KC101", 3), ("KC102", 4), ("KC103", 3)):
         ProgrammeRequirement.objects.create(
             program=PROG,
             course_code=code,
@@ -144,6 +147,7 @@ def _build(
     cap: int = 18,
     target: int | None = None,
     override: tuple[tuple[str, int], ...] = (),
+    baseline: tuple[dict[str, Any], ...] | None = None,
 ) -> dict[str, Any]:
     return build_student_options(
         PlannerRequest(
@@ -156,6 +160,7 @@ def _build(
             target_credits=target,
             include_recommendations=False,
             course_credits_override=override,
+            baseline_override=baseline,
         )
     )
 
@@ -185,6 +190,28 @@ def test_kept_course_credits_prices_each_kind_of_held_course(
     }
     with django_assert_num_queries(0):
         assert kept_course_credits(PROG, []) == {}
+
+
+def test_a_held_course_is_priced_as_the_course_it_names() -> None:
+    """A course is CODE::NAME. A section naming another course takes none of the
+    plan's hours for the code (CS112 is two courses in two plans)."""
+    ProgrammeRequirement.objects.create(
+        program=PROG,
+        course_code="KC105",
+        course_name="Programming I",
+        programme_term=1,
+        credit_hours=4,
+        type="Mandatory",
+    )
+    Course.objects.create(course_code="KC105", description="Programming II", credit_hours=2)
+
+    assert kept_course_credits(
+        PROG, ["KC105::PROGRAMMING_I", "KC105::PROGRAMMING_II", "KC105::PROGRAMMING_III"]
+    ) == {
+        "KC105::PROGRAMMING_I": 4,  # the plan's course
+        "KC105::PROGRAMMING_II": 2,  # the course table's
+        "KC105::PROGRAMMING_III": DEFAULT_CREDITS,  # nobody describes it
+    }
 
 
 # ── the adapter ──────────────────────────────────────────────────────────────────
@@ -302,6 +329,21 @@ def test_a_figure_the_caller_supplies_beats_the_catalogue(
     assert _by_course(option["courses"])["GS201"] == 4
 
 
+def test_a_baseline_the_caller_hands_in_is_priced_the_same_whatever_its_rows_carry(
+    world: dict[str, TermSection], solver_calls: list[dict[str, Any]]
+) -> None:
+    """`planner_drafts.generate` and the replacement check both pass the baseline in."""
+    _register(world, "KC101", "GS201")
+    rows = get_student_term_baseline(SID, str(YEAR), str(TERM), snapshot=Snapshot.EFFECTIVE)
+    for row in rows:
+        row.pop("credits")
+
+    result = _build("KC103", cap=8, baseline=tuple(rows))
+
+    assert solver_calls[0]["max_credits"] == 3
+    assert result["alternatives"][0]["credit_hours"] == 8
+
+
 # ── the chat's timetable proposal ────────────────────────────────────────────────
 
 
@@ -365,6 +407,34 @@ def test_the_chat_proposal_counts_a_kept_course_no_source_knows_at_the_fallback(
 
     assert result["baseline_credit_hours"] == 3 + DEFAULT_CREDITS
     assert _by_course(result["baseline_sections"]) == {"KC101": 3, "ZZ900": DEFAULT_CREDITS}
+
+
+def test_the_chat_proposal_counts_a_course_once_however_many_sections_are_held(
+    world: dict[str, TermSection],
+) -> None:
+    second = TermSection.objects.create(
+        course_code="KC101",
+        course_number="",
+        course_key="KC101",
+        course_name="KC101",
+        section="M2",
+        available_capacity=30,
+        registered_count=0,
+    )
+    TermSectionMeeting.objects.create(
+        term_section=second, day="THU", start_time="08:00", end_time="09:15"
+    )
+    world["KC101-M2"] = second
+    _register(world, "KC101", "KC101-M2")
+    assert _staff_total() == 3, "the staff planner counts each course once"
+
+    result = _proposal({"course_codes": ["KC103"], "max_credits": 18})
+
+    assert result["baseline_credit_hours"] == 3
+    assert len(result["baseline_sections"]) == 2
+    option = result["alternatives"][0]
+    assert option["proposed_credit_hours"] == 3
+    assert option["total_credit_hours"] == 6
 
 
 def test_the_chat_proposal_counts_a_plan_row_with_no_hours_as_the_adapter_does(
