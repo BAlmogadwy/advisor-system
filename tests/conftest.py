@@ -1,11 +1,15 @@
 import pytest
 
 from core.services import llm_backend, rbac
-from tests import browser_isolation
+from tests import browser_isolation, live_server_idle
 
 # Every browser context a test opens stays on the test server: no page load
 # or "networkidle" waits on the internet (see tests/browser_isolation.py).
 browser_isolation.install()
+# Every live-server test's flush waits until the server has finished what the
+# test's pages asked for: a request still running would lock the flush out
+# (see tests/live_server_idle.py).
+live_server_idle.install()
 
 
 @pytest.fixture(autouse=True)

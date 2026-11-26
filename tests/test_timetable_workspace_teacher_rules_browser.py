@@ -16,6 +16,7 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase  # noqa:
 from django.test import override_settings  # noqa: E402
 
 from tests._instructor_availability_fixture import AVAILABILITY_FLAGS  # noqa: E402
+from tests.live_server_idle import live_server_paused  # noqa: E402
 from tests.test_tw_teacher_rules_display import build_ruled  # noqa: E402
 from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin  # noqa: E402
 
@@ -108,7 +109,9 @@ class TeacherRulesBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
             )
             self.assertEqual(errors, [], language)
             page.context.close()
-            # The next language starts from the same Sunday 13:00.
-            SectionPlacement.objects.filter(pk=self.sunday.pk).update(
-                start_time="13:00", end_time="14:15"
-            )
+            # The next language starts from the same Sunday 13:00, once the
+            # server has read what the move scheduled (its readiness check).
+            with live_server_paused(self.server_thread):
+                SectionPlacement.objects.filter(pk=self.sunday.pk).update(
+                    start_time="13:00", end_time="14:15"
+                )

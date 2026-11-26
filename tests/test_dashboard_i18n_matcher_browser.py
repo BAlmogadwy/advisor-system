@@ -149,6 +149,8 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
             locale="ar",
             extra_http_headers={"Accept-Language": "ar"},
         )
+        # Closed before the flush even when the page never loads (closing twice is harmless).
+        self.addCleanup(context.close)
         context.add_cookies(
             [
                 {

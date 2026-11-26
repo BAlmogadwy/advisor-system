@@ -43,6 +43,7 @@ pytest.importorskip("playwright.sync_api")
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase  # noqa: E402
 
 from tests import one_teacher_support as fx  # noqa: E402
+from tests.live_server_idle import live_server_paused  # noqa: E402
 from tests.test_timetable_workspace_frame_browser import CONTRAST  # noqa: E402
 from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin  # noqa: E402
 
@@ -434,8 +435,11 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
         self._reset()
 
     def _reset(self) -> None:
-        self.placements.filter(term_section=self.ai111).update(room="R100", is_locked=True)
-        self.meetings.filter(term_section=self.ai111).update(room="R100")
+        # Between languages the last page's save may still have its readiness
+        # check running on the server.
+        with live_server_paused(self.server_thread):
+            self.placements.filter(term_section=self.ai111).update(room="R100", is_locked=True)
+            self.meetings.filter(term_section=self.ai111).update(room="R100")
 
     def _saved(self, page, room: str) -> None:
         # Closed, the board read again with the new room, and the page at rest.
@@ -950,9 +954,10 @@ class MoveDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                 "اضغط R على البطاقة لتغيير قاعتها.",
             ),
         ):
-            self.placements.filter(pk=self.sunday.pk).update(
-                day="SUN", start_time="09:00", end_time="10:15"
-            )
+            with live_server_paused(self.server_thread):
+                self.placements.filter(pk=self.sunday.pk).update(
+                    day="SUN", start_time="09:00", end_time="10:15"
+                )
             page, sent, errors = self._load(language, "light", 1440, 790, cards=5)
             posts: list[tuple[str, str]] = []
             page.on(
@@ -1115,7 +1120,8 @@ class PlaceDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
         import json
 
         for language in ("en", "ar"):
-            self._s2_placements().delete()
+            with live_server_paused(self.server_thread):
+                self._s2_placements().delete()
             page, sent, errors = self._load(language, "light", 1440, 790)
             posts: list[tuple[str, str]] = []
             page.on(

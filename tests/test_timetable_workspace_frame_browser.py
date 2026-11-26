@@ -212,6 +212,8 @@ class WorkspaceFrameBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase
                     extra_http_headers={"Accept-Language": language},
                     viewport={"width": width, "height": 900},
                 )
+                # Closed before the flush even when an assertion stops the test.
+                self.addCleanup(context.close)
                 context.add_cookies(
                     [
                         {
