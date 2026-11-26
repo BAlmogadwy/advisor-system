@@ -48,6 +48,7 @@ from django.test import Client
 from core.models import SectionPlacement
 from core.services.timetable_section_policy import create_policy_section_bundle
 from tests import one_teacher_support as fx
+from tests.live_server_idle import live_server_paused
 from tests.test_exam_rosters_browser import WIDE_FONT
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -241,15 +242,21 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
         from core.services import student_otp
         from core.services.rbac import ensure_role_groups
 
-        ensure_role_groups()
-        Student.objects.get_or_create(
-            student_id=STUDENT_ID, defaults={"name": "Contrast", "program": "AI", "section": "M"}
-        )
-        client = Client()
-        client.force_login(student_otp.provision_student_user(STUDENT_ID))
-        session = client.session
-        session[student_otp.STUDENT_AUTHENTICATED_AT_SESSION_KEY] = int(timezone.now().timestamp())
-        session.save()
+        # A student page opened before may still be fetching its conversation
+        # list, and every advisor GET writes its rate-limit bucket in a transaction.
+        with live_server_paused(self.server_thread):
+            ensure_role_groups()
+            Student.objects.get_or_create(
+                student_id=STUDENT_ID,
+                defaults={"name": "Contrast", "program": "AI", "section": "M"},
+            )
+            client = Client()
+            client.force_login(student_otp.provision_student_user(STUDENT_ID))
+            session = client.session
+            session[student_otp.STUDENT_AUTHENTICATED_AT_SESSION_KEY] = int(
+                timezone.now().timestamp()
+            )
+            session.save()
         return session.session_key
 
     def _open(

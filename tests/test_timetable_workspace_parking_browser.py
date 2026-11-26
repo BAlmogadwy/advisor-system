@@ -31,6 +31,7 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase  # noqa:
 
 from core.models import SectionPlacement  # noqa: E402
 from tests import one_teacher_support as fx  # noqa: E402
+from tests.live_server_idle import live_server_paused  # noqa: E402
 from tests.test_timetable_workspace_frame_browser import CONTRAST, FRAME  # noqa: E402
 from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin  # noqa: E402
 
@@ -185,9 +186,11 @@ class ParkingTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
 
     def test_m_moves_a_parked_meeting_onto_the_grid_and_the_strip_goes(self) -> None:
         for language in ("en", "ar"):
-            SectionPlacement.objects.filter(pk=self.parked.pk).update(
-                day="MON", start_time="18:30", end_time="19:45"
-            )
+            # The last page's move may still have its readiness check running.
+            with live_server_paused(self.server_thread):
+                SectionPlacement.objects.filter(pk=self.parked.pk).update(
+                    day="MON", start_time="18:30", end_time="19:45"
+                )
             page, sent, errors = self._load(language, "light", 1440, 790, cards=5)
             card = f'#twGrid .tw-park .tw-card[data-placement-id="{self.parked.id}"]'
             page.focus(card)

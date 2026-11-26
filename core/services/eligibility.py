@@ -72,11 +72,20 @@ def scenario_effective_credits(registrar_total: int, plan_credits_passed: int) -
     it, and inventing a decomposition would inflate credits on a guess. The
     conservative under-count is the right failure direction for a gate.
 
-    Latent today for two independent reasons, neither of them by design: an
-    out-of-plan registration contributes 0 to the baseline credit total, and all
-    six second-cohort gates sit at exactly ``plan_total - co-op credits``, so the
-    end state lands on the gate either way. Raise any gate above that and the loss
-    starts to matter.
+    Latent today for two independent reasons. A registered course outside the
+    plan contributes none of its own hours to the scenario's ledger, and that
+    one is deliberate: ``build_graduation_report`` keeps the ledger in plan
+    rows, because such a course is taken against an elective row and the
+    registrar posts it under that row's code. The row it is counted for enters
+    the ledger at the plan's hours and is not scheduled again
+    (``elective_row_filling``); a course no row can take is load only, and its
+    row brings the hours when the scenario schedules it. The course's own hours
+    in the ledger as well would be held twice, and a zero-slack gate would open
+    a term early (measured on the data of 2026-11-25: 113 second-cohort
+    estimates). The other reason is not by design: all six second-cohort gates
+    sit at exactly ``plan_total - co-op credits``, so the end state lands on
+    the gate either way. Raise any gate above that and the loss starts to
+    matter.
 
     DELIBERATELY NOT used by :func:`hour_gate`. That answers "may this student
     register for this course NOW", where the registrar's own total is the

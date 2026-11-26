@@ -777,6 +777,17 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             page.click(f"#plbMoreList [data-more='{name}']")
 
     @staticmethod
+    def _rules_now(page) -> dict:
+        """What the rules controls on the board say: the checked switches and the max credits field."""
+        return page.evaluate(
+            """() => ({
+              mode: document.querySelector('input[name=plbRegIn]:checked')?.value,
+              elig: document.querySelector('input[name=plbEligIn]:checked')?.value,
+              max: document.getElementById('plbMaxIn').value,
+            })"""
+        )
+
+    @staticmethod
     def _rules(page, **values) -> None:
         """Open Edit rules, set the given controls, press Apply rules."""
         page.click("#plbEditRules")

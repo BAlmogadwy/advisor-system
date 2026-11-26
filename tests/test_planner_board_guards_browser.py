@@ -156,6 +156,7 @@ class PlannerBoardEligibilityRequestTests(PlannerBoardCase):
         page = self._open(fake)
         # The rules default to strict, and the page says so.
         self.assertEqual(page.input_value("#plbRuleElig"), "strict")
+        expect(page.locator("#plbEligStrict")).to_be_checked()
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "strict")
         self.assertTrue(fake.plan_urls and "eligibility_mode=strict" in fake.plan_urls[-1])
         page.click("#plbBuild")
@@ -165,7 +166,12 @@ class PlannerBoardEligibilityRequestTests(PlannerBoardCase):
         page.click("#plbEditRules")
         page.select_option("#plbRuleElig", "relaxed")
         page.click("#plbRulesApply")
-        expect(page.locator("#plbRules1")).to_contain_text("Relaxed eligibility")
+        expect(page.locator("#plbEligRelaxed")).to_be_checked()
+        # The reload asks for the student, then for the plan: wait for the second request.
+        for _ in range(250):
+            if fake.plan_urls and "eligibility_mode=relaxed" in fake.plan_urls[-1]:
+                break
+            page.wait_for_timeout(20)
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "relaxed")
         self.assertIn("eligibility_mode=relaxed", fake.plan_urls[-1])
         page.click("#plbBuild")

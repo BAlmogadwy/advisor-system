@@ -84,6 +84,8 @@ class ScrapeDashboardBrowserTests(StaticLiveServerTestCase):
             locale="en-US",
             extra_http_headers={"Accept-Language": "en"},
         )
+        # Closed before the flush even when a test stops early (closing twice is harmless).
+        self.addCleanup(context.close)
         context.add_cookies(
             [
                 session_cookie,

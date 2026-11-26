@@ -33,6 +33,7 @@ from core.models import (  # noqa: E402
 )
 from core.services.advisor_outcome import ReasonCode  # noqa: E402
 from core.services.rbac import ensure_role_groups  # noqa: E402
+from tests.live_server_idle import live_server_paused  # noqa: E402
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 sync_playwright = playwright_api.sync_playwright
@@ -257,11 +258,13 @@ class EscalationUiTests(StaticLiveServerTestCase):
         page.click(".sa-preview-send")
         page.wait_for_selector(".sa-case")
 
-        AdvisorEscalation.objects.update(
-            status=AdvisorEscalation.Status.RESOLVED,
-            resolution_message="تمت الموافقة على الانسحاب. راجع عمادة القبول.",
-            adviser_notes="الطالب متكرر الشكاوى؛ راجع سجله التأديبي.",
-        )
+        # The page may still be fetching its conversation list (a rate-limit write).
+        with live_server_paused(self.server_thread):
+            AdvisorEscalation.objects.update(
+                status=AdvisorEscalation.Status.RESOLVED,
+                resolution_message="تمت الموافقة على الانسحاب. راجع عمادة القبول.",
+                adviser_notes="الطالب متكرر الشكاوى؛ راجع سجله التأديبي.",
+            )
         self._open(page, answer.conversation)
         page.wait_for_selector(".sa-case-reply")
 
@@ -284,14 +287,15 @@ class EscalationUiTests(StaticLiveServerTestCase):
         client = Client()
         from core.services import student_otp
 
-        client.force_login(student_otp.provision_student_user(MINE))
-        again = client.post(
-            reverse("advisor_escalation_create", args=[str(answer.id)]),
-            data=json.dumps({"student_requested": True}),
-            content_type="application/json",
-        )
-        assert again.status_code == 200
-        assert AdvisorEscalation.objects.count() == 1
+        with live_server_paused(self.server_thread):
+            client.force_login(student_otp.provision_student_user(MINE))
+            again = client.post(
+                reverse("advisor_escalation_create", args=[str(answer.id)]),
+                data=json.dumps({"student_requested": True}),
+                content_type="application/json",
+            )
+            assert again.status_code == 200
+            assert AdvisorEscalation.objects.count() == 1
 
     def test_a_closed_case_lets_the_student_ask_again(self):
         answer = self._turn()
@@ -301,7 +305,8 @@ class EscalationUiTests(StaticLiveServerTestCase):
         page.click(".sa-preview-send")
         page.wait_for_selector(".sa-case")
 
-        AdvisorEscalation.objects.update(status=AdvisorEscalation.Status.CLOSED)
+        with live_server_paused(self.server_thread):
+            AdvisorEscalation.objects.update(status=AdvisorEscalation.Status.CLOSED)
         self._open(page, answer.conversation)
         page.wait_for_selector(".sa-escalate-btn")
         assert page.locator(".sa-escalate-btn").count() == 1

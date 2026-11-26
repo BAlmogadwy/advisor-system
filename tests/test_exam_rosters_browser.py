@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from io import BytesIO
+from typing import TYPE_CHECKING
 
 # Playwright's synchronous API runs through a greenlet; fixture creation is
 # synchronous ORM work while Django serves the page on its own thread.
@@ -36,6 +37,10 @@ from core.services.exam_rosters import build_roster_model
 from core.services.exam_student_export import all_sittings
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ensure_role_groups
 from tests.exam_student_export_fixture import build_population, build_saved_run, saved_payload
+from tests.live_server_idle import IdleTrackingLiveServerThread, wait_for_live_server
+
+if TYPE_CHECKING:
+    from playwright.sync_api import BrowserContext
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 expect = playwright_api.expect
@@ -159,6 +164,10 @@ FOCUSED_IN_VIEW = """() => {
 
 
 class ExamRostersBrowserTests(StaticLiveServerTestCase):
+    # Counts what it is answering, so a test can wait until it has answered
+    # everything its pages asked (see _close_pages).
+    server_thread_class = IdleTrackingLiveServerThread
+
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
@@ -174,9 +183,30 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
     def setUp(self) -> None:
         rv.ROSTER_VIEW_CACHE.clear()
         self.addCleanup(rv.ROSTER_VIEW_CACHE.clear)
+        # Added before any page's own cleanups, so it runs after them and
+        # before the flush.
+        self._contexts: list[BrowserContext] = []
+        self.addCleanup(self._close_pages)
         build_population()
         self.run = build_saved_run()
         self.sittings = all_sittings(build_roster_model(self.run))
+
+    def _close_pages(self) -> None:
+        """Close this test's pages and wait until the server has answered all they asked.
+
+        The pages ask for more than a test waits for: a room's title is shown
+        before its list arrives, and the list a page abandons for the next
+        room still runs to the end on the server, audit row and all. Until it
+        has, the test must not write to the database or flush it
+        (tests/live_server_idle.py says why that fails).
+        """
+        if not self._contexts:
+            return
+        try:
+            while self._contexts:
+                self._contexts.pop().close()
+        finally:
+            wait_for_live_server(self.server_thread)
 
     def _page(
         self,
@@ -186,6 +216,9 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         touch: bool = False,
         wide_font: bool = False,
     ):
+        # One page at a time: the last one's requests are answered before
+        # this one's user and session are written.
+        self._close_pages()
         ensure_role_groups()
         user = get_user_model().objects.create_user(
             username=f"lists-browser-{language}-{get_user_model().objects.count()}",
@@ -201,6 +234,7 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
             accept_downloads=True,
             has_touch=touch,
         )
+        self._contexts.append(context)
         context.add_cookies(
             [
                 {
@@ -215,7 +249,6 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
                 },
             ]
         )
-        self.addCleanup(context.close)
         if wide_font:
             context.add_init_script(WIDE_FONT)
         page = context.new_page()
@@ -271,6 +304,8 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         page.keyboard.press("Escape")
         expect(page.locator("#examRostersPaneTitle")).to_have_text("Room M-B")
         # One audit row for the room; one per settled search and the lookup.
+        # Read once the server has answered all the page asked.
+        self._close_pages()
         actions = list(AuditLog.objects.order_by("id").values_list("action", flat=True))
         self.assertEqual(actions.count("exam_timetable.roster_view"), 1)
         self.assertGreaterEqual(actions.count("exam_timetable.roster_lookup"), 2)
