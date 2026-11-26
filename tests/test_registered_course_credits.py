@@ -9,10 +9,10 @@ The reader now follows the graduation forecast's order: the plan, then the
 programme's elective catalogue, then the course table. A course is CODE::NAME, so a
 figure is never borrowed from another course that only shares the code.
 
-Those hours are the term's LOAD. Two things must not follow from them, and the
-second half of this file holds both: a resolved elective slot must not be counted
-beside the course that fills it, and the graduation forecast's hour ledger stays in
-plan rows, so no forecast moves because a course outside the plan gained its hours.
+Those hours are the term's LOAD. Two things must not follow from them. A resolved
+elective slot must not be counted beside the course that fills it: the second half
+of this file. And the graduation forecast's hour ledger takes plan rows only, never
+a course's own hours: ``test_elective_row_filling.py``.
 """
 
 from __future__ import annotations
@@ -35,7 +35,6 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
-from core.services.planner_graduation import compare_planner_graduation
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
 from core.services.student_graduation import REGISTERED_TIMETABLE, build_graduation_report
 from core.services.student_sections import (
@@ -246,9 +245,6 @@ def test_a_student_with_no_programme_still_gets_the_course_tables_hours() -> Non
     assert _credits() == {"GS303": 2}
 
 
-PLAN_TOTAL = 24
-
-
 def _seven_registered_courses() -> None:
     """Five plan courses (13 hours) and two outside the plan (3 and 2): 18 in all.
 
@@ -325,73 +321,6 @@ def test_the_graduation_report_starts_from_the_full_registered_load() -> None:
         for course in report["planning_baseline_courses_assumed_passed"]
     }
     assert (hours["RC463"], hours["GS303"]) == (3, 2)
-
-
-# ---------------------------------------------------------------------------
-# The forecast's hour ledger stays in plan rows
-# ---------------------------------------------------------------------------
-
-
-def test_the_forecast_ledger_counts_the_term_in_plan_rows() -> None:
-    """Load 18, ledger 13: the two courses outside the plan are not in it.
-
-    Their hours arrive through the elective rows the registrar posts them under,
-    which the scenario still schedules. So every plan credit is counted once, the
-    co-op waits for those rows, and the scenario ends on the plan total. With the
-    5 hours in the ledger as well, the gate was already met: the co-op went into
-    the first term beside the rows and the scenario ended on 29.
-
-    (The co-op lands in the third term, not the second: the recommender places a
-    course only in a term of its own parity.)
-    """
-    _seven_registered_courses()
-
-    report = _report()
-
-    assert report["registered_credits_at_planning_baseline"] == 18
-    assert report["scenario_credit_seed_registrar"] == 13
-    assert report["simulation_completed"] is True
-    planned = {
-        code: term["sequence"] for term in report["term_plan"] for code in term["course_codes"]
-    }
-    assert planned == {"RC1": 1, "RFE1": 1, "RC490": 3}
-    end = report["scenario_credit_seed"] + sum(term["credits"] for term in report["term_plan"])
-    assert end == PLAN_TOTAL
-
-
-def test_the_forecast_does_not_move_with_the_hours_of_a_course_outside_the_plan() -> None:
-    """The same student, before anything knew those two courses' hours."""
-    _seven_registered_courses()
-    with_hours = _report()
-    ElectiveCourse.objects.update(credit_hours=0)
-    Course.objects.update(credit_hours=0)
-
-    without_hours = _report()
-
-    assert without_hours["registered_credits_at_planning_baseline"] == 13
-    for key in (
-        "scenario_credit_seed",
-        "estimated_additional_terms",
-        "term_plan",
-        "hour_gates",
-        "unresolved_requirements",
-    ):
-        assert with_hours[key] == without_hours[key], key
-
-
-def test_the_planner_forecast_keeps_the_same_ledger() -> None:
-    """It names each course's hours itself, and must not seed the ledger with them."""
-    _seven_registered_courses()
-
-    planner = compare_planner_graduation(student_id=SID, year=int(YEAR), term=int(TERM), options=[])
-
-    assert planner["baseline"]["status"] == "complete"
-    # With the hours it names in the ledger it said 2: the co-op a year early.
-    assert (
-        planner["baseline"]["terms_including_planning_term"]
-        == _report()["estimated_terms_including_planning_baseline"]
-        == 4
-    )
 
 
 # ---------------------------------------------------------------------------

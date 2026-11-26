@@ -21,6 +21,7 @@ import math
 import re
 
 from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
+from core.services.elective_row_filling import elective_rows_filled
 from core.services.eligibility import (
     evaluate_prerequisites,
     scenario_effective_credits,
@@ -280,9 +281,12 @@ def _simulate_future_terms(
     max_credits_per_term: int,
     prerequisite_map: dict[str, list[str]],
     recommender_courses: list[dict],
+    filled_rows: set[str] | None = None,
 ) -> dict:
     current_codes = {item["code"] for item in current_courses}
-    simulated_passed = set(actual_passed) | current_codes
+    # ``filled_rows`` are the elective rows this term's courses outside the plan
+    # are counted for. They are complete when the term is, like the courses.
+    simulated_passed = set(actual_passed) | current_codes | set(filled_rows or ())
     # The scenario counts every course it schedules at the PLAN's credit value, so
     # its starting total must be denominated the same way or credits vanish at the
     # seam.  `scenario_effective_credits` owns that rule and explains why it is
@@ -666,22 +670,55 @@ def build_graduation_report(
     # plan's credit hours, so the baseline must enter the ledger the same way, as
     # the plan rows being completed.
     #
-    # A registered course outside the plan therefore adds nothing here. It is
-    # taken against an elective row, the registrar posts it under that row's code
-    # once the grade lands, and the scenario still schedules the row at the plan's
-    # hours. Its hours counted here as well would be held twice, and on the six
-    # zero-slack co-op gates that opens the gate a term early. A resolved elective
-    # slot is itself a plan row, so it counts, at the plan's hours.
+    # A registered course outside the plan therefore adds nothing here by itself.
+    # It is taken against an elective row, and the registrar posts it under that
+    # row's code once the grade lands. So the ROW is what this term completes:
+    # ``elective_rows_filled`` names it, and it enters the ledger at the plan's
+    # hours, is in progress for every list below, and is not scheduled again. A
+    # course that no open elective row can take stays load only, and the row it
+    # will be posted under brings the hours when the scenario schedules it. Never
+    # both: the course's hours beside its row's would be held twice, and on the
+    # six zero-slack co-op gates that opens the gate a term early.
     #
     # A retake still consumes timetable load, but its credits are already part
     # of the registrar's earned total. Count only newly earnable baseline
     # credits when evaluating cumulative-hour gates and future progression.
     # When only an aggregate registrar value exists, there are no course codes
     # with which to identify repeats, so retain that aggregate as the fallback.
+    current_hours: dict[str, int] = {}
+    for course in current_courses:
+        code = normalize_code(course.get("code") or "")
+        if code:
+            current_hours.setdefault(code, int(course.get("credits") or 0))
+    filling = elective_rows_filled(
+        str(program),
+        year,
+        term,
+        current=current_hours,
+        plan_rows=plan_rows,
+        passed=actual_passed,
+        query_cache=_query_cache,
+    )
+    if filling.unbacked:
+        # A resolved slot is listed beside the course that carries it. A what-if
+        # that drops the course leaves the slot behind; it is then not in
+        # progress, and the scenario has it to schedule again.
+        current_courses = [
+            course
+            for course in current_courses
+            if normalize_code(course.get("code") or "") not in filling.unbacked
+        ]
+        current_codes = {course["code"] for course in current_courses}
+        current_hours = {
+            code: hours for code, hours in current_hours.items() if code not in filling.unbacked
+        }
+    filled_rows = filling.filled
+    filled_codes = {row.row_code for row in filled_rows}
+    progress_codes = set(current_hours) | filled_codes
     baseline_progress_credits = (
         sum(
             int(plan_rows[code].get("credits") or 0)
-            for code in (normalize_code(course.get("code") or "") for course in current_courses)
+            for code in progress_codes
             if code in plan_rows and code not in actual_passed
         )
         if current_courses
@@ -696,11 +733,15 @@ def build_graduation_report(
         # course independently selected by the recommender remains part of the
         # in-memory baseline, so exclude only the other persisted studying rows.
         excluded_studying_codes |= actual_studying - current_codes
+    # A row one of this term's courses fills is in progress, whoever asked for
+    # the persisted studying rows to be left out. A slot nothing carries is not,
+    # whatever its stored mark says.
+    excluded_studying_codes = (excluded_studying_codes | filling.unbacked) - filled_codes
     report = build_unlock_report(
         student_id,
         year,
         term,
-        additional_studying_codes=current_codes,
+        additional_studying_codes=current_codes | filled_codes,
         excluded_studying_codes=excluded_studying_codes,
         registered_credits_override=baseline_progress_credits,
         _prerequisite_map=prerequisites_by_course,
@@ -711,6 +752,20 @@ def build_graduation_report(
 
     done = report["done"]
     in_progress = report["in_progress"]
+    if filled_rows:
+        # In progress on this forecast's word, not the registrar's: say so on the
+        # row itself, for every reader of the list.
+        fill_of = {row.row_code: row for row in filled_rows}
+        in_progress = [
+            {
+                **row,
+                "filled_by": fill_of[row["code"]].course_code,
+                "fill_basis": fill_of[row["code"]].basis,
+            }
+            if row["code"] in fill_of
+            else row
+            for row in in_progress
+        ]
     open_courses = report["open_courses"]
     locked = report["locked_courses"]
     electives = report["elective_slots"]
@@ -720,7 +775,7 @@ def build_graduation_report(
     passed_credits = sum(int(course.get("credits") or 0) for course in done)
 
     remaining_after_baseline = [
-        course for course in remaining if course["code"] not in current_codes
+        course for course in remaining if course["code"] not in progress_codes
     ]
     chain_floor = max([course["steps"] for course in locked if course["steps"]] or [0])
     if not chain_floor and remaining_after_baseline:
@@ -741,6 +796,7 @@ def build_graduation_report(
         plan_rows=plan_rows,
         actual_passed=actual_passed,
         current_courses=current_courses,
+        filled_rows=filled_codes,
         earned_credits=int(earned_registrar or 0),
         current_credits=baseline_progress_credits,
         max_credits_per_term=cap,
@@ -799,6 +855,10 @@ def build_graduation_report(
         "planning_baseline_credits": registered_now,
         "registered_credits_at_planning_baseline": registered_now,
         "planning_baseline_courses_assumed_passed": current_courses,
+        # The elective rows this term's courses outside the plan are counted for,
+        # and on what basis (``elective_row_filling``). The courses stay in the
+        # list above under their own codes; the rows are in ``in_progress``.
+        "baseline_elective_rows_filled": [row.as_dict() for row in filled_rows],
         "planning_baseline": {
             "academic_year": int(year),
             "term": int(term),
@@ -842,6 +902,18 @@ def build_graduation_report(
             "All planning-baseline and simulated courses are passed on the first attempt.",
             f"Every simulated main term uses a maximum of {cap} credits.",
             "Elective placeholders remain plan requirements; no concrete elective is invented.",
+            *(
+                [
+                    "A planning-baseline course outside the plan is counted for an open "
+                    "elective row of the plan ("
+                    + ", ".join(f"{row.course_code} for {row.row_code}" for row in filled_rows)
+                    + "): the row the department's mapping names, or else the earliest open "
+                    "row of the same kind and credit hours. The registrar decides the row "
+                    "when the grade is posted."
+                ]
+                if filled_rows
+                else []
+            ),
             "Graduation Project II is placed in the main term immediately after Graduation Project I.",
             "Future course offerings, section times, seats, and registration permission are not guaranteed.",
             "The scenario is read-only and does not update the student record or university portal.",
@@ -2183,6 +2255,13 @@ def build_graduation_what_if(
 
     current_codes = {
         course["code"] for course in baseline.get("planning_baseline_courses_assumed_passed") or []
+    }
+    # An elective row one of those courses is counted for is in progress too: it
+    # is not a course to offer as a replacement.
+    current_codes |= {
+        str(row.get("row_code") or "")
+        for row in baseline.get("baseline_elective_rows_filled") or []
+        if row.get("row_code")
     }
     unlock = build_unlock_report(
         student_id,
