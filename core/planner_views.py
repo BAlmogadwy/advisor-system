@@ -5,7 +5,6 @@ import logging
 import re
 from hashlib import sha256
 
-from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -201,12 +200,8 @@ def planner_page(request: HttpRequest) -> HttpResponse:
         "default_year": _defs["currentYear"],
         "default_term": _defs["currentTerm"],
     }
-    # The new screen sits beside the current one behind a switch: the setting picks
-    # the default, ?layout=board or ?layout=classic lets staff open either.
-    layout = request.GET.get("layout", "")
-    use_board = layout == "board" or (settings.PLANNER_BOARD_ENABLED and layout != "classic")
-    template = "core/planner_board.html" if use_board else "core/planner.html"
-    return render(request, template, ctx)
+    # The board is the only planner page (the old page was retired 2026-11-25); ?layout= changes nothing.
+    return render(request, "core/planner_board.html", ctx)
 
 
 @login_required(login_url="login")
@@ -302,7 +297,7 @@ def _planner_context_inner(
         "advisor_id": student["advisor_id"] or "",
         "gpa": student["gpa"],
         "registered_credits": student["total_registered_credits"] or 0,
-        # The SUGGESTED cap, not the university's limit. page-planner.js labels this
+        # The SUGGESTED cap, not the university's limit. The planner board labels this
         # "الحد الأعلى للساعات" and planner_builder turns it into a hard
         # sum(credits) <= cap constraint, so a literal 18 here silently forbade the
         # 19th unit a student is entitled to. Both figures are sent; the UI decides.

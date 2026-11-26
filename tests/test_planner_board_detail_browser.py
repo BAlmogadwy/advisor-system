@@ -11,9 +11,6 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import re
-from pathlib import Path
-
-from django.conf import settings
 
 from tests.planner_board_support import (
     FIVE,
@@ -243,11 +240,6 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(item["pinned_sections"], [{"term_section_id": 12, "section": "M2"}])
         other = [c for c in fake.build_bodies[0]["shortlist"] if c["course_code"] == "AI342"][0]
         self.assertNotIn("pinned_sections", other)
-        # The literal the current page writes (static/js/page-planner.js, the section row click).
-        old = (Path(settings.BASE_DIR) / "static" / "js" / "page-planner.js").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("pinned_sections:[{term_section_id:tsid, section:secLabel}]", old)
         # Moving the allowance to another section: tick it, then untick the first.
         page.check("#plbDetail input[value='17']")
         page.uncheck("#plbDetail input[value='12']")

@@ -175,13 +175,13 @@ test('classifier: an escaper does not make an event handler, an unquoted value o
     'const a = `<td onclick="pick(\'${esc(id)}\')" data-n="${Number(n)}">x</td>`;',
     'const b = `<td class=${esc(cls)} ${on ? \'checked\' : \'\'}>${esc(t)}</td>`;',
     "const c = `<a href='/x/${encodeURIComponent(p)}' title=\"${encodeURIComponent(q)}\">${encodeURIComponent(r)}</a>`;",
-    "const d = `<b title='${escapeHtml(t)}'>${escapeHtml(u)}</b>`;",
+    "const d = `<b title='${_escapeText(t)}'>${_escapeText(u)}</b>`;",
   ].join(NL);
   assert.deepEqual(sinks(src).fingerprints, { 't.js|esc(id)': 1, 't.js|esc(cls)': 1, 't.js|encodeURIComponent(p)': 1 });
-  // page-planner's escapeHtml leaves ' alone: not enough in a single-quoted value.
-  assert.deepEqual(sinks(src, 'page-planner.js').fingerprints, {
-    'page-planner.js|esc(id)': 1, 'page-planner.js|esc(cls)': 1,
-    'page-planner.js|encodeURIComponent(p)': 1, 'page-planner.js|escapeHtml(t)': 1,
+  // shared-timetable's _escapeText leaves ' alone: not enough in a single-quoted value.
+  assert.deepEqual(sinks(src, 'shared-timetable.js').fingerprints, {
+    'shared-timetable.js|esc(id)': 1, 'shared-timetable.js|esc(cls)': 1,
+    'shared-timetable.js|encodeURIComponent(p)': 1, 'shared-timetable.js|_escapeText(t)': 1,
   });
 });
 

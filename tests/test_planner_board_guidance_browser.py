@@ -833,8 +833,11 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
                 }"""
             ),
         )
-        # Rebuilding gives the fill back to Review and apply.
+        # Rebuilding gives the fill back to Review and apply. A rebuild retires the old build when it
+        # starts, so wait for its end (Rebuild again, enabled), not only for the stale mark to go.
         page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_be_enabled()
         expect(page.locator("#plbGuide")).not_to_have_attribute("data-stale", re.compile("."))
         state = self._buttons(page)
         self.assertEqual(

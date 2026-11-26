@@ -1,8 +1,8 @@
 """The new planner screen, part two, in a real browser: build, option tabs, week, apply.
 
 The same synthetic student as part one (tests/planner_board_support.py). The build and the
-save requests are answered by a fake shaped like the real replies (see
-tests/test_planner_flow_browser.py); nothing leaves the machine.
+save requests are answered by a fake shaped like the real replies (BuildFake in
+tests/planner_board_support.py); nothing leaves the machine.
 
 The student has three registered courses on Sun, Mon, Tue and Wed (Thu free, one 45 minute
 wait, last class ends 14:00) and two courses in the plan, AI331 and AI342.

@@ -18,8 +18,8 @@
    .length or .toFixed(…)), a known HTML escaper call spanning the whole
    expression, a nested literal, a safeHtml literal, a ternary whose output
    branches are all safe, or a `.map(x => `…`).join('…')`. encodeURIComponent
-   counts only in text and double-quoted values (it leaves ' alone), and so do
-   the two escapers that leave ' alone (WEAK_ESCAPERS). Inside an
+   counts only in text and double-quoted values (it leaves ' alone), and so does
+   the one escaper that leaves ' alone (WEAK_ESCAPERS). Inside an
    event-handler attribute, an unquoted attribute value or a bare tag, no
    escaper makes a value safe: the browser decodes entities before it runs a
    handler, and esc() leaves spaces and "=" alone. Everything else is raw.
@@ -55,12 +55,12 @@ const ALLOWLIST_PATH = path.join(ROOT, 'tests', 'fixtures', 'html_sink_allowlist
 
 /* The HTML escapers static/js defines. Each name is trusted by name, so the
    list holds only names defined there: every definition escapes & < > " and
-   ', except the two in WEAK_ESCAPERS, which leave ' alone; a file calls one
+   ', except the one in WEAK_ESCAPERS, which leave ' alone; a file calls one
    only when it defines it, or it is shared-utils.js's global. html-sinks
    pins all of this ("every trusted escaper ..."). URL and CSS encoders are
    not HTML escapers. */
 const ESCAPERS = ['esc', 'escape', 'escapeHtml', 'escHtml', 'escapeAttr', 'pgEsc', '_escapeText'];
-const WEAK_ESCAPERS = { 'page-planner.js': ['escapeHtml'], 'shared-timetable.js': ['_escapeText'] };
+const WEAK_ESCAPERS = { 'shared-timetable.js': ['_escapeText'] };
 const ESCAPER_CALL = re('^(?:' + ESCAPERS.join('|') + ')~s*~(');
 const ESCAPER_REF = re('(?:^|[^.~w$])(?:' + ESCAPERS.join('|') + ')(?![~w$])');
 const NUMERIC_CALL = re('^(?:Number|Math~.[A-Za-z]+|parseInt|parseFloat)~s*~(');

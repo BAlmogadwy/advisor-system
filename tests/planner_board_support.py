@@ -2,9 +2,9 @@
 
 Part one: shell, student, rules, courses, week.
 
-/planner/?layout=board, answered from a synthetic student made up below (no
-database rows, no real data), the three data requests mocked exactly as
-tests/test_planner_layout_browser.py does. Nothing leaves the machine
+/planner/, answered from a synthetic student made up below (no
+database rows, no real data), the three data requests mocked the way the retired
+page's tests did (2026-11-25). Nothing leaves the machine
 (tests/browser_isolation.py).
 
 The student: three registered courses (nine credits) on four days with a Thursday
@@ -37,7 +37,13 @@ sync_playwright = playwright_api.sync_playwright
 STUDENT_ID = "4500000"
 OTHER_ID = "4500001"
 SCRIPT = Path(settings.BASE_DIR) / "static" / "js" / "page-planner-board.js"
-NO_MOTION = "*, *::before, *::after { transition: none !important; animation: none !important; }"
+# Motion off for the tests. The `:not(#...)` carries an id's specificity, so this beats the
+# stylesheet's own `!important` transitions (`html body .btn` has one), which a bare `*` did not.
+NO_MOTION = (
+    "html body *:not(#plb-no-motion), html body *:not(#plb-no-motion)::before,"
+    " html body *:not(#plb-no-motion)::after"
+    " { transition: none !important; animation: none !important; }"
+)
 
 
 def _row(code: str, name: str, section: str, credits: int | None, day, start, end, tsid: int):
@@ -200,6 +206,7 @@ class Fake:
     def __init__(self) -> None:
         self.context_bodies: list[dict] = []
         self.catalog_bodies: list[dict] = []
+        self.plan_urls: list[str] = []
         self.pending: list = []  # routes a test holds back to answer later
         self.hold_ids: set[str] = set()
         self.context_answer = lambda body: (
@@ -225,6 +232,7 @@ class Fake:
         route.fulfill(status=status, json=payload)
 
     def plan(self, route) -> None:
+        self.plan_urls.append(route.request.url)
         if self.hold_plan:
             self.hold_plan -= 1
             self.pending_plan.append(route)
@@ -638,7 +646,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         page.on("pageerror", lambda error: self.page_errors.append(str(error)))
         if clock:
             page.clock.install()  # the test moves time itself (the 30 minute rule)
-        page.goto(f"{self.live_server_url}/planner/?layout=board")
+        page.goto(f"{self.live_server_url}/planner/")
         page.add_style_tag(content=NO_MOTION)
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
         if load:

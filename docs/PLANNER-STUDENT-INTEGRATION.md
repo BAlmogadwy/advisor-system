@@ -5,6 +5,9 @@
      Nothing here is implemented. Every claim carries file:line. -->
 
 # STUDENT PLANNER INTEGRATION BRIEF
+
+> Note (2026-11-25): the old planner page this document describes (`core/templates/core/planner.html`, `static/js/page-planner.js`) was retired; `/planner/` is now the board (`core/templates/core/planner_board.html`, `static/js/page-planner-board.js`). The text below is kept as written.
+
 **App:** `core/` · **Target:** expose the EXISTING `/planner/` builder to students
 **Sources:** four parallel readers (permissions, contract, state, frontend). Every line number below that I quote as fact was re-opened and confirmed against the working tree; claims I could not re-open are marked *(reader-cited, unverified)*.
 

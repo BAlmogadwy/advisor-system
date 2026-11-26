@@ -131,12 +131,6 @@ services:
       # Only automatic Build/Generate/Optimise read it. "false" restores the old daytime placement.
       - key: TIMETABLE_ONLINE_EVENING_WINDOWS
         value: "true"
-      # The new staff planner screen is /planner/ (owner 2026-11-25, "Yes, plan the swap").
-      # The old page stays at /planner/?layout=classic until it is retired. To make it the
-      # default again set "false" HERE: a value set only in the Render dashboard is
-      # overwritten by this file at the next blueprint sync.
-      - key: PLANNER_BOARD_ENABLED
-        value: "true"
       # Teaching-time rules per instructor (owner 2026-11-21), typed on Instructor Management:
       # no automatic stage places a teacher at a time his rules forbid; a manual move is saved
       # and shown as a warning. With no rule stored, timetables are unchanged.

@@ -131,14 +131,10 @@ const label = el => (el.id ? '#' + el.id : el.tagName.toLowerCase())
 # the --teal fill. Tokens are resolved at the element, so a subtree that
 # overrides one (split view's dark block) is compared with its own value.
 # Named too: the controls C1 moved onto the primary pair, wherever a page shows
-# one (the planner's active step and its number sit on that fill in a wash of
-# their own, so neither colour test would see them).
+# one (the planner board's Fetch button, wherever a page shows one).
 NAMED = ", ".join(
     (
-        ".wf-step.active",
-        ".wf-step.active .wf-num",
-        "#nextStep .wf-nav-label",
-        "#fetchBtn",
+        "#plbFetch",
         ".um-create-btn",
         ".um-act-btn.um-act-save",
         ".pf-submit-primary",
@@ -159,9 +155,9 @@ NAMED = ", ".join(
 #: sit on a gradient of the primary pair, measured at both of its stops.
 MEASURED = {
     "workspace": ("#twValidationBadge", "tw-english-heading", "div.avatar"),
-    # The Add buttons (.btn-neutral) live in the panels, which stay hidden until a
-    # student is loaded (planner first-screen slice, D8): not drawn on first load.
-    "planner": ("#step1", "span.wf-num", "#fetchBtn", "span.wf-nav-label"),
+    # The board's other controls stay hidden until a student is loaded: only Fetch
+    # is drawn on first load.
+    "planner": ("#plbFetch",),
     "user-management": ("um-create-btn",),
     "graph": ("#tgSync",),
     "login": ("neu-btn-text",),

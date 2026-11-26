@@ -421,9 +421,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
 
     def test_a_deep_link_loads_the_student_and_the_field_does_not_take_the_keyboard(self) -> None:
         page = self._open(BuildFake(), load=False)
-        page.goto(
-            f"{self.live_server_url}/planner/?layout=board&student={STUDENT_ID}&year=1448&term=1"
-        )
+        page.goto(f"{self.live_server_url}/planner/?student={STUDENT_ID}&year=1448&term=1")
         expect(page.locator("#plbTable tbody[data-group='blocked']")).to_be_visible()
         page.wait_for_timeout(200)
         expect(page.locator("#plbStudentId")).not_to_be_focused()

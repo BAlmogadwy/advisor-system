@@ -1250,18 +1250,19 @@ def test_planner_build_rejects_ambiguous_hard_request_payloads(
 
 def test_staff_planner_ui_uses_clear_positive_control_names() -> None:
     root = Path(__file__).resolve().parents[1]
-    template = (root / "core" / "templates" / "core" / "planner.html").read_text(encoding="utf-8")
-    script = (root / "static" / "js" / "page-planner.js").read_text(encoding="utf-8")
+    template = (root / "core" / "templates" / "core" / "planner_board.html").read_text(
+        encoding="utf-8"
+    )
+    script = (root / "static" / "js" / "page-planner-board.js").read_text(encoding="utf-8")
 
-    assert 'id="programSectionsOnly" type="checkbox" checked' in template
-    assert 'id="allowFullSections" type="checkbox"' in template
+    assert 'id="plbRuleProg" type="checkbox"' in template
+    assert 'id="plbRuleFull" type="checkbox"' in template
     assert "Only this student's programme" in template
     assert "Include sections with no seats left" in template
-    assert "program_sections_only:useProgrammeSectionsOnly()" in script
-    assert "allow_full_sections:allowFullSections()" in script
-    assert "Must-take — every result" in script
-    assert "existing.pinned_sections=[{term_section_id:tsid" in script
-    assert "function renderShortlist(){\n  invalidateBuilderResults();" in script
+    assert "program_sections_only: state.rules.programOnly," in script
+    assert "allow_full_sections: state.rules.allowFull," in script
+    assert "mustTake: IS_AR ? 'إلزامي' : 'Must-take'" in script
+    assert "item.pinned_sections = entries" in script
     assert "hard_constraint_failures" in script
-    assert "q('strictSections')" not in script
-    assert "q('ignoreCapacity')" not in script
+    assert "strictSections" not in script
+    assert "ignoreCapacity" not in script

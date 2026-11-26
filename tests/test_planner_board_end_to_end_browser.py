@@ -102,9 +102,7 @@ class PlannerBoardEndToEndTests(StaticLiveServerTestCase):
         # (a registrar row outranks them, which the page says and tests/test_planner_board_build_browser.py covers).
         StudentTermSection.objects.filter(student_id=STUDENT_ID).delete()
         page = self._page()
-        page.goto(
-            f"{self.live_server_url}/planner/?layout=board&student={STUDENT_ID}&year={YEAR}&term={TERM}"
-        )
+        page.goto(f"{self.live_server_url}/planner/?student={STUDENT_ID}&year={YEAR}&term={TERM}")
         expect(page.locator("#plbRoot")).to_have_attribute("data-loaded", "true")
         expect(page.locator("#plbContext")).to_have_text(f"{STUDENT_ID} · {YEAR}/{TERM}")
         expect(page.locator("#plbStudent")).to_contain_text("Planner Sample Student")

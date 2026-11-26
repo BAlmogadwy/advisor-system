@@ -136,6 +136,8 @@ However, the audit identified **30 issues** across contrast, spacing, interactio
 
 ### 2.12 Timetable Builder (`/planner/`)
 
+> Note (2026-11-25): the old planner page this document describes (`core/templates/core/planner.html`, `static/js/page-planner.js`) was retired; `/planner/` is now the board (`core/templates/core/planner_board.html`, `static/js/page-planner-board.js`). The text below is kept as written.
+
 **Template:** `C:\Users\user\myUniproject\core\templates\core\planner.html`
 **Overall:** Sophisticated 3-step workflow stepper. Well-designed command bar. The most complex page in the application.
 

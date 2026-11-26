@@ -1,5 +1,7 @@
 # Timetable Workspace UI — design record
 
+> Note (2026-11-25): the old planner page this document describes (`core/templates/core/planner.html`, `static/js/page-planner.js`) was retired; `/planner/` is now the board (`core/templates/core/planner_board.html`, `static/js/page-planner-board.js`). The text below is kept as written.
+
 Owner direction (2026-10-22): redesign the classic Timetable Workspace
 (`/timetable-workspace/`) professionally — not quick fixes — and make every
 style decision that is the same across the product in the **global** design
