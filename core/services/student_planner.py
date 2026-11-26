@@ -25,6 +25,7 @@ did not ask for is also absent — the ordering here is stable, not a recommenda
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +35,7 @@ from core.services.student_helpers import normalize_code
 from core.services.student_sections import (
     UnknownStudentGender,
     get_student_term_baseline,
+    programme_course_credits,
     section_is_available_to_student,
     student_gender_strict,
 )
@@ -42,7 +44,11 @@ from core.services.virtual_advisor_capabilities import _translate_unplaced
 
 #: A course with no credit hours recorded still has to be given a weight, or the
 #: builder's credit cap becomes meaningless. Matches the value the chat capability
-#: already uses, so the two paths cannot disagree about the same student.
+#: already uses, so the two paths cannot disagree about the same student. It stands
+#: in only for a course no source knows the hours of: a held course outside the
+#: plan is priced from the catalogue first (`kept_course_credits`). For a held course
+#: the guess errs towards a fuller week, so a proposal never promises room the
+#: student may not have; the staff planner counts such a course as 0.
 DEFAULT_CREDITS = 3
 
 #: The domain name for the retain-or-rebuild choice. Four names existed for it —
@@ -202,12 +208,38 @@ def permitted_course_codes(
 
 
 def _course_credits(program: str) -> dict[str, int]:
+    """The programme plan's hours. A held course outside the plan is not here:
+    `kept_course_credits` prices it."""
     return {
         normalize_code(r["course_code"]): int(r["credit_hours"] or 0)
         for r in ProgrammeRequirement.objects.filter(program__iexact=program).values(
             "course_code", "credit_hours"
         )
         if normalize_code(r["course_code"])
+    }
+
+
+def kept_course_credits(program: str, course_codes: Iterable[object]) -> dict[str, int]:
+    """What the planner counts for each course the student already holds.
+
+    The lookup for a held course. The adapter below and the chat's timetable proposal
+    (``build_timetable_proposal``) both read it, so they cannot price one registration
+    two ways, and both agree with the staff planner, whose registered total is the sum
+    of the baseline rows' ``credits``: `student_sections.programme_course_credits` is
+    what gives those rows their hours (the plan, then the programme's elective
+    catalogue, then the course table).
+
+    The plan alone is not enough. A course taken against an elective row, or a
+    general-studies elective, is in no plan, and the plan-only table this replaces
+    counted each of those as DEFAULT_CREDITS, usually 3 for a 2-hour course.
+
+    Every course asked for is in the result and none is 0: a course no source knows
+    the hours of counts DEFAULT_CREDITS, which is also what a plan row recording 0
+    hours gets, as everywhere else in the adapter.
+    """
+    return {
+        code: hours if hours > 0 else DEFAULT_CREDITS
+        for code, hours in programme_course_credits(program, course_codes).items()
     }
 
 
@@ -496,6 +528,14 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             "reason": "HARD_CONSTRAINTS_UNSATISFIED",
         }
     credits.update({code: permitted[code] for code in addition_codes})
+    # A held course the plan does not price (a general-studies or free elective taken
+    # against an elective row) counts at its real hours: the figure the baseline rows
+    # carry and the staff planner totals. It counted DEFAULT_CREDITS here, so the room
+    # left under the cap, an exact target and every per-course figure below were wrong
+    # by the difference. A figure the plan or the caller already gave stands.
+    for code, hours in kept_course_credits(program, current_codes).items():
+        if credits.get(code, 0) <= 0:
+            credits[code] = hours
     if not addition_codes and not current_mappings:
         if request.target_credits is not None:
             target = int(request.target_credits)
