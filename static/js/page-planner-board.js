@@ -3102,18 +3102,20 @@
     }
     const list = creditList(row);
     const count = row.terms_including_planning_term;
-    const land = el('div', 'plb-land',
-      result ? el('span', 'plb-won', result.text) : null,
-      el('b', '', ...completionParts(row)));
-    if (result) land.firstElementChild.dataset.result = result.kind;
-    land.style.setProperty('--plb-from', String(list.length + 2));
+    // The option's result (its completion term and how it compares) is the band's header; only
+    // the registered line ends with its term.
+    let land = null;
+    if (kind !== 'opt') {
+      land = el('div', 'plb-land', el('b', '', ...completionParts(row)));
+      land.style.setProperty('--plb-from', String(list.length + 2));
+    }
     line.append(
       el('div', 'plb-rl',
         el('span', 'plb-num', String(count)),
         el('span', 'plb-st', el('b', '', T.gradTermWord(count)), el('span', 'plb-mic', ...label()))),
       el('i', 'plb-brk'),
       ...tickNodes(list),
-      land,
+      ...(land ? [land] : []),
       gradSentence(label(), row, result, list));
     return line;
   }
@@ -3186,13 +3188,11 @@
     if (!runway) return;
     const band = grad.getBoundingClientRect();
     if (!band.width) return;                      // not laid out: nothing to measure
-    const won = runway.querySelector('.plb-rwl--opt .plb-won[data-result="sooner"]');
     const isRow = () => getComputedStyle(runway).display === 'grid';
     // Start from the stylesheet's own choice, with every label, the unit, and the result at
     // reading size.
     delete runway.dataset.fit;
     delete runway.dataset.unit;
-    if (won) delete won.dataset.size;
     labelAxis(runway, 1);
     if (isRow()) {
       // The row layout may drop the unit (the caption says it) and thin its labels to every
@@ -3220,16 +3220,6 @@
       }
       return;
     }
-    // The result is the page's largest teal text where its line has room for it on one line.
-    // Its size cannot undo what was fitted above: only a "sooner" result is enlarged, and that
-    // belongs to the shorter line, whose landing spans a free column and so sizes no column.
-    if (!won) return;
-    for (const size of ['xl', 'lg']) {
-      won.dataset.size = size;
-      const box = won.getBoundingClientRect();
-      if (box.height < parseFloat(getComputedStyle(won).lineHeight) * 1.5 && within(box, band)) return;
-    }
-    delete won.dataset.size;
   }
 
   // The band's header: what the selected option graduates with, its completion term and how it

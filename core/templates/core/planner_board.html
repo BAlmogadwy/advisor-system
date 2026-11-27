@@ -162,7 +162,7 @@
                 <span class="plb-gpill" id="plbGradPill" hidden></span>
               </div>
               <div class="plb-gh">
-                <h2 class="plb-h2" id="plbGradTitle">{% if LANGUAGE_CODE == 'ar' %}التخرّج المتوقع{% else %}Projected graduation{% endif %}</h2>
+                <h2 class="plb-h2 sr-only" id="plbGradTitle">{% if LANGUAGE_CODE == 'ar' %}التخرّج المتوقع{% else %}Projected graduation{% endif %}</h2>
                 <button type="button" class="plb-lk" id="plbGradWhyBtn" aria-expanded="false" aria-controls="plbGradWhy" hidden></button>
               </div>
               <p class="plb-empty" id="plbGradLine" role="status" aria-live="polite" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}ابنِ الخيارات لعرض التوقع.{% else %}Build options to see the projection.{% endif %}</p>
@@ -252,5 +252,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=14"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=15"></script>
 {% endblock %}
