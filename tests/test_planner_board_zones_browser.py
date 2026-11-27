@@ -173,7 +173,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         # before a build: the muted line; after it: the projection's baseline completion term
         self.assertIn("After the first build", self._text(page, "#plbStudent .plb-sf:nth-child(4)"))
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         expect(page.locator("#plbStudent .plb-sf:nth-child(4) .plb-big")).to_have_text(
             "Term 1, 1450"
         )
@@ -209,7 +209,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
             self.assertIn(word, text)
         expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_contain_text("6 / 30")
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("أعد البناء")
+        expect(page.locator("#plbBuild")).to_have_text("أعد بناء الخيارات")
         done = self._text(page, "#plbStudent .plb-sf:nth-child(4) .plb-big")
         self.assertIn("1450", done)
         self.assertNotIn("بعد أول بناء", self._text(page, "#plbStudent"))

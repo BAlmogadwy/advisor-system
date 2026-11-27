@@ -206,7 +206,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         expect(reset).to_be_hidden()
         # What a build would send is the suggested list, field for field.
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertEqual(fake.build_bodies[-1]["shortlist"], EXPECTED_BUILD_BODY["shortlist"])
 
     def test_reset_is_enabled_again_after_each_kind_of_change(self) -> None:
@@ -229,7 +229,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         page, fake = self._built()
         page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         page.click("#plbBuild")  # a fresh build of the shorter list
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         expect(page.locator("#plbBuild")).to_be_enabled()
         expect(page.locator("#plbActs")).to_have_attribute("data-stale", "")
         expect(page.locator("#plbReview")).to_be_enabled()
@@ -358,7 +358,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self.assertEqual(page.locator("#plbWeek .plb-note").count(), 2)
         self._rules(page, mode="ignore")  # the registered week is not on this board any more
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertEqual(page.locator("#plbWeek .plb-note").count(), 0)
 
     # ── 5. The advisor ───────────────────────────────────────────────────────

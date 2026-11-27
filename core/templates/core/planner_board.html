@@ -157,6 +157,10 @@
           </div>
           <div class="plb-band">
             <section class="plb-grad" id="plbGrad" aria-labelledby="plbGradTitle" tabindex="-1">
+              <div class="plb-gtop" id="plbGradTop" hidden>
+                <div class="plb-gtop-l"><span class="plb-mic" id="plbGradMic"></span><b class="plb-gterm" id="plbGradTerm"></b></div>
+                <span class="plb-gpill" id="plbGradPill" hidden></span>
+              </div>
               <div class="plb-gh">
                 <h2 class="plb-h2" id="plbGradTitle">{% if LANGUAGE_CODE == 'ar' %}التخرّج المتوقع{% else %}Projected graduation{% endif %}</h2>
                 <button type="button" class="plb-lk" id="plbGradWhyBtn" aria-expanded="false" aria-controls="plbGradWhy" hidden></button>
@@ -169,8 +173,6 @@
               <p class="plb-asm plb-asm--warn" id="plbGradStale" hidden></p>
               <ul class="plb-gwhy" id="plbGradWhy" hidden></ul>
             </section>
-
-            <section class="plb-guide" id="plbGuide" aria-label="{% if LANGUAGE_CODE == 'ar' %}إرشادات هذا البناء{% else %}Guidance for this build{% endif %}" hidden></section>
           </div>
 
           <div class="plb-opts">
@@ -183,24 +185,39 @@
               </button>
               </div>
             </div>
-            <button type="button" class="plb-lk plb-why-btn" id="plbWhyBtn" aria-expanded="false" aria-controls="plbWhy" hidden>{% if LANGUAGE_CODE == 'ar' %}لماذا هذه الخيارات{% else %}Why these options{% endif %}</button>
-            <div class="plb-why" id="plbWhy" hidden></div>
             <div class="plb-buildnote" id="plbBuildNote" hidden></div>
           </div>
 
-          <section class="plb-week" id="plbWeekPanel" role="tabpanel" aria-labelledby="plbTabRegistered">
-            <div class="plb-ph">
-              <h2 class="plb-h2">{% if LANGUAGE_CODE == 'ar' %}الأسبوع{% else %}Week{% endif %}</h2>
-              <span class="plb-phn" id="plbWeekName">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span>
-              <span class="plb-lg" id="plbLegend"><span class="plb-lg-i"><i class="plb-k" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span></span>
-            </div>
-            <div id="plbWeek"></div>
-          </section>
+          <div class="plb-ow">
+            <section class="plb-week" id="plbWeekPanel" role="tabpanel" aria-labelledby="plbTabRegistered">
+              <div class="plb-ph">
+                <h2 class="plb-h2">{% if LANGUAGE_CODE == 'ar' %}الأسبوع{% else %}Week{% endif %}</h2>
+                <span class="plb-phn" id="plbWeekName">{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span>
+                <span class="plb-lg" id="plbLegend"><span class="plb-lg-i"><i class="plb-k" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}Registered{% endif %}</span></span>
+              </div>
+              <div id="plbWeek"></div>
+            </section>
+            <aside class="plb-glance" id="plbGlance" aria-labelledby="plbGlanceTitle" hidden>
+              <h2 class="plb-mic plb-glance-t" id="plbGlanceTitle"></h2>
+              <dl class="plb-facts">
+                <div class="plb-fact" id="plbFactLoad"></div>
+                <div class="plb-fact" id="plbFactCampus"></div>
+                <div class="plb-fact" id="plbFactFree"></div>
+                <div class="plb-fact" id="plbFactLast"></div>
+              </dl>
+              <ul class="plb-secs" id="plbSecs" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعب في هذا الخيار{% else %}Sections in this option{% endif %}"></ul>
+            <button type="button" class="plb-lk plb-why-btn" id="plbWhyBtn" aria-expanded="false" aria-controls="plbWhy" hidden>{% if LANGUAGE_CODE == 'ar' %}لماذا هذه الخيارات{% else %}Why these options{% endif %}</button>
+            <div class="plb-why" id="plbWhy" hidden></div>
+            <section class="plb-guide" id="plbGuide" aria-label="{% if LANGUAGE_CODE == 'ar' %}إرشادات هذا البناء{% else %}Guidance for this build{% endif %}" hidden></section>
+            </aside>
+          </div>
         </section>
 
         <!-- ═══ Apply bar ═══ -->
         <div class="plb-applybar" id="plbActs" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}تطبيق الخيار{% else %}Apply an option{% endif %}">
           <div class="plb-applynotes">
+            <p class="plb-acts-st" id="plbApplyStatus" hidden></p>
+            <p class="plb-acts-note plb-acts-sum" id="plbApplySum" hidden></p>
             <p class="plb-acts-note plb-acts-why" id="plbApplyWhy" hidden></p>
             <p class="plb-acts-note plb-acts-safe">{% if LANGUAGE_CODE == 'ar' %}لا يُحفظ شيء ولا يُحجز أي مقعد حتى تضغط تطبيق.{% else %}Nothing is saved and no seat is held until you apply.{% endif %}</p>
           </div>
@@ -235,5 +252,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=13"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=14"></script>
 {% endblock %}

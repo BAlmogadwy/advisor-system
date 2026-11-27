@@ -53,7 +53,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         page.click("#plbPlanList button[data-act='remove'][data-code='AI342']")
         page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         body = fake.build_bodies[0]
         self.assertEqual(
             {k: body[k] for k in body if k not in ("shortlist", "baseline")},
@@ -93,7 +93,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         page.wait_for_timeout(200)
         self.assertEqual(len(fake.build_bodies), 1)
         fake.pending_build.pop().fulfill(json=FIVE)
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertTrue(page.locator("#plbBuild").is_enabled())
         self.assertIsNone(page.get_attribute("#plbBuild", "aria-busy"))
         self.assertEqual(self._text(page, "#plbBuildLine"), "")
@@ -480,7 +480,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         page = self._open(fake)
         self._rules(page, prog=False)
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertFalse(fake.build_bodies[0]["program_sections_only"])
         self.assertTrue(page.locator("#plbReview").is_disabled())
         self.assertEqual(
@@ -594,7 +594,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         fake.build_raw = None
         fake.build_answer = lambda body: (200, FIVE)
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertEqual(self._text(page, "#plbBuildLine"), "")
 
     # ── A build goes out of date ─────────────────────────────────────────────
@@ -636,7 +636,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
             self._text(page, ".plb-acts-safe"), "لا يُحفظ شيء ولا يُحجز أي مقعد حتى تضغط تطبيق."
         )
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("أعد البناء")
+        expect(page.locator("#plbBuild")).to_have_text("أعد بناء الخيارات")
         self.assertEqual(self._text(page, "#plbMoreBtn"), "خيارات أخرى (2)")
         self._pick(page, "B2")
         self.assertEqual(

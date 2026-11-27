@@ -443,7 +443,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         page = self._open(fake)
         self._add(page, "STAT305")
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         expect(page.locator("#plbBuild")).to_be_enabled()
         self._start(page)
         expect(page.locator("#plbGuide .plb-fr--depends")).to_be_visible()

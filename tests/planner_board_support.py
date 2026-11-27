@@ -715,7 +715,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         page = self._open(fake, **kwargs)
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text(
-            "Rebuild" if kwargs.get("language", "en") == "en" else "أعد البناء"
+            "Rebuild options" if kwargs.get("language", "en") == "en" else "أعد بناء الخيارات"
         )
         expect(page.locator("#plbBuild")).to_be_enabled()
         self._start(page)
@@ -827,7 +827,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             self._rules(page, mode="ignore")
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text(
-            "Rebuild" if kwargs.get("language", "en") == "en" else "أعد البناء"
+            "Rebuild options" if kwargs.get("language", "en") == "en" else "أعد بناء الخيارات"
         )
         expect(page.locator("#plbBuild")).to_be_enabled()
         return page, fake

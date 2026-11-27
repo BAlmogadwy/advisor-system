@@ -117,7 +117,7 @@ class PlannerBoardEndToEndTests(StaticLiveServerTestCase):
 
         # Build: the real endpoint and the real solver.
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild", timeout=45000)
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options", timeout=45000)
         expect(page.locator("#plbTabs [role='tab']")).not_to_have_count(1)
         # The real projection arrives: the band leaves its loading and its empty states.
         expect(page.locator("#plbGrad")).to_have_attribute("data-state", "ready", timeout=45000)
@@ -139,7 +139,7 @@ class PlannerBoardEndToEndTests(StaticLiveServerTestCase):
 
         # Rebuild with the pinned section, then review and apply.
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild", timeout=45000)
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options", timeout=45000)
         expect(page.locator("#plbBuild")).to_be_enabled(timeout=45000)
         expect(page.locator("#plbGrad")).to_have_attribute("data-state", "ready", timeout=45000)
         expect(page.locator("#plbReview")).to_be_enabled()

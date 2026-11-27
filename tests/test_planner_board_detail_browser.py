@@ -74,7 +74,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
             r"\s+", " ", page.locator(f"#plbPop [data-tsid='{tsid}']").inner_text().strip()
         )
 
-    def _stale(self, page, text=STALE, kind="changed", rebuild="Rebuild") -> None:
+    def _stale(self, page, text=STALE, kind="changed", rebuild="Rebuild options") -> None:
         expect(page.locator("#plbBuildLine")).to_have_text(text)
         # The tabs keep the order they were laid out in (the options ranked, C1 first).
         self.assertEqual(self._tab_names(page), ["C1", "B1", "C2", "(registered)"])
@@ -213,7 +213,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(self._cell(page, "AI331"), "Section M2")
         self.assertIn("AI331: only §M2 may be used.", self._text(page, "#plbStatus"))
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         item = [c for c in fake.build_bodies[0]["shortlist"] if c["course_code"] == "AI331"][0]
         self.assertEqual(item["pinned_sections"], [{"term_section_id": 12, "section": "M2"}])
         self._reopen(page)
@@ -236,7 +236,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(self._cell(page, "AI331"), "Any section")
         self.assertIn("AI331: any section may be used.", self._text(page, "#plbStatus"))
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         item = [c for c in fake.build_bodies[0]["shortlist"] if c["course_code"] == "AI331"][0]
         self.assertNotIn("pinned_sections", item)
 
@@ -527,7 +527,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         )
         page = self._open(fake)
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertEqual(self._tab_names(page), ["A1", "B1", "C2", "(registered)"])
         self.assertEqual(
             self._text(page, "#plbTab_A1 .plb-tab-n"), "A1 | C1 | B2 Three afternoons 15 cr"
@@ -597,7 +597,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page = self._open(_fake())
         expect(page.locator("#plbWhyBtn")).to_be_hidden()
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         button = page.locator("#plbWhyBtn")
         expect(button).to_be_visible()
         self.assertEqual(button.get_attribute("aria-expanded"), "false")
@@ -651,7 +651,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         fake.build_answer = lambda body: (200, reply)
         page = self._open(fake)
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         page.click("#plbWhyBtn")
         why = self._text(page, "#plbWhy")
         self.assertEqual(why.count("Not scheduled: AI342"), 1)
@@ -817,7 +817,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertLessEqual(pop["x"] + pop["width"], plan["x"] + plan["width"] + 1)
         page.check("#plbPop input[value='12']")
         self._stale(
-            page, "تغيّرت الخطة منذ هذا البناء. أعد البناء قبل التطبيق.", rebuild="أعد البناء"
+            page, "تغيّرت الخطة منذ هذا البناء. أعد البناء قبل التطبيق.", rebuild="أعد بناء الخيارات"
         )
         page.click("#plbWhyBtn")
         text = self._text(page, "#plbWhy")
@@ -841,7 +841,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
             page,
             "مضى على هذا البناء أكثر من 30 دقيقة. أعد البناء قبل التطبيق.",
             "old",
-            "أعد البناء",
+            "أعد بناء الخيارات",
         )
 
     def test_nothing_overflows_with_the_panel_open_at_three_widths_in_both_languages(self) -> None:

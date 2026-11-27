@@ -1094,7 +1094,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         # with the forecast, so landing may add what the runway has beyond the guidance; after
         # that the band never gets shorter, so changing tab does not pull the tabs up. On a phone
         # the columns stack, nothing is held, and the strip is only ever pushed down.
-        top = "document.getElementById('plbStrip').getBoundingClientRect().top"
+        top = "document.getElementById('plbStrip').getBoundingClientRect().top - document.getElementById('plbRoot').getBoundingClientRect().top"
         for kwargs in (
             {"width": 1152},
             {"width": 1152, "language": "ar"},

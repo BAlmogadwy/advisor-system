@@ -89,7 +89,9 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         if was_open:  # the popover can hang over the Build button: close it first
             page.click("#plbPop [data-act='dt-close']")
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text(re.compile("Rebuild|أعد البناء"))
+        expect(page.locator("#plbBuild")).to_have_text(
+            re.compile("Rebuild options|أعد بناء الخيارات")
+        )
         expect(page.locator("#plbBuild")).to_be_enabled()
         expect(page.locator("#plbBuildLine")).to_have_text("")
         if was_open:

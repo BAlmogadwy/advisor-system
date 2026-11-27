@@ -798,7 +798,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         )
         self.assertEqual(state["build"]["text"], "Build options")
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         # A build that can be applied: Review and apply is the filled one.
         state = self._buttons(page)
         self.assertEqual(
@@ -836,7 +836,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         # Rebuilding gives the fill back to Review and apply. A rebuild retires the old build when it
         # starts, so wait for its end (Rebuild again, enabled), not only for the stale mark to go.
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         expect(page.locator("#plbBuild")).to_be_enabled()
         expect(page.locator("#plbGuide")).not_to_have_attribute("data-stale", re.compile("."))
         state = self._buttons(page)
@@ -848,7 +848,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         page = self._open(BuildFake())
         self._rules(page, prog=False)
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         state = self._buttons(page)
         self.assertEqual(
             (state["build"]["filled"], state["review"]["filled"]), (False, False), state

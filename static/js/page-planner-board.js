@@ -186,7 +186,7 @@
 
     // Build, options and apply.
     buildFirst: IS_AR ? 'ابنِ الخيارات' : 'Build options',
-    rebuild: IS_AR ? 'أعد البناء' : 'Rebuild',
+    rebuild: IS_AR ? 'أعد بناء الخيارات' : 'Rebuild options',
     building: IS_AR ? 'جارٍ بناء الخيارات… قد يستغرق ذلك حتى 10 ثوانٍ' : 'Building options… this can take up to 10 seconds',
     planChanged: IS_AR ? 'تغيّرت الخطة. ابنِ الخيارات مرة أخرى لعرضها.' : 'The plan changed. Build again to see options.',
     buildFailed: IS_AR ? 'تعذّر بناء الخيارات. حاول مرة أخرى.' : 'The build failed. Try again.',
@@ -245,6 +245,26 @@
       : `${n} not scheduled`),
     notScheduledHere: IS_AR ? 'غير مجدول في هذا الخيار' : 'not scheduled in this option',
     review: IS_AR ? 'مراجعة وتطبيق' : 'Review and apply',
+    reviewOpt: (name) => (IS_AR ? ['مراجعة وتطبيق ', bdi(name)] : ['Review and apply ', bdi(name)]),
+    gradWith: (name) => (IS_AR ? ['يتخرّج مع ', bdi(name)] : ['Graduates with ', bdi(name)]),
+    glanceOpt: (name) => (IS_AR ? ['الخيار ', bdi(name), ' في لمحة'] : ['Option ', bdi(name), ' at a glance']),
+    glanceReg: IS_AR ? 'الأسبوع المسجّل في لمحة' : 'Registered week at a glance',
+    fLoad: IS_AR ? 'الحمل' : 'Load',
+    fCampus: IS_AR ? 'في الحرم' : 'On campus',
+    fFree: IS_AR ? 'اليوم الفارغ' : 'Free day',
+    fLast: IS_AR ? 'آخر محاضرة تنتهي' : 'Last class ends',
+    fNone: IS_AR ? 'لا يوجد' : 'none',
+    loadOf: (n, cap) => (IS_AR ? `${n} من ${cap} ساعة` : `${n} of ${cap} cr`),
+    loadOnly: (n) => (IS_AR ? `${n} ساعة` : `${n} cr`),
+    fOnly: IS_AR ? 'فقط هذه' : 'only these',
+    placedAll: IS_AR ? 'وُضعت جميع المقررات المخطَّطة' : 'All planned courses placed',
+    notPlaced: (n) => (IS_AR
+      ? pluralAr(n, forms('مقرر واحد لم يوضع', 'مقرران لم يوضعا', '{n} مقررات لم توضع', '{n} مقررًا لم يوضع'))
+      : `${n} not placed`),
+    offDay: (day) => (IS_AR ? `${day} إجازة` : `${day} off`),
+    offDays: (n) => (IS_AR ? `${n} أيام إجازة` : `${n} days off`),
+    keptTag: IS_AR ? 'مسجّل' : 'registered',
+    swatchHint: IS_AR ? 'لون المقرر' : 'course colour',
     comparisonOnly: IS_AR
       ? 'للمقارنة فقط: تتضمن الخيارات شُعب برامج أخرى'
       : "Comparison only: other programmes' sections are included",
@@ -477,6 +497,7 @@
   const DAY_SHORT = IS_AR
     ? { SUN: 'أحد', MON: 'اثن', TUE: 'ثلا', WED: 'أرب', THU: 'خم', FRI: 'جمع', SAT: 'سبت' }
     : { SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu', FRI: 'Fri', SAT: 'Sat' };
+  const DAY_FULL_EN = { SUN: 'Sunday', MON: 'Monday', TUE: 'Tuesday', WED: 'Wednesday', THU: 'Thursday', FRI: 'Friday', SAT: 'Saturday' };
   const DAY_FULL_AR = { SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس', FRI: 'الجمعة', SAT: 'السبت' };
   const DAY_ALIASES = {
     SUN: 'SUN', SUNDAY: 'SUN', 'الأحد': 'SUN', 'الاحد': 'SUN',
@@ -1057,6 +1078,23 @@
     if (m.kind !== 'new') return null;
     return state.shortlist.find((c) => norm(c.course_code) === norm(m.key)) || null;
   }
+  // One colour per planned course: the six hues go to the plan's courses in plan order (courses
+  // only in the build, after a change of plan, follow them). Kept registered courses have none.
+  const HUES = 6;
+  function hueOf(code) {
+    const key = norm(code);
+    const keys = state.shortlist.map((c) => norm(c.course_code));
+    if (state.build) for (const c of state.build.shortlist) if (!keys.includes(norm(c.course_code))) keys.push(norm(c.course_code));
+    const at = keys.indexOf(key);
+    return at < 0 ? 0 : (at % HUES) + 1;
+  }
+  function swatch(code) {
+    const mark = el('i', 'plb-sw');
+    const hue = hueOf(code);
+    if (hue) mark.dataset.hue = String(hue);
+    mark.setAttribute('aria-hidden', 'true');
+    return mark;
+  }
   function weekBlock(m, rowStart, rowEnd, col, inert) {
     const rows = rowEnd - rowStart;
     const range = `${hhmm(m.st)}-${hhmm(m.en)}`;
@@ -1072,6 +1110,7 @@
     block.dataset.code = m.key;
     block.dataset.kind = m.kind || 'reg';
     if (m.clash) block.dataset.clash = 'true';
+    if (m.kind === 'new' && hueOf(m.key)) block.dataset.hue = String(hueOf(m.key));
     const label = `${m.code}${m.section ? ` ${IS_AR ? 'شعبة' : 'section'} ${m.section}` : ''}, ${DAY_SHORT[m.day]} ${range}`
       + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
     if (item) {
@@ -1158,6 +1197,7 @@
       name.replaceChildren(...T.optionName(opt.name), ...(said ? [' · ', said] : []));
     } else name.textContent = T.registered;
     $('plbWeekPanel').setAttribute('aria-labelledby', opt ? tabId(opt.name) : 'plbTabRegistered');
+    renderGlance();
     if (!state.ctx) { host.replaceChildren(el('p', 'plb-empty', T.loadFirstWeek)); return; }
     const showRegistered = !opt || state.build.rules.mode === 'keep';
     // One entry per course (CODE::NAME, never the bare code); a code two courses share is told
@@ -1685,6 +1725,98 @@
     guide.replaceChildren(el('dl', 'plb-fx', ...rows));
   }
 
+
+  /* ── Option at a glance: the facts of the selected week, its sections and the guidance ─────── */
+  function dayLabel(day, full) {
+    return IS_AR ? DAY_FULL_AR[day] : (full ? DAY_FULL_EN[day] : DAY_SHORT[day]);
+  }
+  // The same model the tab facts read (weekModel of the week's meetings): one source of truth.
+  function glanceFacts(opt) {
+    const model = weekModel(opt ? weekMeetings(opt) : registeredMeetings());
+    const credits = opt ? optionCredits(opt) : registeredCredits();
+    const cap = state.rules.maxCredits;
+    let load = '—';
+    if (credits !== null) load = cap === null || cap === undefined ? T.loadOnly(credits) : T.loadOf(credits, cap);
+    const timed = model.meetings.length > 0;
+    let free = '—';
+    if (timed) {
+      if (!model.freeDays.length) free = T.fNone;
+      else if (model.freeDays.length === 1) free = dayLabel(model.freeDays[0], true);
+      else free = model.freeDays.map((d) => dayLabel(d, false)).join(IS_AR ? '، ' : ', ');
+    }
+    return { model, load, campus: timed ? T.dayWord(model.campusDays) : '—', free, last: timed ? hhmm(model.lastEnd) : '—' };
+  }
+  function sectionRows(opt) {
+    const rows = [];
+    if (opt) {
+      const placed = (opt.mappings || []).map((m) => {
+        const item = state.build.shortlist.find((c) => norm(c.course_code) === courseKeyOf(m) || norm(c.course_code) === norm(m.course_code));
+        const code = String((item && item.course_code) || m.course_code || courseKeyOf(m));
+        return { code, name: item && item.course_name ? String(item.course_name) : '', section: String(m.section || '').trim(), limited: !!(item && pinsOf(item).length), hue: hueOf(code) };
+      }).sort((a, b) => (a.hue || 99) - (b.hue || 99));
+      for (const r of placed) {
+        const chip = r.section ? el('span', 'plb-sch', bdi(`§${r.section}`)) : null;
+        if (chip && r.limited) chip.dataset.only = 'true';
+        const row = el('li', 'plb-sr', swatch(r.code), el('span', 'plb-code', bdi(r.code)),
+          el('span', 'plb-nm', r.name ? isolate(r.name) : ''), chip);
+        row.dataset.code = norm(r.code);
+        rows.push(row);
+      }
+    }
+    if (!opt || state.build.rules.mode === 'keep') {
+      for (const c of registeredCourses()) {
+        const row = el('li', 'plb-sr plb-sr--kept', el('span', 'plb-code', bdi(c.code)),
+          el('span', 'plb-nm', c.name ? isolate(c.name) : ''),
+          c.section ? el('span', 'plb-sch', bdi(`§${c.section}`)) : null);
+        row.dataset.code = c.key;
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+  function renderGlance() {
+    const box = $('plbGlance');
+    box.hidden = !state.ctx;
+    if (!state.ctx) return;
+    const opt = currentOption();
+    const f = glanceFacts(opt);
+    $('plbGlanceTitle').replaceChildren(...(opt ? T.glanceOpt(opt.name) : [T.glanceReg]));
+    const fact = (id, label, value) => {
+      $(id).replaceChildren(el('dt', 'plb-mic', label), el('dd', 'plb-fv', value));
+    };
+    fact('plbFactLoad', T.fLoad, f.load);
+    fact('plbFactCampus', T.fCampus, f.campus);
+    fact('plbFactFree', T.fFree, f.free);
+    fact('plbFactLast', T.fLast, f.last);
+    $('plbSecs').replaceChildren(...sectionRows(opt));
+  }
+  // The apply bar's own words about the selected option: all placed, or which are not; and a summary.
+  function renderApplyStatus() {
+    const status = $('plbApplyStatus');
+    const sum = $('plbApplySum');
+    const opt = currentOption();
+    const build = state.build;
+    const show = !!(opt && build && !build.stale && build.shortlist.length);
+    status.hidden = !show;
+    sum.hidden = !show;
+    if (!show) { status.replaceChildren(); sum.replaceChildren(); return; }
+    const left = unplacedFor(opt).map((item) => String(item.course_code));
+    status.dataset.kind = left.length ? 'warn' : 'ok';
+    status.replaceChildren(svg(left.length ? ICONS.warn : ICONS.tick, 14),
+      el('span', '', ...(left.length ? [T.notPlaced(left.length), ': ', ...joinCodes(left)] : [T.placedAll])));
+    const f = glanceFacts(opt);
+    const parts = [...T.optionName(opt.name)];
+    const add = (text) => parts.push(' · ', text);
+    if (f.load !== '—') add(f.load);
+    if (f.model.meetings.length) {
+      add(f.campus);
+      const n = f.model.freeDays.length;
+      if (n === 1) add(T.offDay(dayLabel(f.model.freeDays[0], true)));
+      else if (n > 1) add(T.offDays(n));
+    }
+    sum.replaceChildren(...parts);
+  }
+
   /* ── Courses ───────────────────────────────────────────────────────────── */
   function registeredCredits() {
     const list = registeredCourses();
@@ -2060,7 +2192,7 @@
     req.setAttribute('aria-label', item.must_take ? T.requiredOn(code) : T.makeRequired(code));
     req.title = item.must_take ? T.requiredOn(code) : T.makeRequired(code);
     const remove = iconButton('x', T.removeCourse(code), 'remove', code);
-    const row = el('div', 'plb-prow', box, el('span', 'plb-code', bdi(code)),
+    const row = el('div', 'plb-prow', box, el('span', 'plb-code', swatch(code), bdi(code)),
       el('span', 'plb-pmain', el('span', 'plb-nm plb-nm--wrap', item.course_name ? isolate(item.course_name) : ''), sub),
       secbtn, req, remove);
     row.dataset.code = key;
@@ -2715,6 +2847,9 @@
     else if (verdict.ok) { setTone(build, 'btn-neutral'); setTone($('plbReview'), 'btn-primary'); }
     else { setTone(build, 'btn-neutral'); setTone($('plbReview'), 'btn-neutral'); }
     $('plbReview').disabled = !verdict.ok || building || state.applying;
+    const reviewOpt = currentOption();
+    $('plbReview').replaceChildren(...(reviewOpt ? T.reviewOpt(reviewOpt.name) : [T.review]));
+    renderApplyStatus();
     const why = $('plbApplyWhy');
     why.textContent = verdict.why || '';
     why.hidden = !verdict.why;
@@ -3097,6 +3232,23 @@
     delete won.dataset.size;
   }
 
+  // The band's header: what the selected option graduates with, its completion term and how it
+  // compares to the registered week. Only from a complete forecast; otherwise the line above speaks.
+  function renderGradHead(ready) {
+    const top = $('plbGradTop');
+    const opt = currentOption();
+    const regRow = ready && isObj(ready.baseline) ? ready.baseline : null;
+    const row = ready ? (opt ? forecastFor(opt.name) : regRow) : null;
+    top.hidden = !isComplete(row);
+    if (top.hidden) { $('plbGradTerm').replaceChildren(); $('plbGradPill').hidden = true; return; }
+    $('plbGradMic').replaceChildren(...(opt ? T.gradWith(opt.name) : [T.gradAsRegistered]));
+    $('plbGradTerm').replaceChildren(...completionParts(row));
+    const pill = $('plbGradPill');
+    const result = opt && isComplete(regRow) ? resultOf(row.delta_terms) : null;
+    pill.hidden = !result;
+    pill.textContent = result ? result.text : '';
+    if (result) pill.dataset.result = result.kind;
+  }
   function renderGrad() {
     // "Graduates as it stands" reads the same forecast; the band is drawn again only when its word changes.
     if (state.student && bandEndsKey() !== state.bandEnds) renderStudent();
@@ -3163,7 +3315,9 @@
     const open = items.length > 0 && (disclosure ? state.gradWhy : true);
     why.hidden = !open;
     why.replaceChildren(...(open ? items.map((parts) => el('li', '', ...parts)) : []));
+    renderGradHead(ready);
     fitRunway();
+    holdBandHeight(false);
 
     // A control that was just hidden took the keyboard with it: keep it in the band.
     if (hadFocus) {
@@ -3177,14 +3331,13 @@
   // The tabs sit under the band and must not jump away from the pointer as the page changes
   // tab: the band is as tall as its tallest column, and the guidance and the runway differ from
   // one option to the next. So within one build, side by side, it never gets shorter than it has
-  // been (a change of width starts the count again). A phone stacks the columns: nothing is held.
+  // been (a change of width starts the count again).
   function holdBandHeight(reset) {
     const band = document.querySelector('.plb-band');
     if (!band) return;
     band.style.minHeight = '';
     const build = state.build;
-    const sideBySide = getComputedStyle(band).gridTemplateColumns.split(' ').length > 1;
-    if (!build || !sideBySide) return;
+    if (!build) return;
     if (reset) build.bandHeight = 0;
     build.bandHeight = Math.max(build.bandHeight || 0, band.getBoundingClientRect().height);
     band.style.minHeight = `${build.bandHeight}px`;
