@@ -8324,9 +8324,6 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
 .plb-land { order: 1; margin-inline-start: auto; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 0 8px; padding-bottom: 3px; text-align: end; }
 .plb-land b { font-size: var(--text-sm); font-weight: 600; line-height: 18px; color: var(--ink); }
 .plb-rwl--reg .plb-land b { font-weight: 500; color: var(--t2); }
-.plb-won { font-size: var(--text-body); font-weight: 700; line-height: 22px; color: var(--text-brand); white-space: normal; }
-.plb-won[data-result="later"] { color: var(--sev-warning-ink); }
-.plb-won[data-result="same"] { font-size: var(--text-sm); font-weight: 600; line-height: 18px; color: var(--ink); }
 .plb-brk { order: 2; display: block; flex: 0 0 100%; height: 0; }
 .plb-rwn { order: 1; flex: 1 1 12ch; min-width: 0; margin: 0; padding-bottom: 3px; font-size: var(--text-sm); line-height: 18px; color: var(--t2); }
 .plb-axn { order: 4; flex: 0 0 100%; padding-top: 2px; }
@@ -8391,12 +8388,6 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
   .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-land { grid-column: var(--plb-from) / -1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; gap: 0; margin: 0; padding: 0 0 5px; padding-inline-start: 16px; text-align: start; }
   .plb-rw[data-span="xl"]:not([data-fit="stacked"]) .plb-rwl--reg .plb-land { min-width: 112px; padding-bottom: 2px; }
 }
-/* "1 term sooner" is the page's largest teal text where its line has room for it on one line:
-   fitRunway() tries the sizes from the largest down, because the room depends on the language and
-   on the fonts that loaded. Where neither fits it stays at reading size and may wrap; it never
-   leaves the band. Bad news and "same term" stay at reading size. */
-.plb-won[data-size="lg"] { font-size: var(--text-lg); line-height: 24px; }
-.plb-won[data-size="xl"] { font-size: var(--text-xl); line-height: 26px; }
 
 /* laptop width */
 @container plb (max-width: 1361px) {
@@ -8419,7 +8410,7 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
 .plb-sw[data-hue="3"] { background: var(--plb-c3); } .plb-sw[data-hue="4"] { background: var(--plb-c4); }
 .plb-sw[data-hue="5"] { background: var(--plb-c5); } .plb-sw[data-hue="6"] { background: var(--plb-c6); }
 .plb-sw:not([data-hue]) { display: none; }
-.plb-code { display: inline-flex; align-items: center; gap: 6px; }
+.plb-prow .plb-code:has(> .plb-sw) { display: inline-flex; align-items: center; gap: 6px; }
 .plb-b[data-kind="new"][data-hue="1"] { --h: var(--plb-c1); --ht: var(--plb-c1-t); }
 .plb-b[data-kind="new"][data-hue="2"] { --h: var(--plb-c2); --ht: var(--plb-c2-t); }
 .plb-b[data-kind="new"][data-hue="3"] { --h: var(--plb-c3); --ht: var(--plb-c3-t); }
@@ -8445,6 +8436,7 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
 .plb-sr .plb-nm { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: var(--text-xs); color: var(--t2); }
 .plb-sch { flex: none; padding: 0 6px; border: 1px solid var(--rule-strong); border-radius: var(--radius-pill); font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; line-height: 16px; color: var(--t2); }
 .plb-sch[data-only="true"] { border-color: var(--text-brand); color: var(--text-brand); }
+.plb-kt { flex: none; font-size: var(--text-micro); line-height: 16px; color: var(--t2); }
 .plb-sr--kept { opacity: .8; }
 .plb-sr--kept .plb-code { color: var(--t2); }
 .plb-glance .plb-guide { padding-block-start: 4px; }

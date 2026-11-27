@@ -256,7 +256,7 @@
     fNone: IS_AR ? 'لا يوجد' : 'none',
     loadOf: (n, cap) => (IS_AR ? `${n} من ${cap} ساعة` : `${n} of ${cap} cr`),
     loadOnly: (n) => (IS_AR ? `${n} ساعة` : `${n} cr`),
-    fOnly: IS_AR ? 'فقط هذه' : 'only these',
+    fOnly: IS_AR ? 'فقط' : 'only',
     placedAll: IS_AR ? 'وُضعت جميع المقررات المخطَّطة' : 'All planned courses placed',
     notPlaced: (n) => (IS_AR
       ? pluralAr(n, forms('مقرر واحد لم يوضع', 'مقرران لم يوضعا', '{n} مقررات لم توضع', '{n} مقررًا لم يوضع'))
@@ -264,7 +264,6 @@
     offDay: (day) => (IS_AR ? `${day} إجازة` : `${day} off`),
     offDays: (n) => (IS_AR ? `${n} أيام إجازة` : `${n} days off`),
     keptTag: IS_AR ? 'مسجّل' : 'registered',
-    swatchHint: IS_AR ? 'لون المقرر' : 'course colour',
     comparisonOnly: IS_AR
       ? 'للمقارنة فقط: تتضمن الخيارات شُعب برامج أخرى'
       : "Comparison only: other programmes' sections are included",
@@ -530,6 +529,7 @@
     planCredits: null, // {done, total}: the plan's credits passed and in all, once the plan reply is in
     catalog: null,     // Map normalised course code -> [section]; null = unknown
     shortlist: [],
+    hues: {},          // this student's course colours: code -> 1..6, kept while the plan changes
     suggested: [],     // the courses the page suggested when the student loaded ("Reset to suggestions")
     rules: { ...DEFAULT_RULES },
     shownElig: null,   // the eligibility the suggestions on screen were loaded with
@@ -1078,15 +1078,27 @@
     if (m.kind !== 'new') return null;
     return state.shortlist.find((c) => norm(c.course_code) === norm(m.key)) || null;
   }
-  // One colour per planned course: the six hues go to the plan's courses in plan order (courses
-  // only in the build, after a change of plan, follow them). Kept registered courses have none.
+  // One colour per planned course, given the first time the course appears for this student and
+  // kept while other courses come and go; a hue freed by a removed course goes to a NEW course only.
+  // Kept registered courses have none.
   const HUES = 6;
-  function hueOf(code) {
-    const key = norm(code);
+  function planKeys() {
     const keys = state.shortlist.map((c) => norm(c.course_code));
     if (state.build) for (const c of state.build.shortlist) if (!keys.includes(norm(c.course_code))) keys.push(norm(c.course_code));
-    const at = keys.indexOf(key);
-    return at < 0 ? 0 : (at % HUES) + 1;
+    return keys;
+  }
+  function hueOf(code) {
+    const key = norm(code);
+    const keys = planKeys();
+    if (!keys.includes(key)) return 0;
+    for (const k of Object.keys(state.hues)) if (!keys.includes(k)) delete state.hues[k];
+    if (!state.hues[key]) {
+      const taken = new Set(Object.values(state.hues));
+      let hue = 1;
+      while (hue <= HUES && taken.has(hue)) hue += 1;
+      state.hues[key] = hue <= HUES ? hue : (Object.keys(state.hues).length % HUES) + 1;
+    }
+    return state.hues[key];
   }
   function swatch(code) {
     const mark = el('i', 'plb-sw');
@@ -1734,7 +1746,7 @@
   function glanceFacts(opt) {
     const model = weekModel(opt ? weekMeetings(opt) : registeredMeetings());
     const credits = opt ? optionCredits(opt) : registeredCredits();
-    const cap = state.rules.maxCredits;
+    const cap = opt && state.build && state.build.rules ? state.build.rules.maxCredits : state.rules.maxCredits;
     let load = '—';
     if (credits !== null) load = cap === null || cap === undefined ? T.loadOnly(credits) : T.loadOf(credits, cap);
     const timed = model.meetings.length > 0;
@@ -1752,10 +1764,13 @@
       const placed = (opt.mappings || []).map((m) => {
         const item = state.build.shortlist.find((c) => norm(c.course_code) === courseKeyOf(m) || norm(c.course_code) === norm(m.course_code));
         const code = String((item && item.course_code) || m.course_code || courseKeyOf(m));
-        return { code, name: item && item.course_name ? String(item.course_name) : '', section: String(m.section || '').trim(), limited: !!(item && pinsOf(item).length), hue: hueOf(code) };
-      }).sort((a, b) => (a.hue || 99) - (b.hue || 99));
+        return { code, name: item && item.course_name ? String(item.course_name) : '', section: String(m.section || '').trim(), limited: !!(item && pinsOf(item).length) };
+      });
+      const order = planKeys();
+      const at = (r) => { const i = order.indexOf(norm(r.code)); return i < 0 ? 999 : i; };
+      placed.sort((a, b) => at(a) - at(b));
       for (const r of placed) {
-        const chip = r.section ? el('span', 'plb-sch', bdi(`§${r.section}`)) : null;
+        const chip = r.section ? el('span', 'plb-sch', bdi(`§${r.section}`), r.limited ? ` ${T.fOnly}` : '') : null;
         if (chip && r.limited) chip.dataset.only = 'true';
         const row = el('li', 'plb-sr', swatch(r.code), el('span', 'plb-code', bdi(r.code)),
           el('span', 'plb-nm', r.name ? isolate(r.name) : ''), chip);
@@ -1767,7 +1782,7 @@
       for (const c of registeredCourses()) {
         const row = el('li', 'plb-sr plb-sr--kept', el('span', 'plb-code', bdi(c.code)),
           el('span', 'plb-nm', c.name ? isolate(c.name) : ''),
-          c.section ? el('span', 'plb-sch', bdi(`§${c.section}`)) : null);
+          c.section ? el('span', 'plb-sch', bdi(`§${c.section}`)) : null, el('span', 'plb-kt', T.keptTag));
         row.dataset.code = c.key;
         rows.push(row);
       }
@@ -2629,6 +2644,7 @@
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
+    state.hues = {};
     const previousId = state.student ? String(state.student.student_id) : null;
     const previousCtx = state.ctx ? { ...state.ctx } : null;
     // Options belong to the student they were built for. The same student reloaded (a rule that
@@ -3416,7 +3432,7 @@
     state.whyOpen = false;
     state.gradWhy = false;
     const gen = ++state.buildGen;
-    const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly };
+    const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly, maxCredits: state.rules.maxCredits };
     const shortlist = JSON.parse(JSON.stringify(state.shortlist));
     const body = buildBody();
     setBuildLine('busy', T.building);

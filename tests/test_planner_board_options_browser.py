@@ -252,3 +252,34 @@ class PlannerBoardOptionsTests(PlannerBoardCase):
             week = page.locator("#plbWeekPanel").bounding_box()
             self.assertGreaterEqual(box["y"], week["y"] + week["height"] - 1, msg=language)
             self.assertLessEqual(box["width"], 390, msg=language)
+
+    # ── 4. Review fixes: stable colours, the build's own cap, words not colour alone ───────
+    def test_a_course_keeps_its_colour_when_another_is_removed(self) -> None:
+        page, _fake = self._built()
+        before = page.evaluate(HUES_OF_AI331)
+        self.assertEqual((before["row"], before["row2"]), ("1", "2"))
+        self._remove(page, "AI331")
+        self.assertEqual(page.evaluate(HUES_OF_AI331)["row2"], "2")
+
+    def test_the_glance_reads_the_cap_of_the_build_not_the_live_rule(self) -> None:
+        page = self._open(BuildFake())
+        page.fill("#plbMaxIn", "18")
+        page.press("#plbMaxIn", "Enter")
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        self._start(page)
+        self.assertIn("of 18 cr", str(self._glance(page)))
+        page.fill("#plbMaxIn", "16")
+        page.press("#plbMaxIn", "Enter")
+        self._pick(page, "B1")
+        text = str(self._glance(page))
+        self.assertIn("of 18 cr", text)
+        self.assertNotIn("of 16 cr", text)
+
+    def test_kept_rows_carry_a_word_tag(self) -> None:
+        page, _fake = self._built()
+        tags = page.eval_on_selector_all(
+            "#plbSecs .plb-sr--kept .plb-kt", "ns => ns.map(n => n.textContent.trim())"
+        )
+        self.assertTrue(tags)
+        self.assertEqual(set(tags), {"registered"})
