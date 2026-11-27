@@ -1091,23 +1091,54 @@ def test_planner_catalogue_sections_carry_credit_hours() -> None:
     Course.objects.create(course_code="CS112", credit_hours=3)  # the programme row wins
     Course.objects.create(course_code="MA101", credit_hours=2)
     Course.objects.create(course_code="XX900", credit_hours=0)  # 0 = not known
+    # Rows that disagree on one code are unknown, not an arbitrary one of them.
+    for_code = _section("M1", course_key="PH201")
+    spaced = _section("M1", course_key="BI110")
+    # No stored key: the key is the code and the number, as the page derives it.
+    keyless = TermSection.objects.create(
+        course_code="CH", course_number="301", course_key="", course_name="Chemistry", section="M1"
+    )
+    for section in (for_code, spaced, keyless):
+        TermSectionProgram.objects.create(term_section=section, program="AI")
+    Course.objects.create(course_code="PH201", credit_hours=3)
+    Course.objects.create(course_code="PH 201", credit_hours=4)
+    Course.objects.create(course_code="BI 110", credit_hours=2)  # held with a space
+    Course.objects.create(course_code="CH301", credit_hours=5)
+    Course.objects.create(course_code="ZZ999", credit_hours=1)  # no section of it: never read
     client = _staff_planner_client("planner-credit-hours")
 
-    response = client.post(
-        "/ops/planner/sections-catalog/",
-        data=json.dumps(
-            {
-                "academic_year": "1448",
-                "term": "1",
-                "student_id": student.student_id,
-                "program_sections_only": False,
-            }
-        ),
-        content_type="application/json",
-    )
-    assert response.status_code == 200
-    hours = {row["course_key"]: row["credit_hours"] for row in response.json()["sections"]}
-    assert hours == {"CS112": 4, "MA101": 2, "XX900": None}
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as queries:
+        response = client.post(
+            "/ops/planner/sections-catalog/",
+            data=json.dumps(
+                {
+                    "academic_year": "1448",
+                    "term": "1",
+                    "student_id": student.student_id,
+                    "program_sections_only": False,
+                }
+            ),
+            content_type="application/json",
+        )
+    assert response.status_code == 200, response.json()
+    hours = {
+        (row["course_key"] or row["course_code"] + row["course_number"]): row["credit_hours"]
+        for row in response.json()["sections"]
+    }
+    assert hours == {
+        "CS112": 4,
+        "MA101": 2,
+        "XX900": None,
+        "PH201": None,
+        "BI110": 2,
+        "CH301": 5,
+    }
+    # One read of the courses table (only the codes of the reply), never one per section.
+    course_reads = [q for q in queries.captured_queries if 'FROM "courses"' in q["sql"]]
+    assert len(course_reads) == 1
+    assert "ZZ999" not in course_reads[0]["sql"]
 
 
 def test_planner_build_maps_controls_to_programme_and_capacity_contracts(

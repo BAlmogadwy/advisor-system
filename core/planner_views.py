@@ -7,6 +7,8 @@ from hashlib import sha256
 
 from django.contrib.auth.decorators import login_required
 from django.core import signing
+from django.db.models import TextField, Value
+from django.db.models.functions import Replace, Upper
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.cache import never_cache
@@ -772,14 +774,34 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                 ).values_list("course_code", "credit_hours"):
                     if pr_hours and pr_hours > 0:
                         programme_hours[normalize_code(pr_code)] = pr_hours
-            wanted_keys = {normalize_code(str(g["course_key"])) for g in grouped.values()}
-            course_hours: dict[str, int] = {}
-            for c_code, c_hours in Course.objects.values_list("course_code", "credit_hours"):
-                c_key = normalize_code(c_code)
-                if c_key in wanted_keys and c_hours and c_hours > 0:
-                    course_hours[c_key] = c_hours
+
+            def hours_key(g: dict[str, object]) -> str:
+                # The course key as stored, else code + number (as the page derives it).
+                return normalize_code(g["course_key"]) or normalize_code(
+                    f"{g['course_code']}{g['course_number']}"
+                )
+
+            wanted_keys = {hours_key(g) for g in grouped.values()} - {""}
+            # Only the courses of this reply, matched on the code without its spaces. A code held
+            # by several rows that disagree on the hours is unknown, not an arbitrary one of them.
+            seen_hours: dict[str, set[int]] = {}
+            for c_code, c_hours in (
+                Course.objects.annotate(
+                    norm_code=Upper(
+                        Replace("course_code", Value(" "), Value(""), output_field=TextField())
+                    )
+                )
+                .filter(norm_code__in=wanted_keys)
+                .values_list("course_code", "credit_hours")
+            ):
+                seen_hours.setdefault(normalize_code(c_code), set()).add(
+                    c_hours if c_hours and c_hours > 0 else 0
+                )
+            course_hours = {
+                k: next(iter(v)) for k, v in seen_hours.items() if len(v) == 1 and 0 not in v
+            }
             for g in grouped.values():
-                g_key = normalize_code(str(g["course_key"]))
+                g_key = hours_key(g)
                 g["credit_hours"] = programme_hours.get(g_key) or course_hours.get(g_key)
 
             meetings_qs = TermSectionMeeting.objects.filter(

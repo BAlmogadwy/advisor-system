@@ -123,6 +123,7 @@
       : "No section of this student's programme: it can be built only with Sections from: Any programme.",
     tagFewSeats: IS_AR ? 'مقاعد قليلة' : 'Few seats',
     creditsUnknown: IS_AR ? '؟ ساعة' : '? cr',
+    skippedUnknown: (codes, added) => [...(added ? [IS_AR ? `أُضيفت ${T.courseWord(added)}. ` : `Added ${added}. `] : []), IS_AR ? 'لم تُضف لأن ساعاتها غير معروفة: ' : 'Not added, their credits are not known: ', ...codes.flatMap((c, i) => (i ? [IS_AR ? '، ' : ', ', bdi(c)] : [bdi(c)]))],
     creditsUnknownWhy: IS_AR ? 'عدد ساعات المقرر غير معروف، لذا لا يمكن إضافته.' : 'The credits of this course are not known, so it cannot be added.',
     leftTag: (n) => (IS_AR ? `${n} متبقٍ` : `${n} left`),
     secHead: IS_AR ? 'الشعبة' : 'Sec',
@@ -1881,6 +1882,7 @@
     input.type = 'checkbox';
     input.checked = ticked;
     input.disabled = !ticked && (model.reasons.length > 0 || ids.size >= MAX_ONLY);
+    if (!addable(entry)) { input.disabled = true; input.title = T.creditsUnknownWhy; }
     input.dataset.act = 'sectick';
     input.dataset.code = entry.code;
     input.dataset.tsid = model.id;
@@ -1938,6 +1940,7 @@
       el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''),
       el('span', 'plb-meta', metaText.join(' · '), ...tags.flatMap((t) => [' ', t])));
     if (entry.compareOnly && src === 'all') main.title = T.compareWhy;
+    if (!addable(entry)) main.title = T.creditsUnknownWhy;
     const body = el('div', 'plb-secs');
     body.id = secsId;
     body.hidden = !open;
@@ -1947,7 +1950,7 @@
         body.append(el('div', 'plb-sec plb-sec--h', el('span', ''), el('span', 'plb-mic', T.secHead),
           el('span', 'plb-mic', T.meetsHead), el('span', 'plb-mic', T.seatsHead)));
         for (const section of sortSections(sections)) body.append(sectionRowNode(entry, section, src));
-        const n = (state.pick.secs.get(code) || new Set()).size;
+        const n = addable(entry) ? (state.pick.secs.get(code) || new Set()).size : 0;
         if (n) {
           const only = el('button', 'btn btn-sm btn-neutral plb-only', T.addOnly(n), svg(ICONS.next, 14));
           only.querySelector('svg').classList.add('plb-dir');
@@ -2080,7 +2083,16 @@
     const host = $('plbPlanList');
     const ready = !!state.ctx;
     const nodes = [];
-    for (const item of state.shortlist) nodes.push(planRowNode(item));
+    // The popover follows its row in DOM order, so Tab goes from the button into it and back.
+    const pop = $('plbPop');
+    const hadFocus = pop.contains(document.activeElement) ? document.activeElement : null;
+    const open = state.detail ? state.detail.code : null;
+    let popPlaced = false;
+    for (const item of state.shortlist) {
+      nodes.push(planRowNode(item));
+      if (open && norm(item.course_code) === open) { nodes.push(pop); popPlaced = true; }
+    }
+    if (!popPlaced) nodes.push(pop);
     if (ready && state.rules.mode === 'keep') for (const course of registeredCourses()) nodes.push(keptRowNode(course));
     if (ready) {
       const hint = el('p', 'plb-hint', T.hintA, svg(ICONS.next, 13), T.hintB);
@@ -2088,6 +2100,7 @@
       nodes.push(hint);
     }
     host.replaceChildren(...nodes);
+    if (hadFocus) hadFocus.focus({ preventScroll: true });
     $('plbPlanCount').textContent = T.planHead(ready ? state.shortlist.length : 0);
     renderCreditsHeader();
   }
@@ -2148,6 +2161,18 @@
   }
   // The courses zone, drawn again from the state. Keyboard focus is found again by its action,
   // course and section; where that control has gone it falls to the search box.
+  // Ticked sections that the catalogue no longer lists (a rule or a reload changed it) are dropped;
+  // a course left with none of its ticked sections is no longer ticked. Only against a loaded list.
+  function pruneTicks() {
+    const all = state.pick.src === 'all';
+    const loaded = all ? state.allCatalog : state.catalog;
+    if (!loaded) return;
+    for (const [code, ids] of [...state.pick.secs]) {
+      const listed = new Set((all ? loaded.get(code) || [] : catalogSections(code)).map((x) => String(x.term_section_id)));
+      for (const id of [...ids]) if (!listed.has(id)) ids.delete(id);
+      if (!ids.size) { state.pick.secs.delete(code); state.pick.ticked.delete(code); }
+    }
+  }
   function renderCourses() {
     const pick = $('plbPick');
     const was = document.activeElement;
@@ -2156,6 +2181,7 @@
     const ready = !!state.ctx;
     $('plbFind').disabled = !ready;
     if (!ready) { state.focus = null; state.detail = null; state.pick = newPick(); }
+    if (ready) pruneTicks();
     const lists = renderAvailable();
     renderSource();
     renderPlanPane();
@@ -2197,8 +2223,10 @@
   }
   function addEntries(list, how) {
     const added = [];
+    const unknown = [];
     for (const { entry, pins } of list) {
-      if (inShortlist(entry.code) || !addable(entry)) continue;
+      if (inShortlist(entry.code)) continue;      // already planned: nothing to move
+      if (!addable(entry)) { unknown.push(entry.code); continue; }
       const item = makeItem(entry);
       if (pins && pins.length) item.pinned_sections = pins;
       state.shortlist.push(item);
@@ -2206,11 +2234,15 @@
       state.pick.ticked.delete(entry.code);
       state.pick.secs.delete(entry.code);
     }
-    if (!added.length) return;
+    if (!added.length) {
+      if (unknown.length) setStatus('warn', ...T.skippedUnknown(unknown));
+      return;
+    }
     planChanged();
     setStatus('ok', ...(added.length === 1 ? T.added(added[0].course_code) : [T.addedMany(added.length)]));
     state.focus = how === 'row' ? { kind: 'remove', code: added[0].course_code } : null;
     renderCourses();
+    if (unknown.length) setStatus('warn', ...T.skippedUnknown(unknown, added.length));
     if (how !== 'row' && (document.activeElement === document.body || document.activeElement.disabled)) $('plbFind').focus({ preventScroll: true });
   }
   function removeCoursesFromPlan(codes, how) {
@@ -2466,6 +2498,7 @@
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
     const previousId = state.student ? String(state.student.student_id) : null;
+    const previousCtx = state.ctx ? { ...state.ctx } : null;
     // Options belong to the student they were built for. The same student reloaded (a rule that
     // reloads the suggestions) keeps them, marked out of date; another student removes them.
     if (reuse && previousId === String(data.student.student_id)) planChanged();
@@ -2491,9 +2524,15 @@
     state.catalog = null;
     // The picker starts again on the same source; the whole-term list belongs to this student and term.
     state.pick = { ...newPick(), src: state.pick ? state.pick.src : 'recommended', find: state.pick ? state.pick.find : '' };
-    state.allCatalog = null;
-    state.allState = 'idle';
-    state.allGen += 1;
+    // The whole-term list is kept for the same student and term (an eligibility switch reloads
+    // the student, not the term); another student or term fetches it again.
+    const sameTerm = !!previousCtx && previousCtx.studentId === state.ctx.studentId
+      && previousCtx.year === state.ctx.year && previousCtx.term === state.ctx.term;
+    if (!sameTerm) {
+      state.allCatalog = null;
+      state.allState = 'idle';
+      state.allGen += 1;
+    }
     $('plbRoot').dataset.loaded = 'true';
     $('plbYear').value = state.ctx.year;
     if ([...$('plbTerm').options].some((o) => o.value === state.ctx.term)) $('plbTerm').value = state.ctx.term;
@@ -2506,7 +2545,8 @@
     renderCourses();
     renderActions();
     loadPlan(run);
-    if (state.pick.src === 'all') loadAllCatalog(run);
+    // A request still on its way belonged to the retired run: ask again; a loaded list stays.
+    if (state.pick.src === 'all' && state.allState !== 'ready') loadAllCatalog(run);
     return true;
   }
 
@@ -3628,19 +3668,43 @@
     }
   }
   // The popover hangs under its course's section button, inside the plan's panel, and stays inside it.
+  // The popover hangs under its course's section button, or above it when the room below (inside
+  // the courses zone, above its Build row) is too small; failing both it takes the larger side and
+  // scrolls inside. It stays inside the plan's panel sideways.
   function placePop() {
     const pop = $('plbPop');
     const plan = $('plbPlan');
-    const button = state.detail ? document.querySelector(`#plbPlanList .plb-secbtn[data-code="${CSS.escape(state.detail.code)}"]`) : null;
+    const row = state.detail ? document.querySelector(`#plbPlanList .plb-prow[data-code="${CSS.escape(state.detail.code)}"]`) : null;
+    const button = row ? row.querySelector('.plb-secbtn') : null;
     if (!button) { pop.style.top = '0px'; return; }
+    if (pop.previousElementSibling !== row) row.after(pop);
     const pr = plan.getBoundingClientRect();
     const br = button.getBoundingClientRect();
+    const zone = $('plbZoneCourses').getBoundingClientRect();
+    const build = document.querySelector('#plbZoneCourses .plb-buildrow');
+    const floor = build ? build.getBoundingClientRect().top - 8 : zone.bottom;
+    const gap = 4;
     const width = Math.min(380, pr.width);
     const rtl = document.documentElement.dir === 'rtl';
     const left = rtl ? br.left - pr.left : br.right - pr.left - width;
     pop.style.width = `${width}px`;
     pop.style.left = `${Math.max(0, Math.min(left, pr.width - width))}px`;
-    pop.style.top = `${br.bottom - pr.top + 4}px`;
+    pop.style.maxHeight = 'none';
+    const natural = pop.scrollHeight;
+    const below = floor - br.bottom - gap;
+    const above = br.top - zone.top - gap;
+    let top;
+    if (natural <= below) top = br.bottom - pr.top + gap;
+    else if (natural <= above) top = br.top - pr.top - gap - natural;
+    else if (below >= above) {
+      pop.style.maxHeight = `${Math.max(120, below)}px`;
+      top = br.bottom - pr.top + gap;
+    } else {
+      const h = Math.max(120, above);
+      pop.style.maxHeight = `${h}px`;
+      top = br.top - pr.top - gap - Math.min(natural, h);
+    }
+    pop.style.top = `${top}px`;
   }
   // Write the allowed sections of a course: the shape the build endpoint takes (`pinned_sections`,
   // one to six {term_section_id, section}, in the list's section order). None: the key goes.
@@ -3761,6 +3825,7 @@
         else if (kind === 'remall') removeCoursesFromPlan(state.shortlist.map((c) => c.course_code), '');
       });
     }
+    window.addEventListener('resize', () => { if (state.detail) placePop(); });
     $('plbSource').addEventListener('change', (event) => setSource(event.target.value));
     $('plbFind').addEventListener('input', (event) => { state.pick.find = event.target.value; renderCourses(); });
     // The popover closes on a click outside it, once that click has done its work: closing on the

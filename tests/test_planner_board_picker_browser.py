@@ -36,6 +36,7 @@ SECTIONS = [
     _sec(14, "CS351", "M1", ["THU"], "09:00", "11:30", 37, 40),  # 3 seats left: few
     _sec(15, "AI342", "M1", ["SUN"], "13:00", "14:15", None, None),
     _sec(16, "STAT305", "M2", ["THU"], "13:00", "14:15", 40, 40),  # full
+    _sec(17, "CS351", "M2", ["THU"], "12:00", "13:15", 10, 40),
     _sec(31, "DS410", "M1", ["THU"], "08:00", "09:15", 10, 40, programs=("DS",)),
     _sec(32, "XX900", "M1", ["SAT"], "08:00", "09:15", 10, 40, hours=None),
 ]
@@ -149,9 +150,78 @@ class PlannerBoardPickerTests(PlannerBoardCase):
         expect(box).to_be_disabled()
         self.assertIn("not known", box.get_attribute("title"))
         self.assertIn("? cr", self._text(page, ROW.format("XX900")))
+        # its sections cannot be ticked either, and there is no "Add only these" for it
+        page.click(f"{ROW.format('XX900')} button[data-act='open']")
+        expect(page.locator(f"{ROW.format('XX900')} input[data-act='sectick']")).to_be_disabled()
+        self.assertEqual(page.locator(f"{ROW.format('XX900')} button[data-act='only']").count(), 0)
+        self.assertIn(
+            "not known", page.locator(f"{ROW.format('XX900')} .plb-ar-main").get_attribute("title")
+        )
+        # » skips it and says so, naming the course and why
         page.click("#plbXAddAll")
         self.assertNotIn("XX900", self._plan(page))
         self.assertIn("DS410", self._plan(page))
+        status = self._text(page, "#plbStatus")
+        self.assertIn("XX900", status)
+        self.assertIn("credits are not known", status)
+
+    def test_ticked_sections_that_leave_the_catalogue_are_dropped_with_their_button(self) -> None:
+        page, fake = self._page()
+        self._source(page, "eligible")
+        row = ROW.format("CS351")
+        page.click(f"{row} button[data-act='open']")
+        page.check(f"{row} input[data-tsid='14']")
+        page.check(f"{row} input[data-tsid='17']")
+        expect(page.locator(f"{row} button[data-act='only']")).to_contain_text("2 sections")
+        # the rule changes and the catalogue no longer lists those sections
+        fake.catalog_payload = {
+            **CATALOG,
+            "sections": [x for x in SECTIONS if x["course_key"] != "CS351"],
+        }
+        self._rules(page, prog=False)
+        expect(page.locator(f"{row} .plb-meta")).to_contain_text("No sections")
+        self.assertEqual(page.locator(f"{row} button[data-act='only']").count(), 0)
+        expect(page.locator(f"{row} input[data-act='tick']")).not_to_be_checked()
+        expect(page.locator("#plbAvailTicked")).to_have_text("0 ticked · 0 cr")
+
+    def test_the_whole_term_list_survives_a_reload_of_the_same_student(self) -> None:
+        page, fake = self._page()
+        self._all_loaded(page)
+        whole = lambda: [b for b in fake.catalog_bodies if "course_codes" not in b]  # noqa: E731
+        self.assertEqual(len(whole()), 1)
+        self._rules(page, elig="relaxed")  # reloads the student, not the term
+        expect(page.locator("#plbEligRelaxed")).to_be_checked()
+        page.wait_for_timeout(400)  # a second request, if any, would be here by now
+        self.assertIn("DS410", self._avail(page))
+        self.assertEqual(len(whole()), 1)
+        self.assertEqual(page.locator("#plbSource").input_value(), "all")
+
+    def test_the_popover_never_covers_the_build_row_and_follows_its_row_in_dom_order(self) -> None:
+        for width, height in ((1440, 900), (1152, 800), (390, 844)):
+            with self.subTest(width=width):
+                page, fake = self._page(width=width, height=height)
+                self._remove(page, "AI342")  # a one-row plan: little room under the button
+                self._sections_pop(page, "AI331")
+                pop = page.locator("#plbPop").bounding_box()
+                build = page.locator("#plbBuild").bounding_box()
+                self.assertTrue(
+                    pop["y"] + pop["height"] <= build["y"] + 0.5
+                    or pop["y"] >= build["y"] + build["height"]
+                    or pop["x"] + pop["width"] <= build["x"]
+                    or pop["x"] >= build["x"] + build["width"],
+                    (pop, build),
+                )
+                self.assertEqual(
+                    page.evaluate(
+                        "document.getElementById('plbPop').previousElementSibling.dataset.code"
+                    ),
+                    "AI331",
+                )
+                page.context.close()
+
+    def test_the_ticked_count_is_not_a_live_region(self) -> None:
+        page, fake = self._page()
+        self.assertIsNone(page.locator("#plbAvailTicked").get_attribute("aria-live"))
 
     def test_search_filters_by_code_or_name_and_reads_arabic_digits(self) -> None:
         page, fake = self._page()
@@ -330,10 +400,12 @@ class PlannerBoardPickerTests(PlannerBoardCase):
         expect(
             page.locator("#plbPlanList button[data-act='detail'][data-code='AI331']")
         ).to_be_focused()
-        # one popover at a time: AI342's, then (its button is above the popover) AI331's again
+        # one popover at a time: AI342's, then AI331's again
         self._sections_pop(page, "AI342")
         expect(page.locator("#plbDetailTitle")).to_contain_text("AI342")
-        page.click("#plbPlanList button[data-act='detail'][data-code='AI331']")
+        # (the popover may hang over that button: the keyboard reaches it either way)
+        page.locator("#plbPlanList button[data-act='detail'][data-code='AI331']").focus()
+        page.keyboard.press("Enter")
         expect(page.locator("#plbDetailTitle")).to_contain_text("AI331")
         self.assertEqual(page.locator("#plbPop:visible").count(), 1)
         self.assertEqual(

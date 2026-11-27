@@ -163,8 +163,10 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
                 button = page.locator(self._button("AI331")).bounding_box()
                 pop = page.locator("#plbPop").bounding_box()
                 plan = page.locator("#plbPlan").bounding_box()
-                self.assertGreaterEqual(pop["y"], button["y"] + button["height"])
-                self.assertLessEqual(pop["y"], button["y"] + button["height"] + 8)
+                # under its button, or above it when there is no room below (never over Build)
+                under = 0 <= pop["y"] - (button["y"] + button["height"]) <= 8
+                over = 0 <= button["y"] - (pop["y"] + pop["height"]) <= 8
+                self.assertTrue(under or over, (pop, button))
                 self.assertGreaterEqual(pop["x"], plan["x"] - 1)
                 self.assertLessEqual(pop["x"] + pop["width"], plan["x"] + plan["width"] + 1)
                 self.assertEqual(page.get_attribute("#plbPop", "role"), "dialog")
