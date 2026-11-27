@@ -62,8 +62,8 @@ class PlannerBoardZonesTests(PlannerBoardCase):
                 self.assertEqual(got, heads)
                 # what lives in which zone
                 self.assertEqual(page.locator("#plbZoneRules #plbMaxIn").count(), 1)
-                self.assertEqual(page.locator("#plbZoneCourses #plbTable").count(), 1)
-                self.assertEqual(page.locator("#plbZoneCourses #plbDetail").count(), 1)
+                self.assertEqual(page.locator("#plbZoneCourses #plbPick").count(), 1)
+                self.assertEqual(page.locator("#plbZoneCourses #plbPop").count(), 1)
                 self.assertEqual(page.locator("#plbZoneCourses #plbBuild").count(), 1)
                 self.assertEqual(page.locator("#plbZoneCourses #plbBuildLine").count(), 1)
                 for inside in (
@@ -249,7 +249,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         page = self._open(fake)
         page.click("#plbEligRelaxed")  # the list is still the suggestions: applied at once
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         self.assertEqual(self._rows(page, "new"), ["AI331"])
         loads = len(fake.context_bodies)
         page.click("#plbRulesReset")
@@ -266,9 +266,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         page.click("#plbEligGo")
         expect(page.locator("#plbEligStrict")).to_be_checked()
         expect(page.locator("#plbRulesUsual")).to_be_visible()
-        expect(
-            page.locator("#plbTable tbody[data-group='new'] tr[data-code='AI342']")
-        ).to_be_visible()
+        expect(page.locator("#plbPlanList .plb-prow[data-code='AI342']")).to_be_visible()
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "strict")
 
@@ -281,10 +279,10 @@ class PlannerBoardZonesTests(PlannerBoardCase):
 
     def test_escape_closes_the_eligibility_confirm_wherever_the_keyboard_is(self) -> None:
         page = self._open(BuildFake())
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         page.click("#plbEligRelaxed")
         expect(page.locator("#plbEligConfirm")).to_be_visible()
-        page.focus("#plbAdd")
+        page.focus("#plbFind")
         page.keyboard.press("Escape")
         expect(page.locator("#plbEligConfirm")).to_be_hidden()
         expect(page.locator("#plbEligStrict")).to_be_focused()

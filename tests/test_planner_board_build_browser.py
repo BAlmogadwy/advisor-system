@@ -50,8 +50,8 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         fake = BuildFake()
         page = self._open(fake)
         self._rules(page, mode="ignore", elig="relaxed", max=15, prog=False, full=True)
-        page.click("#plbTable tbody[data-group='new'] button[data-act='remove'][data-code='AI342']")
-        page.check("#plbTable input[data-act='must'][data-code='AI331']")
+        page.click("#plbPlanList button[data-act='remove'][data-code='AI342']")
+        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild")
         body = fake.build_bodies[0]
@@ -105,7 +105,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         page = self._open(fake)
         page.click("#plbBuild")
         expect(page.locator("#plbBuildLine")).to_contain_text("Building options")
-        page.click("#plbTable tbody[data-group='new'] button[data-act='remove'][data-code='AI342']")
+        page.click("#plbPlanList button[data-act='remove'][data-code='AI342']")
         fake.pending_build.pop().fulfill(json=FIVE)
         expect(page.locator("#plbBuildLine")).to_have_text(
             "The plan changed. Build again to see options."
@@ -283,7 +283,8 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._tab_lines(page, "B2")[-1], "1 not scheduled")
         # Registered courses keep their cells; the Registered tab reads as in part one.
         self.assertEqual(
-            self._text(page, "tbody[data-group='registered'] tr[data-code='CS301'] .plb-sc"), "§M1"
+            self._text(page, "#plbPlanList .plb-prow--kept[data-code='CS301'] .plb-cr"),
+            "3 cr · section M1",
         )
         page.click("#plbTabRegistered")
         self.assertEqual(self._cell(page, "AI331"), "Any section")

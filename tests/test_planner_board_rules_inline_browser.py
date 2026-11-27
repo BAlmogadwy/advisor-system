@@ -138,7 +138,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def _changed_list(self):
         fake = BuildFake()
         page = self._open(fake)
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         self.assertEqual(self._rows(page, "new"), ["AI331"])
         return page, fake
 
@@ -162,9 +162,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page.click("#plbEligGo")
         expect(page.locator("#plbEligConfirm")).to_be_hidden()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
-        expect(
-            page.locator("#plbTable tbody[data-group='new'] tr[data-code='AI342']")
-        ).to_be_visible()
+        expect(page.locator("#plbPlanList .plb-prow[data-code='AI342']")).to_be_visible()
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])  # the suggestions came back
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "relaxed")
         expect(page.locator("#plbReset")).to_be_disabled()
@@ -223,10 +221,10 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page.fill("#plbMaxIn", "16")
         page.press("#plbMaxIn", "Enter")
         self.assertEqual(self._rules_now(page), {"mode": "keep", "elig": "strict", "max": "16"})
-        self.assertEqual(self._text(page, "#plbCredits"), "15 of 16 cr · 1 free")
+        self.assertEqual(self._load(page), ("15 / 16 cr", "6 planned + 9 registered · 1 cr free"))
         page.fill("#plbMaxIn", "17")
         page.press("#plbMaxIn", "Tab")
-        self.assertEqual(self._text(page, "#plbCredits"), "15 of 17 cr · 2 free")
+        self.assertEqual(self._load(page), ("15 / 17 cr", "6 planned + 9 registered · 2 cr free"))
         expect(page.locator("#plbMaxInErr")).to_be_hidden()
         # Empty is "not set", as in the dialog.
         page.fill("#plbMaxIn", "")
@@ -244,11 +242,15 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
                     "Enter a whole number from 1 to 19."
                 )
                 expect(page.locator("#plbMaxIn")).to_have_attribute("aria-invalid", "true")
-                self.assertEqual(self._text(page, "#plbCredits"), "15 of 18 cr · 3 free")
+                self.assertEqual(
+                    self._load(page), ("15 / 18 cr", "6 planned + 9 registered · 3 cr free")
+                )
                 self.assertTrue(page.locator("#plbRulesChanged").is_hidden())
                 # Leaving the field does not apply it either.
                 page.press("#plbMaxIn", "Tab")
-                self.assertEqual(self._text(page, "#plbCredits"), "15 of 18 cr · 3 free")
+                self.assertEqual(
+                    self._load(page), ("15 / 18 cr", "6 planned + 9 registered · 3 cr free")
+                )
                 self.assertEqual(self._built_body(page, fake)["max_credits"], 18)
                 page.context.close()
 
@@ -261,7 +263,9 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page.press("#plbMaxIn", "Enter")
         expect(page.locator("#plbMaxInErr")).to_be_hidden()
         expect(page.locator("#plbMaxIn")).not_to_have_attribute("aria-invalid", "true")
-        self.assertEqual(self._text(page, "#plbCredits"), "15 of 12 cr · 3 over")
+        self.assertEqual(
+            self._load(page), ("15 / 12 cr", "6 planned + 9 registered · 3 cr over the limit")
+        )
 
     # ── the switches by keyboard ────────────────────────────────────────────
     def test_the_switches_are_radio_groups_and_the_arrow_keys_move_between_the_two(self) -> None:
@@ -326,7 +330,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self.assertEqual(self._rules_now(page), {"mode": "ignore", "elig": "relaxed", "max": "15"})
         self.assertEqual(fake.context_bodies, [])  # no student: nothing to reload
         self._fetch(page, STUDENT_ID)
-        expect(page.locator("#plbTable tbody[data-group='blocked']")).to_be_visible()
+        self._eligible(page)
         self.assertEqual(fake.context_bodies[0]["eligibility_mode"], "relaxed")
         expect(page.locator("#plbRegIgnore")).to_be_checked()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
@@ -334,6 +338,9 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     # ── touch and size ──────────────────────────────────────────────────────
     def test_every_control_has_the_boards_touch_size_on_a_phone(self) -> None:
         page = self._open(BuildFake(), width=390, height=844)
+        page.click(
+            "#plbPlanList [data-act='remove'][data-code='AI342']"
+        )  # shows Reset to suggestions
         heights = page.evaluate(
             """() => ['#plbRulesReset', '#plbMaxIn', '.plb-seg-o', '#plbReset']
               .flatMap(s => [...document.querySelectorAll(s)].map(n => [s, n.getBoundingClientRect().height]))"""
@@ -413,7 +420,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def test_a_deep_link_loads_the_student_and_the_field_does_not_take_the_keyboard(self) -> None:
         page = self._open(BuildFake(), load=False)
         page.goto(f"{self.live_server_url}/planner/?student={STUDENT_ID}&year=1448&term=1")
-        expect(page.locator("#plbTable tbody[data-group='blocked']")).to_be_visible()
+        self._eligible(page)
         page.wait_for_timeout(200)
         expect(page.locator("#plbStudentId")).not_to_be_focused()
         self.assertEqual(page.input_value("#plbStudentId"), STUDENT_ID)
@@ -446,47 +453,47 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         )  # as quiet as the other disabled one
 
     # ── the layout ──────────────────────────────────────────────────────────
-    def test_reset_to_suggestions_is_a_cell_of_its_own_and_the_group_keeps_its_name(self) -> None:
+    def test_reset_to_suggestions_sits_in_the_plan_header_and_only_when_the_list_differs(
+        self,
+    ) -> None:
         for language in ("en", "ar"):
             with self.subTest(language=language):
                 page = self._open(BuildFake(), language=language)
-                group = "#plbTable tbody[data-group='new']"
                 self.assertTrue(
-                    page.evaluate(
-                        f'!!document.querySelector("{group} tr.plb-grp-link td #plbReset")'
-                    )
+                    page.evaluate("!!document.querySelector('#plbPlan .plb-ph #plbReset')")
                 )
-                self.assertFalse(page.evaluate("!!document.querySelector('.plb-ph #plbReset')"))
-                # the title cell holds the group's name and nothing else
-                self.assertEqual(page.locator(f"{group} th button").count(), 0)
-                title = self._text(page, f"{group} th")
-                expect(page.locator(f"{group} th")).to_have_accessible_name(title)
-                if language == "en":
-                    self.assertEqual(title, "New in this plan · 6 cr")
-                head = page.evaluate(BOX, f"{group} th")
+                # nothing to reset while the list is the suggested one
+                expect(page.locator("#plbReset")).to_be_hidden()
+                page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
+                expect(page.locator("#plbReset")).to_be_visible()
+                head = page.evaluate(BOX, "#plbPlanCount")
                 reset = page.evaluate(BOX, "#plbReset")
-                self.assertGreaterEqual((reset["t"] + reset["b"]) / 2, head["b"] - 1)
+                # on the heading's line, not under it
+                self.assertLess(reset["t"], head["b"])
+                self.assertGreater(reset["b"], head["t"])
+                if language == "en":
+                    self.assertEqual(self._text(page, "#plbPlanCount"), "Your plan · 1 course")
                 page.context.close()
 
     def test_reset_in_its_new_place_still_resets(self) -> None:
         page = self._open(BuildFake())
-        expect(page.locator("#plbReset")).to_be_disabled()
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        expect(page.locator("#plbReset")).to_be_hidden()
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         expect(page.locator("#plbReset")).to_be_enabled()
         page.click("#plbReset")
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
-        expect(page.locator("#plbReset")).to_be_disabled()
-        expect(page.locator("#plbAdd")).to_be_focused()
+        expect(page.locator("#plbReset")).to_be_hidden()
+        expect(page.locator("#plbFind")).to_be_focused()
 
-    def test_add_a_course_stays_on_the_title_line_at_1440_and_1152(self) -> None:
+    def test_the_source_and_the_search_share_one_line_at_1440_and_1152(self) -> None:
         for font in ("app", "wide"):
             for width in (1440, 1152):
                 with self.subTest(font=font, width=width):
                     page = self._open(BuildFake(), font=font, width=width, height=900)
-                    title = page.evaluate(BOX, "#plbCoursesTitle")
-                    add = page.evaluate(BOX, "#plbAdd")
-                    # the same line: the field's box starts above the title's bottom
-                    self.assertLess(add["t"], title["b"], (title, add))
+                    source = page.evaluate(BOX, "#plbSource")
+                    find = page.evaluate(BOX, "#plbFind")
+                    # the same line: the search field starts above the select's bottom
+                    self.assertLess(find["t"], source["b"], (source, find))
                     page.context.close()
 
     def test_the_view_link_is_on_its_own_line_under_the_reason(self) -> None:
@@ -531,8 +538,12 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
                 expect(page.locator("#plbMaxInErr")).to_be_hidden()
                 self.assertEqual(self._rules_now(page)["max"], want)
                 self.assertEqual(
-                    self._text(page, "#plbCredits"),
-                    f"15 of {want} cr · 0 free" if want == "15" else f"15 of {want} cr · 3 over",
+                    self._load(page),
+                    (
+                        f"15 / {want} cr",
+                        "6 planned + 9 registered · "
+                        + ("0 cr free" if want == "15" else "3 cr over the limit"),
+                    ),
                 )
                 page.context.close()
 

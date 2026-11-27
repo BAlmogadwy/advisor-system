@@ -106,25 +106,40 @@
         <section class="plb-zone" id="plbZoneCourses" aria-labelledby="plbCoursesTitle">
           <div class="plb-zh">
             <h2 id="plbCoursesTitle"><span class="plb-zn">02</span> {% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</h2>
-            <span class="plb-phn" id="plbCredits"></span>
-            <div class="plb-addwrap">
-              <label class="plb-cap plb-add"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><input id="plbAdd" type="text" role="combobox" aria-expanded="false" aria-controls="plbAddList" aria-autocomplete="list" autocomplete="off" placeholder="{% if LANGUAGE_CODE == 'ar' %}إضافة مقرر{% else %}Add a course{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}إضافة مقرر من خطة الطالب{% else %}Add a course from the plan{% endif %}" disabled></label>
-              <ul class="plb-list" id="plbAddList" role="listbox" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المطابقة{% else %}Matching courses{% endif %}" hidden></ul>
-            </div>
           </div>
-          <div class="plb-body plb-body--nodetail">
-            <section class="plb-courses" aria-labelledby="plbCoursesTitle">
-              <table class="plb-tbl" id="plbTable">
-                <thead>
-                  <tr>
-                    <th scope="col" colspan="2" class="plb-mic">{% if LANGUAGE_CODE == 'ar' %}المقرر والشعبة{% else %}Course and section{% endif %}</th>
-                    <th scope="col" class="plb-mic"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إلزامي{% else %}Must-take{% endif %}</span></th>
-                    <th scope="col" class="plb-mic"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إجراء{% else %}Action{% endif %}</span></th>
-                  </tr>
-                </thead>
-              </table>
+          <div class="plb-srcrow">
+            <div class="plb-srcf">
+              <label class="plb-mic" for="plbSource">{% if LANGUAGE_CODE == 'ar' %}المقررات من{% else %}Courses from{% endif %}</label>
+              <select id="plbSource" class="plb-select" disabled></select>
+            </div>
+            <label class="plb-cap plb-find"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input id="plbFind" type="text" autocomplete="off" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر أو اسمه{% else %}Course code or name{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث في المقررات المتاحة{% else %}Search the available courses{% endif %}" disabled></label>
+          </div>
+          <div class="plb-pick" id="plbPick">
+            <section class="plb-pane" id="plbAvail" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المتاحة{% else %}Available courses{% endif %}">
+              <div class="plb-ph">
+                <h3 class="plb-h3" id="plbAvailCount"></h3>
+                <span class="plb-phn" id="plbAvailTicked" aria-live="polite"></span>
+              </div>
+              <div class="plb-plist" id="plbAvailList"></div>
             </section>
-            <aside class="plb-detail" id="plbDetail" role="region" aria-labelledby="plbDetailTitle" hidden></aside>
+            <div class="plb-xfer" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}نقل المقررات{% else %}Move courses{% endif %}">
+              <button type="button" class="plb-xb" id="plbXAdd" data-xfer="add"></button>
+              <button type="button" class="plb-xb" id="plbXAddAll" data-xfer="addall"></button>
+              <span class="plb-xgap" aria-hidden="true"></span>
+              <button type="button" class="plb-xb" id="plbXRem" data-xfer="rem"></button>
+              <button type="button" class="plb-xb" id="plbXRemAll" data-xfer="remall"></button>
+            </div>
+            <section class="plb-pane plb-pane--plan" id="plbPlan" aria-label="{% if LANGUAGE_CODE == 'ar' %}خطتك{% else %}Your plan{% endif %}">
+              <div class="plb-ph">
+                <h3 class="plb-h3" id="plbPlanCount"></h3>
+                <button type="button" class="plb-lk" id="plbReset" data-act="reset" hidden disabled>{% if LANGUAGE_CODE == 'ar' %}العودة إلى المقترح{% else %}Reset to suggestions{% endif %}</button>
+                <span class="plb-pload" id="plbPlanLoad"></span>
+              </div>
+              <div class="plb-meter" id="plbMeter" hidden><i class="plb-meter-p"></i><i class="plb-meter-r"></i></div>
+              <p class="plb-mline" id="plbMeterLine"></p>
+              <div class="plb-plist" id="plbPlanList"></div>
+              <div class="plb-pop" id="plbPop" role="dialog" aria-modal="false" aria-labelledby="plbDetailTitle" hidden></div>
+            </section>
           </div>
           <div class="plb-buildrow">
             <div class="plb-buildnotes">
@@ -220,5 +235,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=12"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=13"></script>
 {% endblock %}

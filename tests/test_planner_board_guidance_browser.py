@@ -783,7 +783,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         page, _ = self._built()
         expect(page.locator("#plbGuide")).to_be_visible()
         self.assertEqual(page.get_attribute("#plbGuide", "data-stale"), None)
-        page.click("#plbTable tbody[data-group='new'] [data-act='remove'][data-code='AI342']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         expect(page.locator("#plbGuide")).to_be_visible()
         self.assertEqual(page.get_attribute("#plbGuide", "data-stale"), "changed")
         self.assertEqual(page.get_attribute("#plbStrip", "data-stale"), "changed")
@@ -814,7 +814,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         self.assertTrue(state["review"]["disabled"])
         # Out of date: Rebuild is the outline in the brand colour and Review is disabled.
         page.click("#plbTab_B1")
-        page.click("#plbTable tbody[data-group='new'] [data-act='remove'][data-code='AI342']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         state = self._buttons(page)
         self.assertEqual(
             (state["build"]["filled"], state["review"]["filled"]), (False, False), state
@@ -868,9 +868,9 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         expect(
             page.get_by_role("button", name=re.compile(r"^AI331 Machine Learning, details"))
         ).to_have_count(blocks.count())
-        expect(page.locator("#plbDetail")).to_be_hidden()
+        expect(page.locator("#plbPop")).to_be_hidden()
         blocks.first.click()
-        expect(page.locator("#plbDetail")).to_be_visible()
+        expect(page.locator("#plbPop")).to_be_visible()
         expect(page.locator("#plbDetailTitle")).to_contain_text("AI331")
         # Its blocks are marked while the panel is open; the other course's are not.
         marked = page.eval_on_selector_all(
@@ -879,8 +879,8 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         self.assertEqual(marked, ["AI331"] * blocks.count())
         self.assertEqual(blocks.first.get_attribute("aria-expanded"), "true")
         # Closing it takes the marks away.
-        page.click("#plbDetail [data-act='dt-close']")
-        expect(page.locator("#plbDetail")).to_be_hidden()
+        page.click("#plbPop [data-act='dt-close']")
+        expect(page.locator("#plbPop")).to_be_hidden()
         self.assertEqual(page.locator("#plbWeek .plb-b[data-open='true']").count(), 0)
         # By keyboard: focus the other course's block and press Enter, then Space on a third.
         other = page.locator("#plbWeek button.plb-b[data-code='AI342']").first
@@ -894,7 +894,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
             ["AI342"],
         )
         page.keyboard.press("Escape")
-        expect(page.locator("#plbDetail")).to_be_hidden()
+        expect(page.locator("#plbPop")).to_be_hidden()
         page.locator("#plbWeek button.plb-b[data-code='AI331']").first.focus()
         page.keyboard.press("Space")
         expect(page.locator("#plbDetailTitle")).to_contain_text("AI331")
@@ -902,14 +902,18 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
     def test_the_marks_follow_a_redraw_of_the_week_and_a_course_taken_out_of_the_plan(self) -> None:
         page, _ = self._built()
         page.locator("#plbWeek button.plb-b[data-code='AI331']").first.click()
-        page.click("#plbTab_B1")  # another option redraws the week; AI331 is in B1 too
+        page.click(
+            "#plbTab_B1"
+        )  # another option redraws the week (a click outside the popover closes it)
+        self.assertEqual(page.locator("#plbWeek .plb-b[data-open='true']").count(), 0)
+        page.locator("#plbWeek button.plb-b[data-code='AI331']").first.click()  # AI331 is in B1 too
         self.assertEqual(
             page.eval_on_selector_all(
                 "#plbWeek .plb-b[data-open='true']", "n => n.map(x => x.dataset.code)"
             ),
             ["AI331", "AI331"],
         )
-        page.click("#plbDetail [data-act='dt-remove']")
+        page.click("#plbPlanList button[data-act='remove'][data-code='AI331']")
         # The course is out of the plan: its blocks are pictures now, not controls.
         self.assertEqual(page.locator("#plbWeek button.plb-b[data-code='AI331']").count(), 0)
 
@@ -922,10 +926,10 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         page.keyboard.press("Enter")
         expect(page.locator("#plbDetailTitle")).to_be_focused()
         page.keyboard.press("Escape")
-        expect(page.locator("#plbDetail")).to_be_hidden()
+        expect(page.locator("#plbPop")).to_be_hidden()
         expect(blocks.nth(1)).to_be_focused()
         # From the row: back to the row's button, as before.
-        row = page.locator("#plbTable [data-act='detail'][data-code='AI331']")
+        row = page.locator("#plbPlanList [data-act='detail'][data-code='AI331']")
         row.click()
         expect(page.locator("#plbDetailTitle")).to_be_focused()
         page.keyboard.press("Escape")
@@ -1023,7 +1027,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         fake.build_answer = lambda body: (200, support.build_reply(options))
         page = self._open(fake, language=language, width=width, font=font, load=False)
         self._fetch(page, support.STUDENT_ID)
-        expect(page.locator("#plbTable tbody[data-group='new']")).to_be_visible()
+        expect(page.locator("#plbPlanList")).to_be_visible()
         self._wait_for(page, lambda: len(fake.catalog_bodies) >= 1)
         page.click("#plbBuild")
         expect(page.locator("#plbGuide")).to_be_visible()

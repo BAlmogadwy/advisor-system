@@ -750,10 +750,38 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                 "available_capacity": ts.available_capacity,
                 "registered_count": ts.registered_count,
                 "programs": sorted(link.program for link in ts.program_links.all()),
+                "credit_hours": None,
                 "meetings": [],
             }
 
         if grouped:
+            # Credit hours per section (one query each, never per section): the student's
+            # own programme row when it has one, else the course's, else unknown (null).
+            student_programme = ""
+            if student_id:
+                student_programme = str(
+                    Student.objects.filter(student_id=student_id)
+                    .values_list("program", flat=True)
+                    .first()
+                    or ""
+                ).strip()
+            programme_hours: dict[str, int] = {}
+            if student_programme:
+                for pr_code, pr_hours in ProgrammeRequirement.objects.filter(
+                    program__iexact=student_programme
+                ).values_list("course_code", "credit_hours"):
+                    if pr_hours and pr_hours > 0:
+                        programme_hours[normalize_code(pr_code)] = pr_hours
+            wanted_keys = {normalize_code(str(g["course_key"])) for g in grouped.values()}
+            course_hours: dict[str, int] = {}
+            for c_code, c_hours in Course.objects.values_list("course_code", "credit_hours"):
+                c_key = normalize_code(c_code)
+                if c_key in wanted_keys and c_hours and c_hours > 0:
+                    course_hours[c_key] = c_hours
+            for g in grouped.values():
+                g_key = normalize_code(str(g["course_key"]))
+                g["credit_hours"] = programme_hours.get(g_key) or course_hours.get(g_key)
+
             meetings_qs = TermSectionMeeting.objects.filter(
                 term_section_id__in=grouped.keys(),
             ).order_by("day", "start_time")

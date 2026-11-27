@@ -207,10 +207,10 @@ class PlannerBoardAuditTests(PlannerBoardCase):
             expect(page.locator("#plbGrad")).not_to_have_attribute("data-state", "loading")
             self._settle(page, script)
             yield f"tab {index}"
-        button = "#plbTable tr[data-code='AI331'] button[data-act='detail']"
+        button = "#plbPlanList button[data-act='detail'][data-code='AI331']"
         if page.locator(button).count():
             page.click(button)
-            expect(page.locator("#plbDetail")).to_be_visible()
+            expect(page.locator("#plbPop")).to_be_visible()
             self._settle(page, script)
             yield "detail AI331"
 

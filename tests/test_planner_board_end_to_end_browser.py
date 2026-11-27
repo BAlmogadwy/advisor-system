@@ -106,12 +106,14 @@ class PlannerBoardEndToEndTests(StaticLiveServerTestCase):
         expect(page.locator("#plbRoot")).to_have_attribute("data-loaded", "true")
         expect(page.locator("#plbContext")).to_have_text(f"{STUDENT_ID} · {YEAR}/{TERM}")
         expect(page.locator("#plbStudent")).to_contain_text("Planner Sample Student")
-        new_rows = "#plbTable tbody[data-group='new'] tr.plb-tr:not(.plb-tr--note)"
+        new_rows = "#plbPlanList .plb-prow:not(.plb-prow--kept)"
         expect(page.locator(new_rows)).not_to_have_count(0)
         planned = page.eval_on_selector_all(new_rows, "rows => rows.map(r => r.dataset.code)")
         self.assertIn("AI331", planned)
         # The sections of the course were read from the server (the catalogue).
-        expect(page.locator("#plbTable tr[data-code='AI331'] .plb-sc")).not_to_have_text("—")
+        expect(
+            page.locator("#plbPlanList .plb-prow[data-code='AI331'] .plb-secbtn")
+        ).not_to_have_text("—")
 
         # Build: the real endpoint and the real solver.
         page.click("#plbBuild")
@@ -122,14 +124,14 @@ class PlannerBoardEndToEndTests(StaticLiveServerTestCase):
         expect(page.locator("#plbReview")).to_be_enabled()
 
         # Open a planned course and tick the section that is NOT the one the build chose.
-        page.click("#plbTable tr[data-code='AI331'] button[data-act='detail']")
-        expect(page.locator("#plbDetail")).to_be_visible()
-        boxes = page.locator("#plbDetail input[name='plbOnly']")
+        page.click("#plbPlanList button[data-act='detail'][data-code='AI331']")
+        expect(page.locator("#plbPop")).to_be_visible()
+        boxes = page.locator("#plbPop input[name='plbOnly']")
         self.assertEqual(boxes.count(), 2)
-        page.locator("#plbDetail [data-tsid] >> text=§M2").first.click()
-        expect(page.locator("#plbDetail input[name='plbOnly']:checked")).to_have_count(1)
+        page.locator("#plbPop [data-tsid] >> text=§M2").first.click()
+        expect(page.locator("#plbPop input[name='plbOnly']:checked")).to_have_count(1)
         self.assertEqual(
-            page.locator("#plbDetail input[name='plbOnly']:checked").get_attribute("value"),
+            page.locator("#plbPop input[name='plbOnly']:checked").get_attribute("value"),
             str(sections["AI331", "M2"].pk),
         )
         # The tick changed the plan: the build on screen is out of date and cannot be applied.

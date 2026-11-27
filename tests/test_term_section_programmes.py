@@ -1074,6 +1074,42 @@ def test_planner_programme_only_flag_controls_catalogue_scope() -> None:
     assert wrong_gender.id not in catalog(False)
 
 
+def test_planner_catalogue_sections_carry_credit_hours() -> None:
+    """The picker lists courses of every programme: each section says how many credits the
+    course is worth - the student's programme row first, else the course row, else null."""
+    from core.models import Course
+
+    student = Student.objects.create(
+        student_id=910009, name="AI Student", program="AI", section="M"
+    )
+    own = _section("M1", course_key="CS112")
+    fallback = _section("M1", course_key="MA101")
+    unknown = _section("M1", course_key="XX900")
+    for section in (own, fallback, unknown):
+        TermSectionProgram.objects.create(term_section=section, program="AI")
+    ProgrammeRequirement.objects.create(program="AI", course_code="CS112", credit_hours=4)
+    Course.objects.create(course_code="CS112", credit_hours=3)  # the programme row wins
+    Course.objects.create(course_code="MA101", credit_hours=2)
+    Course.objects.create(course_code="XX900", credit_hours=0)  # 0 = not known
+    client = _staff_planner_client("planner-credit-hours")
+
+    response = client.post(
+        "/ops/planner/sections-catalog/",
+        data=json.dumps(
+            {
+                "academic_year": "1448",
+                "term": "1",
+                "student_id": student.student_id,
+                "program_sections_only": False,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    hours = {row["course_key"]: row["credit_hours"] for row in response.json()["sections"]}
+    assert hours == {"CS112": 4, "MA101": 2, "XX900": None}
+
+
 def test_planner_build_maps_controls_to_programme_and_capacity_contracts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

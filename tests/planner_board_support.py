@@ -608,7 +608,15 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         self.addCleanup(lambda: self.assertEqual(self.page_errors, [], "the page threw"))
 
     def _open(
-        self, fake: Fake, language="en", width=1440, height=900, font="app", load=True, clock=False
+        self,
+        fake: Fake,
+        language="en",
+        width=1440,
+        height=900,
+        font="app",
+        load=True,
+        clock=False,
+        source="eligible",
     ):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
@@ -631,6 +639,17 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             ]
         )
         context.add_init_script("try { localStorage.setItem('theme', 'light'); } catch (e) {}")
+        if source != "recommended":
+            # Most tests read the courses the student could add: the picker is put on that source
+            # the moment the first student loads (also for a test that fetches the student itself).
+            context.add_init_script(
+                "document.addEventListener('DOMContentLoaded', () => {"
+                " const sel = document.getElementById('plbSource'); if (!sel) return;"
+                " new MutationObserver(() => { if (!sel.disabled && !window.__srcSet) {"
+                " window.__srcSet = true; sel.value = " + repr(source) + ";"
+                " sel.dispatchEvent(new Event('change', {bubbles: true})); } })"
+                ".observe(sel, {attributes: true, attributeFilter: ['disabled']}); });"
+            )
         if font == "wide":
             context.add_init_script(WIDE_FONT)
         context.route("**/ops/planner/context/", fake.context)
@@ -651,14 +670,24 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
         if load:
             self._fetch(page, STUDENT_ID)
-            expect(page.locator("#plbTable tbody[data-group='blocked']")).to_be_visible()
-            expect(
-                page.locator("#plbTable tbody[data-group='could'] tr[data-code='STAT305']")
-            ).to_be_visible()
-            expect(
-                page.locator("#plbTable tbody[data-group='could'] tr[data-code='CS351'] .plb-sc")
-            ).not_to_have_text("—")
+            # The suggestions, the blocked fold and the plan's own list (the "eligible" source
+            # lists the courses the student could add) have all arrived.
+            expect(page.locator("#plbSource option[value='recommended']")).to_have_text(
+                re.compile(r"\([1-9]\d*\)")
+            )
+            expect(page.locator("#plbSource option[value='eligible']")).to_have_text(
+                re.compile(r"\([1-9]\d*\)")
+            )
+            expect(page.locator("#plbPlanList .plb-prow[data-code='AI331']")).to_be_visible()
+            # Most tests read the courses the student could add: that is the "eligible" source.
+            page.select_option("#plbSource", source)
         return page
+
+    @staticmethod
+    def _eligible(page) -> None:
+        """After a load=False fetch: wait for the picker and show the courses the student could add."""
+        expect(page.locator("#plbSource")).to_be_enabled()
+        page.select_option("#plbSource", "eligible")
 
     @staticmethod
     def _fetch(page, student_id: str) -> None:
@@ -730,14 +759,50 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         )
 
     def _cell(self, page, code: str) -> str:
-        return self._text(page, f"#plbTable tbody[data-group='new'] tr[data-code='{code}'] .plb-sc")
+        """What a planned course's row says about its section: on an option's tab the line says
+        what that option did with it, otherwise the section button's own label."""
+        row = f"#plbPlanList .plb-prow[data-code='{code}']"
+        if page.locator(f"{row} .plb-sc").count():
+            return self._text(page, f"{row} .plb-sc")
+        return self._text(page, f"{row} .plb-secbtn")
 
     @staticmethod
     def _rows(page, group: str) -> list[str]:
-        return page.eval_on_selector_all(
-            f"#plbTable tbody[data-group='{group}'] tr.plb-tr:not(.plb-tr--note)",
-            "rows => rows.map(r => r.dataset.code)",
-        )
+        """The codes of a list: 'new' (the plan), 'registered' (the kept rows), 'could' (what the
+        "eligible" source offers) or 'blocked' (the "recommended" source's folded rows)."""
+        if group in ("could", "blocked"):
+            page.select_option("#plbSource", "eligible" if group == "could" else "recommended")
+        if group == "blocked":
+            if page.locator("#plbFold").get_attribute("aria-expanded") != "true":
+                page.click("#plbFold")
+        selector = {
+            "new": "#plbPlanList .plb-prow:not(.plb-prow--kept)",
+            "registered": "#plbPlanList .plb-prow--kept",
+            "could": "#plbAvailList .plb-arow:not(.plb-arow--off)",
+            "blocked": "#plbBlocked .plb-arow",
+        }[group]
+        return page.eval_on_selector_all(selector, "rows => rows.map(r => r.dataset.code)")
+
+    def _load(self, page) -> tuple[str, str]:
+        """The plan panel's load ("15 / 18 cr") and the line under its meter."""
+        return self._text(page, "#plbPlanLoad"), self._text(page, "#plbMeterLine")
+
+    @staticmethod
+    def _add(page, code: str, source: str = "eligible") -> None:
+        """Tick a course in the Available list and press the arrow (any section)."""
+        page.select_option("#plbSource", source)
+        page.check(f"#plbAvailList .plb-arow[data-code='{code}'] input[data-act='tick']")
+        page.click("#plbXAdd")
+
+    @staticmethod
+    def _remove(page, code: str) -> None:
+        page.click(f"#plbPlanList button[data-act='remove'][data-code='{code}']")
+
+    @staticmethod
+    def _sections_pop(page, code: str) -> None:
+        """Open the section popover of a planned course."""
+        page.click(f"#plbPlanList button[data-act='detail'][data-code='{code}']")
+        expect(page.locator("#plbPop")).to_be_visible()
 
     @staticmethod
     def _text(page, selector: str) -> str:

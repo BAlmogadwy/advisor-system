@@ -105,6 +105,54 @@
       return [IS_AR ? (list.length === 1 ? 'لبرنامج ' : 'لبرامج ') : 'For ', bdi(list.join(' / '))];
     },
     resetPlan: IS_AR ? 'العودة إلى المقترح' : 'Reset to suggestions',
+    // The course picker (zone 02)
+    srcRecommended: (n) => (IS_AR ? `مقترحة لهذا الطالب (${n})` : `Recommended for this student (${n})`),
+    srcPlan: (n) => (IS_AR ? `خطة هذا الطالب (${n})` : `This student's plan (${n})`),
+    srcEligible: (n) => (IS_AR ? `كل ما يمكنه تسجيله (${n})` : `Everything they can register (${n})`),
+    srcAll: (n) => (n === null ? (IS_AR ? 'مقررات كل البرامج' : "All programmes' courses") : (IS_AR ? `مقررات كل البرامج (${n})` : `All programmes' courses (${n})`)),
+    availHead: (n) => `${IS_AR ? 'المتاحة' : 'Available'} · ${T.courseWord(n)}`,
+    planHead: (n) => `${IS_AR ? 'خطتك' : 'Your plan'} · ${T.courseWord(n)}`,
+    tickedLine: (k, cr) => (IS_AR ? `${k} محدد · ${cr} ${T.creditUnit(cr)}` : `${k} ticked · ${cr} cr`),
+    plannedN: (n) => (IS_AR ? `${n} مخطَّطة` : `${n} planned`),
+    registeredN: (n) => (IS_AR ? `${n} مسجّلة` : `${n} registered`),
+    overLimitN: (n) => (IS_AR ? `${n} ${T.creditUnit(n)} فوق الحد` : `${n} cr over the limit`),
+    tagRecommended: IS_AR ? 'مقترح' : 'Recommended',
+    tagCompare: IS_AR ? 'للمقارنة فقط' : 'Compare only',
+    compareWhy: IS_AR
+      ? 'لا شعبة من برنامج هذا الطالب: يمكن بناؤه فقط مع «الشُعب من: أي برنامج».'
+      : "No section of this student's programme: it can be built only with Sections from: Any programme.",
+    tagFewSeats: IS_AR ? 'مقاعد قليلة' : 'Few seats',
+    creditsUnknown: IS_AR ? '؟ ساعة' : '? cr',
+    creditsUnknownWhy: IS_AR ? 'عدد ساعات المقرر غير معروف، لذا لا يمكن إضافته.' : 'The credits of this course are not known, so it cannot be added.',
+    leftTag: (n) => (IS_AR ? `${n} متبقٍ` : `${n} left`),
+    secHead: IS_AR ? 'الشعبة' : 'Sec',
+    meetsHead: IS_AR ? 'اللقاء' : 'Meets',
+    seatsHead: IS_AR ? 'المقاعد' : 'Seats',
+    addOnly: (n) => (IS_AR ? `أضف ${T.sectionWord(n)} فقط` : `Add only these ${T.sectionWord(n)}`),
+    blockedFold: (n) => (IS_AR ? `${n} لا يمكن تسجيلها بعد · متطلبات سابقة ناقصة` : `${n} can't be registered yet · prerequisites missing`),
+    sectionsOf: (code) => (IS_AR ? `شُعب ${code}` : `Sections of ${code}`),
+    tickCourse: (code) => (IS_AR ? `تحديد ${code}` : `Tick ${code}`),
+    tickSection: (code, label) => (IS_AR ? `تحديد الشعبة ${label} من ${code}` : `Tick section ${label} of ${code}`),
+    tickPlanned: (code) => (IS_AR ? `اختيار ${code} في الخطة` : `Select ${code} in the plan`),
+    nothingHere: IS_AR ? 'لا مقررات لإضافتها من هذه القائمة.' : 'Nothing to add from this list.',
+    allLoading: IS_AR ? 'جارٍ تحميل كل مقررات هذا الفصل…' : 'Loading every course offered this term…',
+    allFailed: IS_AR ? 'تعذّر تحميل قائمة كل المقررات.' : 'The list of all courses could not be loaded.',
+    sectionsBtn: (labels) => (IS_AR
+      ? `${labels.length === 1 ? 'الشعبة' : 'الشعب'} ${labels.join('، ')}`
+      : `${labels.length === 1 ? 'Section' : 'Sections'} ${labels.join(', ')}`),
+    sectionsOfPlanned: (code, label) => `${code}: ${label}`,
+    required: IS_AR ? 'إلزامي' : 'Required',
+    requiredOn: (code) => (IS_AR ? `${code} إلزامي، اضغط للإلغاء` : `${code} is required, press to undo`),
+    makeRequired: (code) => (IS_AR ? `اجعل ${code} إلزاميًا` : `Make ${code} required`),
+    registeredKept: IS_AR ? 'مسجّل · مُبقى' : 'Registered · kept',
+    hintA: IS_AR ? 'حدّد مقررات من القائمة المجاورة واضغط ' : 'Tick courses on the left and press ',
+    hintB: IS_AR ? ' أو انقر مرتين على أحدها' : ', or double-click one',
+    xAdd: IS_AR ? 'إضافة المقررات المحدّدة إلى الخطة' : 'Add the ticked courses',
+    xAddAll: IS_AR ? 'إضافة كل المقررات المعروضة' : 'Add every course shown',
+    xRem: IS_AR ? 'إزالة المقررات المحدّدة من الخطة' : 'Remove the ticked courses from the plan',
+    xRemAll: IS_AR ? 'إزالة كل مقررات الخطة' : 'Remove every planned course',
+    addedMany: (n) => (IS_AR ? `أُضيفت ${T.courseWord(n)} إلى الخطة.` : `Added ${n} courses to the plan.`),
+    removedMany: (n) => (IS_AR ? `أُزيلت ${T.courseWord(n)} من الخطة.` : `Removed ${n} courses from the plan.`),
     resetDone: (n) => (IS_AR
       ? `أُعيدت المقررات إلى المقترح (${n}).`
       : `Courses reset to the ${n} suggested.`),
@@ -476,7 +524,11 @@
     fetchKeyboard: false, // Fetch had the keyboard when a load disabled it (see releaseFetch)
     maxDirty: false,   // the max-credits field was typed in since it last showed the applied value
     moreOpen: false,   // the "More options" disclosure
-    detail: null,      // {code, name, credits, only}: the course whose detail panel is open
+    detail: null,      // {code, name, credits, only}: the planned course whose section popover is open
+    pick: null,        // the picker's own state (source, search, ticks, open rows); see newPick
+    allCatalog: null,  // Map course key -> [section]: every course offered this term (source 4); null = not loaded
+    allState: 'idle',  // idle | loading | ready | error
+    allGen: 0,         // whole-term catalogue requests: only the newest may write
     altShown: null,    // what the week drew as dashed blocks last (see syncAlt)
     whyOpen: false,    // the "Why these options" disclosure
     gradWhy: false,    // the "Course-level reasons" disclosure of the projection band
@@ -533,6 +585,8 @@
     x: [['path', { d: 'M6 6l12 12M18 6L6 18' }]],
     chev: [['path', { d: 'M6 9l6 6 6-6' }]],
     next: [['path', { d: 'M9 6l6 6-6 6' }]],
+    nextAll: [['path', { d: 'M5 6l6 6-6 6M12 6l6 6-6 6' }]],
+    pin: [['path', { d: 'M9 4h6l-1 6 3 3H7l3-3-1-6z' }], ['path', { d: 'M12 13v7' }]],
     tick: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
     warn: [['path', { d: 'M12 4l9 16H3z' }], ['path', { d: 'M12 10v4.5M12 17.2v.3' }]],
   };
@@ -613,9 +667,12 @@
     return node;
   }
   function findSection(tsid) {
-    if (!state.catalog || tsid === null || tsid === undefined) return null;
-    for (const list of state.catalog.values()) {
-      for (const section of list) if (String(section.term_section_id) === String(tsid)) return section;
+    if (tsid === null || tsid === undefined) return null;
+    for (const map of [state.catalog, state.allCatalog]) {
+      if (!map) continue;
+      for (const list of map.values()) {
+        for (const section of list) if (String(section.term_section_id) === String(tsid)) return section;
+      }
     }
     return null;
   }
@@ -1007,7 +1064,7 @@
     if (item) {
       block.type = 'button';
       block.dataset.act = 'week-open';
-      block.setAttribute('aria-controls', 'plbDetail');
+      block.setAttribute('aria-controls', 'plbPop');
     }
     block.style.gridColumn = String(col);
     block.style.gridRow = `${rowStart} / ${rowEnd}`;
@@ -1670,19 +1727,13 @@
     const registered = state.rules.mode === 'keep' ? registeredCredits() : 0;
     return (registered || 0) + planCredits();
   }
-  function sectionInfo(code) {
-    if (!state.catalog) return [T.unknown];
-    const sections = state.catalog.get(norm(code)) || [];
-    if (!sections.length) return [T.noSections];
-    const caps = sections.map(sectionCapacity);
-    if (caps.every((c) => c.known && c.full)) return [T.allFull];
-    if (sections.length === 1) {
-      const left = fewSeats(caps[0]) ? caps[0].remaining : null;
-      const when = whenNodes(sections[0].meetings);
-      if (!when.length && left === null) return [T.sectionWord(1)];
-      return [...when, ...(when.length && left !== null ? [' · '] : []), ...(left !== null ? [T.seatsLeft(left)] : [])];
-    }
-    return [T.sectionWord(sections.length)];
+  // The section list of a course as the picker and the popover read it: the catalogue the rules
+  // asked for, else the whole-term catalogue (the "All programmes' courses" source) when it has it.
+  function catalogSections(code) {
+    const own = state.catalog ? state.catalog.get(code) : null;
+    if (own && own.length) return own;
+    const all = state.allCatalog ? state.allCatalog.get(code) : null;
+    return all || own || [];
   }
   function iconButton(icon, label, act, code, extra) {
     const button = el('button', `plb-ib ${extra || ''}`.trim(), svg(ICONS[icon]));
@@ -1693,44 +1744,6 @@
     button.dataset.code = norm(code);
     return button;
   }
-  // The section line of a course row opens that course's detail panel.
-  function sectionButton(code, parts, miss) {
-    const open = !!state.detail && state.detail.code === norm(code);
-    const button = el('button', `plb-sc plb-sc-btn${miss ? ' plb-sc--miss' : ''}`,
-      el('span', 'plb-sc-t', ...parts), svg(ICONS.chev, 12));
-    button.type = 'button';
-    button.dataset.act = 'detail';
-    button.dataset.code = norm(code);
-    button.setAttribute('aria-expanded', String(open));
-    button.setAttribute('aria-controls', 'plbDetail');
-    return button;
-  }
-  function groupBody(name, left, right) {
-    const body = el('tbody', 'plb-group');
-    body.dataset.group = name;
-    body.append(el('tr', 'plb-grp', el('th', 'plb-mic', left), el('td', 'plb-mic plb-grp-end', right || '')));
-    body.firstChild.firstChild.colSpan = 2;
-    body.firstChild.lastChild.colSpan = 2;
-    body.firstChild.firstChild.scope = 'rowgroup';
-    return body;
-  }
-  function emptyRow(text) {
-    const row = el('tr', 'plb-tr plb-tr--note', el('td', 'plb-empty-cell', text));
-    row.firstChild.colSpan = 4;
-    return row;
-  }
-  // A course row is: code | name over its section line | must-take | action. The name and the
-  // section share one cell so the name has the width of the pane: real course titles are long
-  // Arabic phrases, and in a column of their own they wrapped onto four or five lines.
-  function courseRow(code, name, section, cells, off, effect) {
-    const row = el('tr', 'plb-tr');
-    row.dataset.code = norm(code);
-    const title = el('span', off ? 'plb-name plb-name--off' : 'plb-name', name ? isolate(name) : '');
-    // The effect of the course on graduation shares the section line, and wraps under it when short of room.
-    const line = effect ? el('span', 'plb-sl', section, effect) : section;
-    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-main', title, line), ...cells);
-    return row;
-  }
   function blockedReason(rec) {
     const missing = (rec.missing_prerequisites || []).map(String).filter(Boolean);
     const cell = el('span', 'plb-sc plb-sc--blocked', el('span', 'plb-chip', T.blocked));
@@ -1740,243 +1753,530 @@
     if (missing.every((m) => inShortlist(m))) cell.append(` ${T.inThisPlan}`);
     return cell;
   }
-  function renderCourses() {
-    const table = $('plbTable');
-    table.querySelectorAll('tbody').forEach((n) => n.remove());
-    const addInput = $('plbAdd');
-    addInput.disabled = !state.ctx;
-    if (!state.ctx) {
-      const body = el('tbody', 'plb-group');
-      body.append(emptyRow(T.loadFirstCourses));
-      table.append(body);
-      renderCreditsHeader();
-      state.focus = null;
-      state.detail = null;
-      renderDetail();
-      return;
+
+  /* ── Courses: the picker (zone 02) ─────────────────────────────────────── */
+  const SOURCES = ['recommended', 'plan', 'eligible', 'all'];
+  const newPick = () => ({
+    src: 'recommended', find: '', ticked: new Set(), secs: new Map(), opened: new Set(),
+    planTicked: new Set(), blockedOpen: false,
+  });
+  // What the search box compares: Arabic-Indic digits read as digits, no case, no spaces.
+  const fold = (text) => String(text || '')
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .toLowerCase().replace(/\s+/g, '');
+  const takenKeys = () => new Set(state.rules.mode === 'keep' ? registeredCourses().map((c) => c.key) : []);
+  // A course the picker can offer: {code, name, credits|null, rec, plan (the plan's row), sections}.
+  function sourceLists(src) {
+    const kept = takenKeys();
+    const free = (code) => !!code && !inShortlist(code) && !kept.has(code);
+    const recCodes = new Set(state.recs.map((r) => norm(r.course_code)));
+    const poolBy = new Map(planPool().map((c) => [c.code, c]));
+    const planBy = new Map((state.planCourses || []).map((c) => [c.code, c]));
+    const fromRec = (r) => {
+      const code = norm(r.course_code);
+      return { code, name: String(r.course_name || ''), credits: Number(r.credits) || 0, rec: true, plan: poolBy.get(code) || null, recRow: r };
+    };
+    const fromPlan = (c) => ({ code: c.code, name: c.name, credits: c.credits, rec: recCodes.has(c.code), plan: c, recRow: null });
+    const out = { avail: [], blocked: [] };
+    const seen = new Set();
+    const push = (list, entry) => { if (!seen.has(entry.code)) { seen.add(entry.code); list.push(entry); } };
+    if (src === 'recommended') {
+      for (const r of state.recs) {
+        const code = norm(r.course_code);
+        if (!free(code)) continue;
+        if (String(r.status) === 'Eligible') push(out.avail, fromRec(r));
+        else push(out.blocked, { ...fromRec(r), reason: blockedReason(r) });
+      }
+    } else if (src === 'plan') {
+      const ignoring = state.rules.mode === 'ignore';
+      for (const c of state.planCourses || []) {
+        if (!free(c.code)) continue;
+        if (!(c.status === 'not_taken' || (ignoring && c.status === 'studying'))) continue;
+        if (c.canRegister) push(out.avail, fromPlan(c));
+        else push(out.blocked, { ...fromPlan(c), reason: blockedReason({ missing_prerequisites: [] }) });
+      }
+    } else if (src === 'eligible') {
+      for (const c of planPool()) push(out.avail, fromPlan(c));
+      for (const r of state.recs) {
+        const code = norm(r.course_code);
+        if (String(r.status) === 'Eligible' && free(code)) push(out.avail, fromRec(r));
+      }
+    } else if (state.allCatalog) {
+      const mine = String((state.student && state.student.program) || '').trim().toLowerCase();
+      const codes = [...state.allCatalog.keys()].sort();
+      for (const code of codes) {
+        if (!free(code)) continue;
+        const sections = state.allCatalog.get(code);
+        const named = sections.find((s) => String(s.course_name || '').trim());
+        const hours = sections.map((s) => Number(s.credit_hours)).find((n) => Number.isFinite(n) && n > 0);
+        const entry = {
+          code, name: named ? String(named.course_name).trim() : (planBy.has(code) ? planBy.get(code).name : ''),
+          credits: hours === undefined ? null : hours, rec: recCodes.has(code), plan: poolBy.get(code) || null, recRow: null,
+          compareOnly: !sections.some((s) => programmesOf(s).some((p) => p.toLowerCase() === mine)),
+        };
+        push(out.avail, entry);
+      }
     }
-    const keep = state.rules.mode === 'keep';
+    return out;
+  }
+  const listsFor = (src) => {
+    const lists = sourceLists(src);
+    const needle = fold(state.pick.find);
+    if (!needle) return lists;
+    const keep = (e) => fold(e.code).includes(needle) || fold(e.name).includes(needle);
+    return { avail: lists.avail.filter(keep), blocked: lists.blocked.filter(keep) };
+  };
+  const entrySections = (entry, src) => (src === 'all' && state.allCatalog ? state.allCatalog.get(entry.code) || [] : catalogSections(entry.code));
+  const sortSections = (list) => list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
+  // The plan's row for the course, a recommendation's, or one built from the whole-term catalogue.
+  function makeItem(entry) {
+    if (entry.plan) return itemFromPlan(entry.plan);
+    if (entry.recRow && entry.recRow.status === 'Eligible') return shortlistFromRecs([entry.recRow])[0];
+    return {
+      course_code: entry.code, course_name: entry.name, credits: entry.credits || 0, priority: 'Med',
+      status: 'Eligible', missing_prerequisites: [], must_take: false, score: 0,
+    };
+  }
+  function pinsFor(entry, src) {
+    const ids = state.pick.secs.get(entry.code);
+    if (!ids || !ids.size) return [];
+    return sortSections(entrySections(entry, src))
+      .filter((s) => ids.has(String(s.term_section_id)))
+      .slice(0, MAX_ONLY)
+      .map((s) => ({ term_section_id: Number(s.term_section_id), section: String(s.section || '').trim() }));
+  }
+  // Credits unknown: the course cannot be added (its credits would be a guess).
+  const addable = (entry) => entry.credits !== null;
+
+  function renderSource() {
+    const select = $('plbSource');
+    select.disabled = !state.ctx;
+    const counts = {};
+    for (const src of SOURCES) {
+      if (src === 'all' && !state.allCatalog) { counts[src] = null; continue; }
+      const l = sourceLists(src);
+      counts[src] = l.avail.length + l.blocked.length;
+    }
+    const names = {
+      recommended: T.srcRecommended(counts.recommended), plan: T.srcPlan(counts.plan),
+      eligible: T.srcEligible(counts.eligible), all: T.srcAll(counts.all),
+    };
+    if (!select.options.length) {
+      for (const src of SOURCES) { const o = document.createElement('option'); o.value = src; select.append(o); }
+    }
+    [...select.options].forEach((o) => { o.textContent = names[o.value]; });
+    select.value = state.pick.src;
+  }
+  function tagNode(text, kind, title) {
+    const node = el('span', `plb-flag${kind ? ` plb-flag--${kind}` : ''}`, text);
+    if (title) node.title = title;
+    return node;
+  }
+  function sectionRowNode(entry, section, src) {
+    const model = sectionModel(section);
+    const ids = state.pick.secs.get(entry.code) || new Set();
+    const ticked = ids.has(model.id);
+    const input = el('input', 'plb-tick');
+    input.type = 'checkbox';
+    input.checked = ticked;
+    input.disabled = !ticked && (model.reasons.length > 0 || ids.size >= MAX_ONLY);
+    input.dataset.act = 'sectick';
+    input.dataset.code = entry.code;
+    input.dataset.tsid = model.id;
+    input.setAttribute('aria-label', T.tickSection(entry.code, model.label || '?'));
+    const instructors = [...new Set((section.meetings || []).map((m) => String(m.instructor || '').trim()).filter(Boolean))];
+    const meets = el('span', 'plb-sec-meets', ...present(
+      ...(model.when.length ? model.when : [T.unknown]),
+      instructors.length ? ' · ' : null, instructors.length ? isolate(instructors.join('، ')) : null,
+      model.clash ? ' ' : null, model.clash ? tagNode(T.clashFlag, 'bad') : null));
+    const seats = el('span', 'plb-sec-seats');
+    if (!model.cap.known) seats.append(T.unknown);
+    else if (model.cap.full) seats.append(tagNode(T.seatsFull, 'bad'));
+    else {
+      seats.append(String(model.cap.remaining));
+      if (fewSeats(model.cap)) seats.append(' ', tagNode(T.leftTag(model.cap.remaining), 'warn'));
+    }
+    const row = el('div', 'plb-sec', input, el('span', 'plb-sec-n', bdi(model.label || '?')), meets, seats);
+    row.dataset.tsid = model.id;
+    if (input.disabled) row.dataset.off = 'true';
+    void src;
+    return row;
+  }
+  function availRowNode(entry, src) {
+    const code = entry.code;
+    const sections = entrySections(entry, src);
+    const open = state.pick.opened.has(code);
+    const ticked = state.pick.ticked.has(code);
+    const secsId = `plbSecs_${code.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    const chev = el('button', 'plb-chev', svg(ICONS.chev, 14));
+    chev.type = 'button';
+    chev.dataset.act = 'open';
+    chev.dataset.code = code;
+    chev.setAttribute('aria-expanded', String(open));
+    chev.setAttribute('aria-controls', secsId);
+    chev.setAttribute('aria-label', T.sectionsOf(code));
+    const box = el('input', 'plb-tick');
+    box.type = 'checkbox';
+    box.checked = ticked;
+    box.disabled = !addable(entry);
+    box.dataset.act = 'tick';
+    box.dataset.code = code;
+    box.setAttribute('aria-label', T.tickCourse(code));
+    if (box.disabled) box.title = T.creditsUnknownWhy;
+    const known = src === 'all' || state.catalog !== null;
+    const caps = sections.map(sectionCapacity);
+    const openCaps = caps.filter((c) => c.known && !c.full);
+    const metaText = [entry.credits === null ? T.creditsUnknown : T.credits(entry.credits)];
+    if (known) metaText.push(sections.length ? T.sectionWord(sections.length) : T.noSections);
+    const tags = [];
+    if (entry.rec) tags.push(tagNode(T.tagRecommended, ''));
+    if (src === 'all' && entry.compareOnly) tags.push(tagNode(T.tagCompare, 'warn', T.compareWhy));
+    if (known && sections.length && caps.every((c) => c.known && c.full)) tags.push(tagNode(T.allFull, 'bad'));
+    else if (openCaps.length && openCaps.every(fewSeats)) tags.push(tagNode(T.tagFewSeats, 'warn'));
+    const main = el('div', 'plb-ar-main', chev, box, el('span', 'plb-code', bdi(code)),
+      el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''),
+      el('span', 'plb-meta', metaText.join(' · '), ...tags.flatMap((t) => [' ', t])));
+    if (entry.compareOnly && src === 'all') main.title = T.compareWhy;
+    const body = el('div', 'plb-secs');
+    body.id = secsId;
+    body.hidden = !open;
+    if (open) {
+      if (!sections.length) body.append(el('p', 'plb-empty', known ? T.noSections : T.noCatalog));
+      else {
+        body.append(el('div', 'plb-sec plb-sec--h', el('span', ''), el('span', 'plb-mic', T.secHead),
+          el('span', 'plb-mic', T.meetsHead), el('span', 'plb-mic', T.seatsHead)));
+        for (const section of sortSections(sections)) body.append(sectionRowNode(entry, section, src));
+        const n = (state.pick.secs.get(code) || new Set()).size;
+        if (n) {
+          const only = el('button', 'btn btn-sm btn-neutral plb-only', T.addOnly(n), svg(ICONS.next, 14));
+          only.querySelector('svg').classList.add('plb-dir');
+          only.type = 'button';
+          only.dataset.act = 'only';
+          only.dataset.code = code;
+          body.append(el('div', 'plb-only-row', only));
+        }
+      }
+    }
+    // On an option's tab the line says what adding the course would do to graduation.
+    const effect = currentOption() ? effectNode(code, 'could') : null;
+    const row = el('div', 'plb-arow', main, effect ? el('div', 'plb-fxl', effect) : null, body);
+    row.dataset.code = code;
+    if (ticked) row.dataset.ticked = 'true';
+    return row;
+  }
+  function renderAvailable() {
+    const host = $('plbAvailList');
+    const src = state.pick.src;
+    const ready = !!state.ctx;
+    const lists = ready ? listsFor(src) : { avail: [], blocked: [] };
+    const nodes = [];
+    if (!ready) nodes.push(el('p', 'plb-empty plb-pad', T.loadFirstCourses));
+    else if (src === 'all' && state.allState === 'loading') nodes.push(el('p', 'plb-empty plb-pad', T.allLoading));
+    else if (src === 'all' && state.allState === 'error') nodes.push(el('p', 'plb-empty plb-pad', T.allFailed));
+    else if ((src === 'plan' || src === 'eligible') && state.planState === 'loading' && !lists.avail.length) nodes.push(el('p', 'plb-empty plb-pad', T.loadingPlan));
+    else if (!lists.avail.length && !lists.blocked.length) nodes.push(el('p', 'plb-empty plb-pad', state.pick.find.trim() ? T.noMatch : T.nothingHere));
+    for (const entry of lists.avail) nodes.push(availRowNode(entry, src));
+    if (lists.blocked.length) {
+      const open = state.pick.blockedOpen;
+      const fold2 = el('button', 'plb-fold', svg(ICONS.chev, 14), T.blockedFold(lists.blocked.length));
+      fold2.type = 'button';
+      fold2.dataset.act = 'fold';
+      fold2.id = 'plbFold';
+      fold2.setAttribute('aria-expanded', String(open));
+      fold2.setAttribute('aria-controls', 'plbBlocked');
+      const list = el('div', 'plb-blocked');
+      list.id = 'plbBlocked';
+      list.hidden = !open;
+      if (open) {
+        for (const entry of lists.blocked) {
+          const row = el('div', 'plb-arow plb-arow--off', el('div', 'plb-ar-main plb-ar-main--off',
+            el('span', 'plb-code', bdi(entry.code)), el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''), entry.reason));
+          row.dataset.code = entry.code;
+          list.append(row);
+        }
+      }
+      nodes.push(el('div', 'plb-foldrow', fold2, list));
+    }
+    host.replaceChildren(...nodes);
+    const tickedEntries = lists.avail.filter((e) => state.pick.ticked.has(e.code));
+    const tickedCr = tickedEntries.reduce((sum, e) => sum + (e.credits || 0), 0);
+    $('plbAvailCount').textContent = ready ? T.availHead(lists.avail.length) : T.availHead(0);
+    $('plbAvailTicked').textContent = ready ? T.tickedLine(tickedEntries.length, tickedCr) : '';
+    return lists;
+  }
+  function planRowNode(item) {
+    const code = item.course_code;
+    const key = norm(code);
+    const pins = pinsOf(item);
     const opt = currentOption();
-
-    // Registered
-    const registered = registeredCourses();
-    const regCredits = registeredCredits();
-    const regBody = groupBody('registered', keep ? T.registeredFixed : T.registeredIgnored,
-      regCredits === null ? '' : T.credits(regCredits));
-    if (!registered.length) regBody.append(emptyRow(T.noRegistered));
-    for (const course of registered) {
-      const lock = el('td', 'plb-act');
-      const icon = el('span', 'plb-lock', svg(ICONS.lock, 14));
-      icon.setAttribute('role', 'img');
-      icon.setAttribute('aria-label', T.registeredLock);
-      lock.append(icon);
-      regBody.append(courseRow(course.code, course.name,
-        el('span', 'plb-sc', course.section ? bdi(`§${course.section}`) : T.unknown), [el('td'), lock]));
+    const box = el('input', 'plb-tick');
+    box.type = 'checkbox';
+    box.checked = state.pick.planTicked.has(key);
+    box.dataset.act = 'ptick';
+    box.dataset.code = key;
+    box.setAttribute('aria-label', T.tickPlanned(code));
+    // On an option's tab the line says what that option did with the course.
+    const parts = [];
+    let miss = false;
+    const chosen = opt ? mappingFor(opt, code) : null;
+    if (opt) {
+      if (chosen) {
+        parts.push(bdi(`§${String(chosen.section || '').trim() || '?'}`));
+        const section = findSection(chosen.term_section_id);
+        const cap = section ? sectionCapacity(section) : null;
+        if (cap && fewSeats(cap)) parts.push(' · ', el('span', 'plb-few', T.seatsLeft(cap.remaining)));
+        const used = String(chosen.term_section_id);
+        if (pins.length > 1 && pins.some((p) => String(p.term_section_id) === used)) {
+          const others = pins.filter((p) => String(p.term_section_id) !== used).map(pinLabel);
+          parts.push(el('span', 'plb-or', ...T.orOthers(others)));
+        }
+      } else if (!state.build.shortlist.some((c) => norm(c.course_code) === key)) {
+        parts.push(T.notInBuild);
+      } else { miss = true; parts.push(T.notScheduledHere); }
     }
-    table.append(regBody);
-
-    // New in this plan
-    const newBody = groupBody('new', `${T.newInPlan} · ${T.credits(planCredits())}`, T.mustTake);
-    newBody.append(resetRow());
-    if (!state.shortlist.length) newBody.append(emptyRow(T.nothingAdded));
-    for (const item of state.shortlist) {
-      const code = item.course_code;
-      const pins = pinsOf(item);
-      const parts = [];
-      let miss = false;
-      const chosen = opt ? mappingFor(opt, code) : null;
-      if (opt) {
-        // On an option's tab the cell says what that option did with the course.
-        if (chosen) {
-          parts.push(bdi(`§${String(chosen.section || '').trim() || '?'}`));
-          const section = findSection(chosen.term_section_id);
-          const cap = section ? sectionCapacity(section) : null;
-          if (cap && fewSeats(cap)) parts.push(' · ', el('span', 'plb-few', T.seatsLeft(cap.remaining)));
-          // The other sections the adviser allowed, when the one this option used is among them.
-          const used = String(chosen.term_section_id);
-          if (pins.length > 1 && pins.some((p) => String(p.term_section_id) === used)) {
-            const others = pins.filter((p) => String(p.term_section_id) !== used).map(pinLabel);
-            parts.push(el('span', 'plb-or', ...T.orOthers(others)));
-          }
-        } else if (!state.build.shortlist.some((c) => norm(c.course_code) === norm(code))) {
-          parts.push(T.notInBuild);       // added after this build was made
-        } else { miss = true; parts.push(T.notScheduledHere); }
-      } else if (pins.length) parts.push(...T.onlyLine(pins.map(pinLabel)));
-      else parts.push(T.anySection);
-      const sectionCell = sectionButton(code, parts, miss);
-      const box = el('input', 'plb-tick');
-      box.type = 'checkbox';
-      box.checked = !!item.must_take;
-      box.setAttribute('aria-label', T.mustTakeFor(code));
-      box.dataset.act = 'must';
-      box.dataset.code = norm(code);
-      const remove = iconButton('x', T.removeCourse(code), 'remove', code);
-      const row = courseRow(code, item.course_name, sectionCell,
-        [el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)], false,
-        opt ? effectNode(code, 'new') : null);
-      if (state.detail && state.detail.code === norm(code)) row.dataset.open = 'true';
-      newBody.append(row);
+    const credits = el('span', 'plb-cr', T.credits(Number(item.credits) || 0));
+    const sub = el('span', 'plb-sl', credits, ...(opt ? [el('span', `plb-sc${miss ? ' plb-sc--miss' : ''}`, ...parts)] : []),
+      ...present(opt ? effectNode(code, 'new') : null));
+    const open = !!state.detail && state.detail.code === key;
+    const label = pins.length === 0 ? T.anySection : T.sectionsBtn(pins.map(pinLabel));
+    const secbtn = el('button', 'plb-secbtn', el('span', 'plb-secbtn-t', label), svg(ICONS.chev, 12));
+    secbtn.type = 'button';
+    secbtn.dataset.act = 'detail';
+    secbtn.dataset.code = key;
+    if (pins.length) secbtn.dataset.limited = 'true';
+    secbtn.setAttribute('aria-haspopup', 'dialog');
+    secbtn.setAttribute('aria-expanded', String(open));
+    secbtn.setAttribute('aria-controls', 'plbPop');
+    secbtn.setAttribute('aria-label', T.sectionsOfPlanned(code, label));
+    const req = el('button', 'plb-req', svg(ICONS.pin, 14), item.must_take ? el('span', 'plb-req-t', T.required) : null);
+    req.type = 'button';
+    req.dataset.act = 'must';
+    req.dataset.code = key;
+    req.setAttribute('aria-pressed', String(!!item.must_take));
+    req.setAttribute('aria-label', item.must_take ? T.requiredOn(code) : T.makeRequired(code));
+    req.title = item.must_take ? T.requiredOn(code) : T.makeRequired(code);
+    const remove = iconButton('x', T.removeCourse(code), 'remove', code);
+    const row = el('div', 'plb-prow', box, el('span', 'plb-code', bdi(code)),
+      el('span', 'plb-pmain', el('span', 'plb-nm plb-nm--wrap', item.course_name ? isolate(item.course_name) : ''), sub),
+      secbtn, req, remove);
+    row.dataset.code = key;
+    if (open) row.dataset.open = 'true';
+    return row;
+  }
+  function keptRowNode(course) {
+    const lock = el('span', 'plb-lock', svg(ICONS.lock, 14));
+    lock.setAttribute('role', 'img');
+    lock.setAttribute('aria-label', T.registeredLock);
+    const sub = [course.credits === null ? T.creditsUnknown : T.credits(course.credits)];
+    if (course.section) sub.push(`${IS_AR ? 'شعبة' : 'section'} ${course.section}`);
+    const row = el('div', 'plb-prow plb-prow--kept', lock, el('span', 'plb-code', bdi(course.code)),
+      el('span', 'plb-pmain', el('span', 'plb-nm plb-nm--wrap', course.name ? isolate(course.name) : ''), el('span', 'plb-sl', el('span', 'plb-cr', sub.join(' · ')))),
+      el('span', 'plb-flag plb-kept-tag', T.registeredKept));
+    row.dataset.code = course.code;
+    return row;
+  }
+  function renderPlanPane() {
+    const host = $('plbPlanList');
+    const ready = !!state.ctx;
+    const nodes = [];
+    for (const item of state.shortlist) nodes.push(planRowNode(item));
+    if (ready && state.rules.mode === 'keep') for (const course of registeredCourses()) nodes.push(keptRowNode(course));
+    if (ready) {
+      const hint = el('p', 'plb-hint', T.hintA, svg(ICONS.next, 13), T.hintB);
+      hint.querySelector('svg').classList.add('plb-dir');
+      nodes.push(hint);
     }
-    table.append(newBody);
-
-    // Could be added
-    const pool = planPool();
-    const cap = state.rules.maxCredits;
-    const free = cap === null ? null : cap - usedCredits();
-    const couldLeft = free === null ? '' : (free >= 0 ? `${free} ${T.creditUnit(free)} ${T.free2}` : '');
-    if (state.planState === 'loading') {
-      const body = groupBody('could', T.couldAdd, '');
-      body.append(emptyRow(T.loadingPlan));
-      table.append(body);
-    } else if (pool.length) {
-      const body = groupBody('could', T.couldAdd, couldLeft);
-      for (const course of pool) {
-        const add = iconButton('plus', T.addCourse(course.code), 'add', course.code, 'plb-ib--add');
-        const row = courseRow(course.code, course.name,
-          sectionButton(course.code, sectionInfo(course.code)), [el('td'), el('td', 'plb-act', add)], false,
-          opt ? effectNode(course.code, 'could') : null);
-        if (state.detail && state.detail.code === course.code) row.dataset.open = 'true';
-        body.append(row);
-      }
-      table.append(body);
-    }
-
-    // Blocked
-    const blocked = blockedRecs();
-    if (blocked.length) {
-      const body = groupBody('blocked', T.blocked, '');
-      for (const rec of blocked) {
-        body.append(courseRow(rec.course_code, rec.course_name, blockedReason(rec), [el('td'), el('td')], true));
-      }
-      table.append(body);
-    }
+    host.replaceChildren(...nodes);
+    $('plbPlanCount').textContent = T.planHead(ready ? state.shortlist.length : 0);
     renderCreditsHeader();
+  }
+  function renderXfer(lists) {
+    const ready = !!state.ctx;
+    const shown = lists ? lists.avail : [];
+    const canAdd = ready && shown.some((e) => state.pick.ticked.has(e.code) && addable(e));
+    const canAll = ready && shown.some(addable);
+    const planned = state.shortlist.length;
+    const ticked = [...state.pick.planTicked].filter((k) => inShortlist(k));
+    // The glyphs are SVG chevrons: "towards the plan" is drawn pointing right, and the stylesheet
+    // flips every `.plb-dir` under right-to-left, where the plan is on the left.
+    const set = (id, enabled, label, left, all) => {
+      const b = $(id);
+      b.disabled = !enabled;
+      b.setAttribute('aria-label', label);
+      b.title = label;
+      if (!b.firstChild) {
+        b.replaceChildren(svg(all ? ICONS.nextAll : ICONS.next, 20));
+        b.firstChild.classList.add('plb-dir');
+        b.dataset.side = left ? 'plan-to-list' : 'list-to-plan';
+      }
+    };
+    set('plbXAdd', canAdd, T.xAdd, false, false);
+    set('plbXAddAll', canAll, T.xAddAll, false, true);
+    set('plbXRem', ready && ticked.length > 0, T.xRem, true, false);
+    set('plbXRemAll', ready && planned > 0, T.xRemAll, true, true);
+  }
+  function renderCreditsHeader() {
+    renderReset();
+    const load = $('plbPlanLoad');
+    const line = $('plbMeterLine');
+    const meter = $('plbMeter');
+    delete load.dataset.over;                  // "over" is only ever said against a known cap
+    delete line.dataset.over;
+    if (!state.ctx) { load.textContent = ''; line.textContent = ''; meter.hidden = true; return; }
+    const keep = state.rules.mode === 'keep';
+    const reg = keep ? registeredCredits() || 0 : 0;
+    const planned = planCredits();
+    const used = reg + planned;
+    const cap = state.rules.maxCredits;
+    load.replaceChildren(el('b', '', used), el('span', 'plb-pload-u', cap === null ? ` ${T.creditUnit(used)}` : ` / ${cap} ${T.creditUnit(cap)}`));
+    const parts = [T.plannedN(planned)];
+    if (keep) parts.push(T.registeredN(reg));
+    let text = parts.join(' + ');
+    if (cap !== null) {
+      const free = cap - used;
+      text += free >= 0 ? ` · ${free} ${T.creditUnit(free)} ${T.free2}` : ` · ${T.overLimitN(-free)}`;
+      load.dataset.over = free < 0 ? 'true' : 'false';
+      line.dataset.over = free < 0 ? 'true' : 'false';
+      const total = Math.max(cap, used) || 1;
+      meter.hidden = false;
+      meter.firstChild.style.width = `${(planned / total) * 100}%`;
+      meter.lastChild.style.width = `${(reg / total) * 100}%`;
+      meter.dataset.over = free < 0 ? 'true' : 'false';
+    } else meter.hidden = true;
+    line.textContent = text;
+  }
+  // The courses zone, drawn again from the state. Keyboard focus is found again by its action,
+  // course and section; where that control has gone it falls to the search box.
+  function renderCourses() {
+    const pick = $('plbPick');
+    const was = document.activeElement;
+    const inPick = was && pick.contains(was) && !was.closest('#plbPop');
+    const mark = inPick ? { act: was.dataset.act, code: was.dataset.code, tsid: was.dataset.tsid, id: was.id } : null;
+    const ready = !!state.ctx;
+    $('plbFind').disabled = !ready;
+    if (!ready) { state.focus = null; state.detail = null; state.pick = newPick(); }
+    const lists = renderAvailable();
+    renderSource();
+    renderPlanPane();
+    renderXfer(ready ? lists : null);
     renderDetail();
-    restoreFocus();
+    restoreFocus(mark);
   }
   // The list is the suggested one (every field the build reads, in the same order): nothing to reset.
   const isSuggested = () => JSON.stringify(state.shortlist) === JSON.stringify(state.suggested);
-  // "Reset to suggestions": a row of its own under the group's title, so the title stays the group's name.
-  function resetRow() {
-    const button = el('button', 'plb-lk', T.resetPlan);
-    button.type = 'button';
-    button.id = 'plbReset';
-    button.dataset.act = 'reset';
-    button.disabled = true;
-    const cell = el('td', 'plb-grp-act', button);
-    cell.colSpan = 4;
-    return el('tr', 'plb-grp-link', cell);
-  }
   function renderReset() {
     const button = $('plbReset');
-    if (button) button.disabled = !state.ctx || isSuggested();
+    const show = !!state.ctx && !isSuggested();
+    button.hidden = !show;
+    button.disabled = !show;
   }
   function resetToSuggestions() {
     if (!state.ctx || isSuggested()) return;
     state.shortlist = JSON.parse(JSON.stringify(state.suggested));
+    state.pick.planTicked.clear();
     if (state.detail) delete state.detail.only;
     planChanged();
     setStatus('ok', T.resetDone(state.shortlist.length));
+    state.focus = { kind: 'find' };
     renderCourses();
     if (state.build) renderWeek();
-    const reset = $('plbReset');
-    if (reset && reset.disabled && !$('plbAdd').disabled) $('plbAdd').focus();
   }
-  function renderCreditsHeader() {
-    renderReset();
-    const header = $('plbCredits');
-    delete header.dataset.over;                // "over" is only ever said against a known cap
-    if (!state.ctx) { header.textContent = ''; return; }
-    const used = usedCredits();
-    const cap = state.rules.maxCredits;
-    if (cap === null) { header.textContent = T.credits(used); return; }
-    const free = cap - used;
-    const lead = IS_AR ? `${used} من ${cap} ${T.creditUnit(cap)}` : `${used} of ${cap} ${T.creditUnit(cap)}`;
-    const tail = free >= 0 ? `${free} ${T.free2}` : `${-free} ${T.over}`;
-    header.textContent = `${lead} · ${tail}`;
-    header.dataset.over = free < 0 ? 'true' : 'false';
-  }
-  function restoreFocus() {
+  function restoreFocus(mark) {
     const want = state.focus;
     state.focus = null;
-    if (!want) return;
-    const code = norm(want.code);
-    let target = document.querySelector(`#plbTable [data-act="${want.kind}"][data-code="${CSS.escape(code)}"]`);
-    if (!target) target = $('plbAdd');
-    if (target && !target.disabled) target.focus();
+    let target = null;
+    const q = (a, c, t) => document.querySelector(`#plbPick [data-act="${CSS.escape(a)}"][data-code="${CSS.escape(c)}"]${t ? `[data-tsid="${CSS.escape(t)}"]` : ''}`);
+    if (want && want.kind !== 'find') target = q(want.kind, norm(want.code));
+    else if (!want && mark) {
+      if (mark.act && mark.code) target = q(mark.act, mark.code, mark.tsid);
+      else if (mark.id) target = document.getElementById(mark.id);
+    }
+    if (target && !target.disabled && !target.hidden) { target.focus({ preventScroll: true }); return; }
+    if ((want || mark) && !$('plbFind').disabled) $('plbFind').focus({ preventScroll: true });
   }
-  function addCourseToPlan(item, keepFocus) {
-    if (inShortlist(item.course_code)) return;
-    state.shortlist.push(item);
+  function addEntries(list, how) {
+    const added = [];
+    for (const { entry, pins } of list) {
+      if (inShortlist(entry.code) || !addable(entry)) continue;
+      const item = makeItem(entry);
+      if (pins && pins.length) item.pinned_sections = pins;
+      state.shortlist.push(item);
+      added.push(item);
+      state.pick.ticked.delete(entry.code);
+      state.pick.secs.delete(entry.code);
+    }
+    if (!added.length) return;
     planChanged();
-    // From the detail panel focus stays in the panel (it lands on its heading), not on the row.
-    state.focus = keepFocus ? null : { kind: 'remove', code: item.course_code };
-    setStatus('ok', ...T.added(item.course_code));
+    setStatus('ok', ...(added.length === 1 ? T.added(added[0].course_code) : [T.addedMany(added.length)]));
+    state.focus = how === 'row' ? { kind: 'remove', code: added[0].course_code } : null;
     renderCourses();
+    if (how !== 'row' && (document.activeElement === document.body || document.activeElement.disabled)) $('plbFind').focus({ preventScroll: true });
   }
-  function removeCourseFromPlan(code, keepFocus) {
-    const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
-    if (at < 0) return;
-    const [gone] = state.shortlist.splice(at, 1);
-    // "Only these" with nothing ticked belonged to the course that has just gone, not to the panel.
-    if (state.detail && state.detail.code === norm(code)) delete state.detail.only;
+  function removeCoursesFromPlan(codes, how) {
+    const gone = [];
+    for (const code of codes) {
+      const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
+      if (at < 0) continue;
+      gone.push(...state.shortlist.splice(at, 1));
+      state.pick.planTicked.delete(norm(code));
+      // "Only these" with nothing ticked belonged to the course that has just gone, not to the panel.
+      if (state.detail && state.detail.code === norm(code)) delete state.detail.only;
+    }
+    if (!gone.length) return;
     planChanged();
-    state.focus = keepFocus ? null : { kind: 'add', code: gone.course_code };
-    setStatus('ok', ...T.removed(gone.course_code));
+    setStatus('ok', ...(gone.length === 1 ? T.removed(gone[0].course_code) : [T.removedMany(gone.length)]));
+    state.focus = how === 'row' ? { kind: 'tick', code: gone[0].course_code } : null;
     if (state.build) renderWeek();
     renderCourses();
+    if (how !== 'row' && (document.activeElement === document.body || document.activeElement.disabled)) $('plbFind').focus({ preventScroll: true });
   }
-
-  /* ── "Add a course" ────────────────────────────────────────────────────── */
-  let activeOption = -1;
-  function closeList() {
-    $('plbAddList').hidden = true;
-    $('plbAdd').setAttribute('aria-expanded', 'false');
-    $('plbAdd').removeAttribute('aria-activedescendant');
-    activeOption = -1;
+  const shownEntries = () => listsFor(state.pick.src).avail;
+  function moveTicked() {
+    const list = shownEntries().filter((e) => state.pick.ticked.has(e.code)).map((entry) => ({ entry, pins: pinsFor(entry, state.pick.src) }));
+    addEntries(list, '');
   }
-  function matches(query) {
-    const needle = query.trim();
-    if (!needle) return [];
-    const code = norm(needle);
-    const lower = needle.toLowerCase();
-    return planPool().filter((c) => c.code.includes(code) || c.name.toLowerCase().includes(lower)).slice(0, 8);
+  function moveAll() {
+    addEntries(shownEntries().map((entry) => ({ entry, pins: [] })), '');
   }
-  function renderList() {
-    const query = $('plbAdd').value;
-    const list = $('plbAddList');
-    if (!query.trim() || !state.ctx) { closeList(); return; }
-    const found = matches(query);
-    list.replaceChildren();
-    if (!found.length) {
-      list.append(el('li', 'plb-opt plb-opt--none', T.noMatch));
-    }
-    found.forEach((course, i) => {
-      const item = el('li', 'plb-opt', bdi(course.code), ' ', course.name, ' · ', T.credits(course.credits));
-      item.id = `plbOpt${i}`;
-      item.setAttribute('role', 'option');
-      item.dataset.code = course.code;
-      list.append(item);
-    });
-    list.hidden = false;
-    $('plbAdd').setAttribute('aria-expanded', 'true');
-    activeOption = -1;
+  function moveOne(code, onlyPins) {
+    const entry = shownEntries().find((e) => e.code === code);
+    if (!entry) return;
+    addEntries([{ entry, pins: pinsFor(entry, state.pick.src) }], onlyPins ? '' : 'row');
   }
-  function pickOption(index) {
-    const nodes = [...$('plbAddList').querySelectorAll('[role="option"]')];
-    const node = nodes[index];
-    if (!node) return;
-    const course = planPool().find((c) => c.code === node.dataset.code);
-    $('plbAdd').value = '';
-    closeList();
-    if (course) addCourseToPlan(itemFromPlan(course));
+  function setSource(src) {
+    if (!SOURCES.includes(src) || src === state.pick.src) return;
+    state.pick.src = src;
+    state.pick.ticked.clear();
+    state.pick.secs.clear();
+    state.pick.opened.clear();
+    state.pick.blockedOpen = false;
+    if (src === 'all' && state.allState !== 'ready' && state.allState !== 'loading') loadAllCatalog(state.gen);
+    renderCourses();
   }
-  function highlight(index) {
-    const nodes = [...$('plbAddList').querySelectorAll('[role="option"]')];
-    nodes.forEach((n, i) => n.setAttribute('aria-selected', i === index ? 'true' : 'false'));
-    activeOption = index;
-    if (nodes[index]) $('plbAdd').setAttribute('aria-activedescendant', nodes[index].id);
-    else $('plbAdd').removeAttribute('aria-activedescendant');
+  function tickCourse(code, on) {
+    if (on) state.pick.ticked.add(code);
+    else { state.pick.ticked.delete(code); state.pick.secs.delete(code); }
+    renderCourses();
+  }
+  function tickSection(code, tsid, on) {
+    const ids = state.pick.secs.get(code) || new Set();
+    if (on) { if (ids.size >= MAX_ONLY) { renderCourses(); return; } ids.add(tsid); state.pick.ticked.add(code); }
+    else ids.delete(tsid);
+    if (ids.size) state.pick.secs.set(code, ids); else state.pick.secs.delete(code);
+    renderCourses();
+  }
+  function planTick(code, on) {
+    if (on) state.pick.planTicked.add(code); else state.pick.planTicked.delete(code);
+    renderXfer(listsFor(state.pick.src));
+  }
+  function toggleRequired(code) {
+    const item = state.shortlist.find((c) => norm(c.course_code) === code);
+    if (!item) return;
+    item.must_take = !item.must_take;
+    if (state.build || state.inflight) planChanged();
+    state.focus = { kind: 'must', code };
+    renderCourses();
   }
 
   /* ── Data: plan and section catalogue ──────────────────────────────────── */
@@ -2047,7 +2347,10 @@
   async function loadCatalog(run) {
     if (!state.ctx) return;
     const mine = ++state.catGen;
-    const codes = [...new Set([...planPool().map((c) => c.code), ...state.shortlist.map((c) => norm(c.course_code))])];
+    const codes = [...new Set([
+      ...planPool().map((c) => c.code), ...state.shortlist.map((c) => norm(c.course_code)),
+      ...state.recs.map((r) => norm(r.course_code)).filter(Boolean),
+    ])];
     if (!codes.length) { state.catalog = new Map(); renderCourses(); return; }
     let result = null;
     try {
@@ -2071,6 +2374,39 @@
     }
     renderCourses();
     if (state.build) keepingFocus(() => { renderStrip(); renderGuide(); });
+  }
+
+  // Source 4 of the picker: every course offered this term, all programmes. One request, made the
+  // first time the source is chosen (and again for another student), grouped by course key.
+  async function loadAllCatalog(run) {
+    if (!state.ctx) return;
+    const mine = ++state.allGen;
+    state.allState = 'loading';
+    state.allCatalog = null;
+    renderCourses();
+    let result = null;
+    try {
+      result = await postJson('/ops/planner/sections-catalog/', {
+        student_id: state.ctx.studentId, academic_year: state.ctx.year, term: state.ctx.term,
+        program_sections_only: false,
+      });
+    } catch (err) { result = null; }
+    if (run !== state.gen || mine !== state.allGen) return;
+    if (!result || !result.response.ok || !result.data || !Array.isArray(result.data.sections)) {
+      state.allState = 'error';
+      setStatus('warn', T.allFailed);
+    } else {
+      const map = new Map();
+      for (const section of result.data.sections) {
+        const key = courseKeyOf(section);
+        if (!key) continue;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(section);
+      }
+      state.allCatalog = map;
+      state.allState = 'ready';
+    }
+    renderCourses();
   }
 
   /* ── Loading a student ─────────────────────────────────────────────────── */
@@ -2153,6 +2489,11 @@
     state.planCourses = null;
     state.planCredits = null;
     state.catalog = null;
+    // The picker starts again on the same source; the whole-term list belongs to this student and term.
+    state.pick = { ...newPick(), src: state.pick ? state.pick.src : 'recommended', find: state.pick ? state.pick.find : '' };
+    state.allCatalog = null;
+    state.allState = 'idle';
+    state.allGen += 1;
     $('plbRoot').dataset.loaded = 'true';
     $('plbYear').value = state.ctx.year;
     if ([...$('plbTerm').options].some((o) => o.value === state.ctx.term)) $('plbTerm').value = state.ctx.term;
@@ -2165,6 +2506,7 @@
     renderCourses();
     renderActions();
     loadPlan(run);
+    if (state.pick.src === 'all') loadAllCatalog(run);
     return true;
   }
 
@@ -2248,7 +2590,7 @@
     if (document.activeElement && document.activeElement !== document.body) return;
     let again = id ? document.getElementById(id) : null;
     if (!again && act && code) {
-      again = document.querySelector(`#plbTable [data-act="${CSS.escape(act)}"][data-code="${CSS.escape(code)}"]`);
+      again = document.querySelector(`#plbPick [data-act="${CSS.escape(act)}"][data-code="${CSS.escape(code)}"]`);
     }
     if (!again && more) again = document.querySelector(`#plbMoreList [data-more="${CSS.escape(more)}"]`);
     if (!again && inWeek >= 0) again = weekBlocksOf(code)[inWeek] || weekBlocksOf(code)[0] || null;
@@ -3071,10 +3413,6 @@
     if (!d) return null;
     const item = state.shortlist.find((c) => norm(c.course_code) === d.code);
     if (item) return { inPlan: true, item, name: String(item.course_name || ''), credits: Number(item.credits) || 0 };
-    const course = planPool().find((c) => c.code === d.code);
-    if (course) return { inPlan: false, course, name: course.name, credits: course.credits };
-    // While the plan reloads the pool is empty for a moment: the panel waits instead of closing.
-    if (state.planState === 'loading') return { inPlan: false, course: null, name: d.name, credits: d.credits };
     return null;
   }
   function sectionClashes(section) {
@@ -3112,8 +3450,7 @@
   const pinLabel = (pin) => String(pin.section || '').trim() || '?';
   // A course's sections as the panel lists them (and as a request keeps them).
   function sortedSections(code) {
-    const list = state.catalog ? state.catalog.get(code) || [] : [];
-    return list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
+    return catalogSections(code).slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
   }
   // `ticked`: this section is one of the allowed ones; `atMax`: six are ticked already.
   function sectionRow(model, mode, ticked, atMax) {
@@ -3157,8 +3494,7 @@
     return row;
   }
   function renderDetail() {
-    const aside = $('plbDetail');
-    const body = aside.parentElement;
+    const aside = $('plbPop');
     const inside = aside.contains(document.activeElement);
     const focusKey = inside ? (document.activeElement.dataset.fk || 'title') : null;
     const info = detailInfo();
@@ -3166,11 +3502,11 @@
       state.detail = null;
       aside.hidden = true;
       aside.replaceChildren();
-      body.classList.add('plb-body--nodetail');
+      markPlanRows();
       markOpenBlocks();
       syncAlt();
-      // Focus was inside a panel that has gone: put it on the field that adds a course.
-      if (inside && !$('plbAdd').disabled) $('plbAdd').focus();
+      // Focus was inside a popover that has gone: put it on the search box.
+      if (inside && !$('plbFind').disabled) $('plbFind').focus();
       return;
     }
     const code = state.detail.code;
@@ -3190,23 +3526,18 @@
     close.dataset.act = 'dt-close';
     close.dataset.fk = 'close';
     const parts = [el('div', 'plb-dt-head', title, close)];
-    const effect = effectNode(code, info.inPlan ? 'new' : 'could');
+    const effect = effectNode(code, 'new');
     if (effect) parts.push(el('p', 'plb-dt-fx', effect));
 
-    const list = (state.catalog ? state.catalog.get(code) || [] : null);
-    const group = el(info.inPlan ? 'fieldset' : 'div', 'plb-dt-group');
-    if (info.inPlan) group.append(el('legend', 'plb-mic', T.detailSections));
-    else group.append(el('p', 'plb-mic', T.detailSections));
-    if (info.inPlan) {
-      group.append(modeRow('any', T.anySectionOpt, T.anySectionHint, !only), modeRow('only', T.onlyOpt, null, only));
-    } else {
-      group.append(el('p', 'plb-dt-hint', T.readOnlyHint));
-    }
+    const list = (state.catalog || state.allCatalog ? catalogSections(code) : null);
+    const group = el('fieldset', 'plb-dt-group');
+    group.append(el('legend', 'plb-mic', T.detailSections));
+    group.append(modeRow('any', T.anySectionOpt, T.anySectionHint, !only), modeRow('only', T.onlyOpt, null, only));
     if (list === null) group.append(el('p', 'plb-dt-hint', T.noCatalog));
     else if (!list.length) group.append(el('p', 'plb-dt-hint', T.noSections));
     else {
       for (const section of sortedSections(code)) {
-        group.append(sectionRow(sectionModel(section), info.inPlan ? 'pick' : 'read', tickedIds.has(String(section.term_section_id)), atMax));
+        group.append(sectionRow(sectionModel(section), 'pick', tickedIds.has(String(section.term_section_id)), atMax));
       }
     }
     // A ticked section that is not in the list any more is flagged, never silently dropped.
@@ -3243,30 +3574,10 @@
     }
     parts.push(group);
 
-    const foot = el('div', 'plb-dt-foot');
-    if (info.inPlan) {
-      const box = el('input', 'plb-tick');
-      box.type = 'checkbox';
-      box.checked = !!item.must_take;
-      box.dataset.act = 'dt-must';
-      box.dataset.fk = 'must';
-      const remove = el('button', 'btn btn-sm btn-neutral', T.removeFromPlan);
-      remove.type = 'button';
-      remove.dataset.act = 'dt-remove';
-      remove.dataset.fk = 'remove';
-      foot.append(el('label', 'plb-dt-must', box, ' ', T.mustTake), remove);
-    } else {
-      const add = el('button', 'btn btn-sm btn-primary', T.addToPlan);
-      add.type = 'button';
-      add.dataset.act = 'dt-add';
-      add.dataset.fk = 'add';
-      add.disabled = !info.course;
-      foot.append(add);
-    }
-    parts.push(foot);
     aside.replaceChildren(...parts);
     aside.hidden = false;
-    body.classList.remove('plb-body--nodetail');
+    placePop();
+    markPlanRows();
     markOpenBlocks();
     syncAlt();
     if (focusKey) {
@@ -3281,27 +3592,55 @@
   function openDetail(code, fromBlock) {
     const key = norm(code);
     const item = state.shortlist.find((c) => norm(c.course_code) === key);
-    const course = item ? null : planPool().find((c) => c.code === key);
-    if (!item && !course) return;
+    if (!item) return;
     state.detail = {
       code: key,
-      name: item ? String(item.course_name || '') : course.name,
-      credits: item ? Number(item.credits) || 0 : course.credits,
+      name: String(item.course_name || ''),
+      credits: Number(item.credits) || 0,
       weekAt: fromBlock ? weekBlocksOf(fromBlock.dataset.code).indexOf(fromBlock) : -1,
       weekCode: fromBlock ? fromBlock.dataset.code : '',
     };
-    renderCourses();
-    $('plbDetailTitle').focus();
+    // From the week the planned row is brought into view first: the popover hangs under its button.
+    const row = document.querySelector(`#plbPlanList .plb-prow[data-code="${CSS.escape(key)}"]`);
+    if (fromBlock && row) row.scrollIntoView({ block: 'nearest' });
+    renderDetail();
+    $('plbDetailTitle').focus({ preventScroll: true });
   }
+  // Closing redraws the popover and the open marks only: a click that closes it by landing elsewhere
+  // must find the node it hit still in place.
   function closeDetail(returnFocus) {
     const was = state.detail;
     state.detail = null;
-    renderCourses();
+    renderDetail();
     if (!returnFocus || !was) return;
     // Back to where it was opened from: the week block, else the row's button.
     const block = was.weekAt >= 0 ? weekBlocksOf(was.weekCode)[was.weekAt] : null;
-    const button = block || document.querySelector(`#plbTable [data-act="detail"][data-code="${CSS.escape(was.code)}"]`);
+    const button = block || document.querySelector(`#plbPlanList [data-act="detail"][data-code="${CSS.escape(was.code)}"]`);
     if (button) button.focus();
+  }
+  function markPlanRows() {
+    const open = state.detail ? state.detail.code : null;
+    for (const row of document.querySelectorAll('#plbPlanList .plb-prow[data-code]')) {
+      const on = open !== null && row.dataset.code === open;
+      if (on) row.dataset.open = 'true'; else delete row.dataset.open;
+      const button = row.querySelector('.plb-secbtn');
+      if (button) button.setAttribute('aria-expanded', String(on));
+    }
+  }
+  // The popover hangs under its course's section button, inside the plan's panel, and stays inside it.
+  function placePop() {
+    const pop = $('plbPop');
+    const plan = $('plbPlan');
+    const button = state.detail ? document.querySelector(`#plbPlanList .plb-secbtn[data-code="${CSS.escape(state.detail.code)}"]`) : null;
+    if (!button) { pop.style.top = '0px'; return; }
+    const pr = plan.getBoundingClientRect();
+    const br = button.getBoundingClientRect();
+    const width = Math.min(380, pr.width);
+    const rtl = document.documentElement.dir === 'rtl';
+    const left = rtl ? br.left - pr.left : br.right - pr.left - width;
+    pop.style.width = `${width}px`;
+    pop.style.left = `${Math.max(0, Math.min(left, pr.width - width))}px`;
+    pop.style.top = `${br.bottom - pr.top + 4}px`;
   }
   // Write the allowed sections of a course: the shape the build endpoint takes (`pinned_sections`,
   // one to six {term_section_id, section}, in the list's section order). None: the key goes.
@@ -3373,63 +3712,61 @@
     $('plbMaxIn').addEventListener('input', () => { state.maxDirty = true; });
     $('plbMaxIn').addEventListener('blur', () => { commitMaxInPlace(); state.maxDirty = false; });
 
-    $('plbTable').addEventListener('click', (event) => {
+    // The picker: one delegated listener per kind of event on the whole zone.
+    const pick = $('plbPick');
+    pick.addEventListener('click', (event) => {
       const target = event.target.closest('[data-act]');
       if (!target || target.tagName !== 'BUTTON') return;
       const code = target.dataset.code;
-      if (target.dataset.act === 'detail') {
+      const act = target.dataset.act;
+      if (act === 'detail') {
         if (state.detail && state.detail.code === code) closeDetail(true);
         else openDetail(code);
-      } else if (target.dataset.act === 'reset') resetToSuggestions();
-      else if (target.dataset.act === 'remove') removeCourseFromPlan(code);
-      else if (target.dataset.act === 'add') {
-        const course = planPool().find((c) => c.code === code);
-        if (course) addCourseToPlan(itemFromPlan(course));
-      }
-    });
-    $('plbTable').addEventListener('change', (event) => {
-      const target = event.target;
-      if (!target || target.dataset.act !== 'must') return;
-      const item = state.shortlist.find((c) => norm(c.course_code) === target.dataset.code);
-      if (!item) return;
-      item.must_take = target.checked;
-      renderReset();
-      if (state.build || state.inflight) {
-        planChanged();
-        state.focus = { kind: 'must', code: item.course_code };
+      } else if (act === 'dt-close') closeDetail(true);
+      else if (act === 'reset') resetToSuggestions();
+      else if (act === 'remove') removeCoursesFromPlan([code], 'row');
+      else if (act === 'must') toggleRequired(code);
+      else if (act === 'open') {
+        if (state.pick.opened.has(code)) state.pick.opened.delete(code); else state.pick.opened.add(code);
         renderCourses();
-      }
+      } else if (act === 'fold') { state.pick.blockedOpen = !state.pick.blockedOpen; renderCourses(); }
+      else if (act === 'only') moveOne(code, true);
     });
-
-    // The detail panel: one delegated listener per kind of event.
-    const detail = $('plbDetail');
-    detail.addEventListener('click', (event) => {
-      const target = event.target.closest('[data-act]');
-      if (!target || !state.detail) return;
-      const code = state.detail.code;
-      if (target.dataset.act === 'dt-close') closeDetail(true);
-      else if (target.dataset.act === 'dt-remove') removeCourseFromPlan(code, true);
-      else if (target.dataset.act === 'dt-add') {
-        const course = planPool().find((c) => c.code === code);
-        if (course) addCourseToPlan(itemFromPlan(course), true);
-      }
-    });
-    detail.addEventListener('change', (event) => {
+    pick.addEventListener('change', (event) => {
       const target = event.target;
-      if (!state.detail || !target) return;
-      const code = state.detail.code;
-      if (target.dataset.act === 'dt-must') {
-        const item = state.shortlist.find((c) => norm(c.course_code) === code);
-        if (!item) return;
-        item.must_take = target.checked;
-        planChanged();
-        renderCourses();
-      } else if (target.name === 'plbMode') {
-        if (target.value === 'any') chooseAny(code);
-        else { state.detail.only = true; renderCourses(); }
-      } else if (target.name === 'plbOnly') {
-        toggleSection(code, String(target.value), target.checked);
+      if (!target || !target.dataset) return;
+      if (target.dataset.act === 'tick') tickCourse(target.dataset.code, target.checked);
+      else if (target.dataset.act === 'sectick') tickSection(target.dataset.code, target.dataset.tsid, target.checked);
+      else if (target.dataset.act === 'ptick') planTick(target.dataset.code, target.checked);
+      else if (state.detail) {
+        const code = state.detail.code;
+        if (target.name === 'plbMode') {
+          if (target.value === 'any') chooseAny(code);
+          else { state.detail.only = true; renderCourses(); }
+        } else if (target.name === 'plbOnly') toggleSection(code, String(target.value), target.checked);
       }
+    });
+    // Double-click on a row moves it (the same as ticking it and pressing the arrow).
+    pick.addEventListener('dblclick', (event) => {
+      if (event.target.closest('button, input, label, .plb-secs, .plb-blocked')) return;
+      const row = event.target.closest('#plbAvailList .plb-arow:not(.plb-arow--off)');
+      if (row) moveOne(row.dataset.code, false);
+    });
+    for (const button of document.querySelectorAll('[data-xfer]')) {
+      button.addEventListener('click', () => {
+        const kind = button.dataset.xfer;
+        if (kind === 'add') moveTicked();
+        else if (kind === 'addall') moveAll();
+        else if (kind === 'rem') removeCoursesFromPlan([...state.pick.planTicked], '');
+        else if (kind === 'remall') removeCoursesFromPlan(state.shortlist.map((c) => c.course_code), '');
+      });
+    }
+    $('plbSource').addEventListener('change', (event) => setSource(event.target.value));
+    $('plbFind').addEventListener('input', (event) => { state.pick.find = event.target.value; renderCourses(); });
+    // The popover closes on a click outside it, once that click has done its work: closing on the
+    // press could shift the page (the popover can reach below the plan) before the button is released.
+    document.addEventListener('click', (event) => {
+      if (state.detail && !event.target.closest('#plbPop, .plb-secbtn, #plbWeek [data-act="week-open"]')) closeDetail(false);
     });
     $('plbWeek').addEventListener('click', (event) => {
       const block = event.target.closest('[data-act="week-open"]');
@@ -3447,7 +3784,7 @@
     });
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
-      if (event.target.closest && event.target.closest('#plbDetail')) { event.preventDefault(); closeDetail(true); return; }
+      if (state.detail && event.target.closest && event.target.closest('#plbPop, .plb-secbtn')) { event.preventDefault(); closeDetail(true); return; }
       // Only from the disclosure's own corner: Escape in the course search or on a tab is not
       // a request to close this, and must not pull the keyboard away from where it is.
       if (state.whyOpen && event.target.closest && event.target.closest('#plbWhyBtn, #plbWhy')) { event.preventDefault(); setWhy(false, true); }
@@ -3527,24 +3864,6 @@
     document.addEventListener('click', (event) => {
       if (state.moreOpen && !event.target.closest('#plbMore')) { state.moreOpen = false; renderStrip(); }
     });
-
-    const add = $('plbAdd');
-    add.addEventListener('input', renderList);
-    add.addEventListener('keydown', (event) => {
-      const options = $('plbAddList').querySelectorAll('[role="option"]').length;
-      if (event.key === 'ArrowDown' && options) { event.preventDefault(); highlight((activeOption + 1) % options); }
-      else if (event.key === 'ArrowUp' && options) { event.preventDefault(); highlight((activeOption - 1 + options) % options); }
-      else if (event.key === 'Enter') {
-        if (options) { event.preventDefault(); pickOption(activeOption < 0 ? 0 : activeOption); }
-      } else if (event.key === 'Escape') { closeList(); }
-    });
-    $('plbAddList').addEventListener('mousedown', (event) => {
-      const node = event.target.closest('[role="option"]');
-      if (!node) return;
-      event.preventDefault();
-      pickOption([...$('plbAddList').querySelectorAll('[role="option"]')].indexOf(node));
-    });
-    add.addEventListener('blur', closeList);
   }
 
   function init() {
@@ -3554,6 +3873,7 @@
     if ([...$('plbTerm').options].some((o) => o.value === term)) $('plbTerm').value = term;
     wire();
     renderTermBtn();
+    state.pick = newPick();
     renderRules();
     renderStudent();
     renderWeek();

@@ -8,7 +8,6 @@ full, and three that are nearly full (2, 5 and 6 seats left: the warning stops a
 
 from __future__ import annotations
 
-import copy
 import datetime as dt
 import re
 
@@ -17,7 +16,6 @@ from tests.planner_board_support import (
     OTHER_ID,
     OVERFLOWS,
     SAVED_ROWS,
-    STUDENT_PLAN,
     BuildFake,
     PlannerBoardCase,
     _mapping,
@@ -59,16 +57,21 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
     # ── helpers ──────────────────────────────────────────────────────────────
     @staticmethod
     def _button(code: str) -> str:
-        return f"#plbTable tr[data-code='{code}'] button[data-act='detail']"
+        return f"#plbPlanList button[data-act='detail'][data-code='{code}']"
 
     def _open_panel(self, page, code: str) -> None:
         page.click(self._button(code))
-        expect(page.locator("#plbDetail")).to_be_visible()
+        expect(page.locator("#plbPop")).to_be_visible()
         expect(page.locator("#plbDetailTitle")).to_contain_text(code)
+
+    def _reopen(self, page, code: str = "AI331") -> None:
+        """A click outside the popover (a rule, Build, a tab) closes it: open it again."""
+        if not page.locator("#plbPop").is_visible():
+            self._open_panel(page, code)
 
     def _section_text(self, page, tsid: int) -> str:
         return re.sub(
-            r"\s+", " ", page.locator(f"#plbDetail [data-tsid='{tsid}']").inner_text().strip()
+            r"\s+", " ", page.locator(f"#plbPop [data-tsid='{tsid}']").inner_text().strip()
         )
 
     def _stale(self, page, text=STALE, kind="changed", rebuild="Rebuild") -> None:
@@ -97,148 +100,126 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page = self._open(_fake())
         button = page.locator(self._button("AI331"))
         self.assertEqual(button.get_attribute("aria-expanded"), "false")
-        self.assertEqual(button.get_attribute("aria-controls"), "plbDetail")
+        self.assertEqual(button.get_attribute("aria-controls"), "plbPop")
+        self.assertEqual(button.get_attribute("aria-haspopup"), "dialog")
         self.assertEqual(self._text(page, self._button("AI331")), "Any section")
-        self.assertTrue(page.locator("#plbDetail").is_hidden())
-        self.assertTrue(
-            page.evaluate(
-                "document.querySelector('.plb-body').classList.contains('plb-body--nodetail')"
-            )
-        )
-        # Registered and blocked rows have no panel.
-        self.assertEqual(
-            page.locator("#plbTable tbody[data-group='registered'] [data-act]").count(), 0
-        )
-        self.assertEqual(
-            page.locator("#plbTable tbody[data-group='blocked'] [data-act]").count(), 0
-        )
+        self.assertTrue(page.locator("#plbPop").is_hidden())
+        # Registered and blocked rows have no popover.
+        self.assertEqual(page.locator("#plbPlanList .plb-prow--kept [data-act]").count(), 0)
+        self._rows(page, "blocked")
+        self.assertEqual(page.locator("#plbBlocked [data-act], #plbBlocked input").count(), 0)
         button.click()
-        expect(page.locator("#plbDetail")).to_be_visible()
+        expect(page.locator("#plbPop")).to_be_visible()
         self.assertEqual(page.get_attribute(self._button("AI331"), "aria-expanded"), "true")
-        self.assertEqual(page.get_attribute("#plbTable tr[data-code='AI331']", "data-open"), "true")
-        self.assertIsNone(page.get_attribute("#plbTable tr[data-code='AI342']", "data-open"))
-        self.assertEqual(page.get_attribute("#plbDetail", "role"), "region")
-        self.assertEqual(page.get_attribute("#plbDetail", "aria-labelledby"), "plbDetailTitle")
+        row = "#plbPlanList .plb-prow[data-code='{}']"
+        self.assertEqual(page.get_attribute(row.format("AI331"), "data-open"), "true")
+        self.assertIsNone(page.get_attribute(row.format("AI342"), "data-open"))
+        self.assertEqual(page.get_attribute("#plbPop", "role"), "dialog")
+        self.assertEqual(page.get_attribute("#plbPop", "aria-labelledby"), "plbDetailTitle")
         expect(page.locator("#plbDetailTitle")).to_be_focused()
         self.assertEqual(self._text(page, "#plbDetailTitle"), "AI331 Machine Learning · 3 cr")
-        self.assertFalse(
-            page.evaluate(
-                "document.querySelector('.plb-body').classList.contains('plb-body--nodetail')"
-            )
-        )
         # Any section is the default; every catalogue section is listed with its seats and flags.
-        self.assertTrue(page.locator("#plbDetail input[value='any']").is_checked())
-        ids = page.eval_on_selector_all(
-            "#plbDetail [data-tsid]", "ns => ns.map(n => n.dataset.tsid)"
-        )
+        self.assertTrue(page.locator("#plbPop input[value='any']").is_checked())
+        ids = page.eval_on_selector_all("#plbPop [data-tsid]", "ns => ns.map(n => n.dataset.tsid)")
         self.assertEqual(ids, ["11", "12", "16", "17", "18", "19"])
         m1 = self._section_text(page, 11)
         self.assertIn("§M1 Sun Tue 10:00-11:15", m1)
         self.assertIn("20 of 40 taken", m1)
         # A section that cannot be used says why once, in a sentence: no chip repeats it.
         self.assertIn("Not available: it clashes with a registered class", m1)
-        self.assertEqual(page.locator("#plbDetail [data-tsid='11'] .plb-flag--bad").count(), 0)
+        self.assertEqual(page.locator("#plbPop [data-tsid='11'] .plb-flag--bad").count(), 0)
         m2 = self._section_text(page, 12)
         self.assertIn("§M2 Mon Wed 10:00-11:15 For AI · 20 of 40 taken", m2)
         self.assertNotIn("clashes", m2.lower())
         self.assertIn("Not available: full sections are off", self._section_text(page, 16))
-        self.assertEqual(page.locator("#plbDetail [data-tsid='16'] .plb-flag--bad").count(), 0)
+        self.assertEqual(page.locator("#plbPop [data-tsid='16'] .plb-flag--bad").count(), 0)
         # Close puts the keyboard back on the row's button.
-        page.click("#plbDetail [data-act='dt-close']")
-        expect(page.locator("#plbDetail")).to_be_hidden()
+        page.click("#plbPop [data-act='dt-close']")
+        expect(page.locator("#plbPop")).to_be_hidden()
         expect(page.locator(self._button("AI331"))).to_be_focused()
         self.assertEqual(page.get_attribute(self._button("AI331"), "aria-expanded"), "false")
         # Escape does the same from inside the panel.
         page.click(self._button("AI331"))
         page.keyboard.press("Tab")
         page.keyboard.press("Escape")
-        expect(page.locator("#plbDetail")).to_be_hidden()
+        expect(page.locator("#plbPop")).to_be_hidden()
         expect(page.locator(self._button("AI331"))).to_be_focused()
-        # The same button closes it, and another row's button switches the panel.
-        page.click(self._button("AI331"))
+        # The same button closes it, and another row's button switches the popover (the row above
+        # the open one: a popover hangs over the rows under its own button).
         page.click(self._button("AI342"))
         expect(page.locator("#plbDetailTitle")).to_contain_text("AI342")
         self.assertEqual(self._section_text(page, 15).count("seats unknown"), 1)
         self.assertNotIn("seats left", self._section_text(page, 15))
+        page.click(self._button("AI331"))
+        expect(page.locator("#plbDetailTitle")).to_contain_text("AI331")
+        page.click(self._button("AI331"))
+        expect(page.locator("#plbPop")).to_be_hidden()
 
-    def test_the_panel_sits_beside_the_courses_wide_and_under_them_when_narrow(self) -> None:
-        page = self._open(_fake())
-        self._open_panel(page, "AI331")
-        courses = page.locator(".plb-courses").bounding_box()
-        detail = page.locator("#plbDetail").bounding_box()
-        self.assertGreater(detail["x"], courses["x"] + courses["width"] - 1)
-        self.assertLess(abs(detail["y"] - courses["y"]), 30)
-        page.context.close()
-        page = self._open(_fake(), width=900, height=900)
-        self._open_panel(page, "AI331")
-        table = page.locator("#plbTable").bounding_box()
-        detail = page.locator("#plbDetail").bounding_box()
-        self.assertGreaterEqual(detail["y"], table["y"] + table["height"] - 1)
-        self.assertGreaterEqual(detail["width"], table["width"] - 1)
-        page.context.close()
-        page = self._open(_fake(), width=390, height=844)
-        self._open_panel(page, "AI331")
-        table = page.locator("#plbTable").bounding_box()
-        detail = page.locator("#plbDetail").bounding_box()
-        build = page.locator("#plbBuild").bounding_box()
-        self.assertGreaterEqual(detail["y"], table["y"] + table["height"] - 1)
-        self.assertLess(detail["y"], build["y"])
-        self.assertEqual(page.get_attribute("#plbDetail", "role"), "region")
+    def test_the_popover_hangs_under_its_button_inside_the_plan_at_every_width(self) -> None:
+        for width, height in ((1440, 900), (900, 900), (390, 844)):
+            with self.subTest(width=width):
+                page = self._open(_fake(), width=width, height=height)
+                self._open_panel(page, "AI331")
+                button = page.locator(self._button("AI331")).bounding_box()
+                pop = page.locator("#plbPop").bounding_box()
+                plan = page.locator("#plbPlan").bounding_box()
+                self.assertGreaterEqual(pop["y"], button["y"] + button["height"])
+                self.assertLessEqual(pop["y"], button["y"] + button["height"] + 8)
+                self.assertGreaterEqual(pop["x"], plan["x"] - 1)
+                self.assertLessEqual(pop["x"] + pop["width"], plan["x"] + plan["width"] + 1)
+                self.assertEqual(page.get_attribute("#plbPop", "role"), "dialog")
+                page.context.close()
 
     def test_a_redraw_keeps_the_panel_open_and_the_focus_inside_it(self) -> None:
         page = self._open(_fake())
         self._open_panel(page, "AI331")
-        tick = page.locator("#plbDetail input[data-act='dt-must']")
-        tick.focus()
+        # Required, on the row, redraws the plan: the keyboard stays on it (the popover, a click
+        # outside it, closes).
+        required = page.locator("#plbPlanList button[data-act='must'][data-code='AI331']")
+        required.focus()
         page.keyboard.press("Space")
-        expect(page.locator("#plbDetail input[data-act='dt-must']")).to_be_checked()
-        expect(page.locator("#plbDetail input[data-act='dt-must']")).to_be_focused()
-        # The row's own tick is the same state.
-        self.assertTrue(
-            page.locator("#plbTable input[data-act='must'][data-code='AI331']").is_checked()
-        )
-        page.locator("#plbDetail input[value='12']").focus()
+        self.assertEqual(required.get_attribute("aria-pressed"), "true")
+        expect(required).to_be_focused()
+        expect(page.locator("#plbPop")).to_be_hidden()
+        self._open_panel(page, "AI331")
+        page.locator("#plbPop input[value='12']").focus()
         page.keyboard.press("Space")
-        expect(page.locator("#plbDetail input[value='12']")).to_be_checked()
-        expect(page.locator("#plbDetail input[value='12']")).to_be_focused()
-        self.assertEqual(self._cell(page, "AI331"), "Only §M2")
+        expect(page.locator("#plbPop input[value='12']")).to_be_checked()
+        expect(page.locator("#plbPop input[value='12']")).to_be_focused()
+        self.assertEqual(self._cell(page, "AI331"), "Section M2")
 
     def test_the_panel_closes_when_its_course_goes_or_another_student_loads(self) -> None:
         fake = _fake()
         page = self._open(fake)
-        self._open_panel(page, "STAT305")
-        thin = copy.deepcopy(STUDENT_PLAN)
-        thin["terms"][0]["courses"] = [
-            c for c in thin["terms"][0]["courses"] if c["course_code"] != "STAT305"
-        ]
-        fake.plan_payload = thin
-        self._rules(page, elig="relaxed")  # reloads the suggestions
-        expect(page.locator("#plbDetail")).to_be_hidden()
-        self.assertEqual(page.eval_on_selector_all("#plbDetail *", "ns => ns.length"), 0)
+        self._open_panel(page, "AI342")
+        page.click("#plbPlanList button[data-act='remove'][data-code='AI342']")
+        expect(page.locator("#plbPop")).to_be_hidden()
+        self.assertEqual(page.eval_on_selector_all("#plbPop *", "ns => ns.length"), 0)
         page.context.close()
         page = self._open(_fake())
         self._open_panel(page, "AI331")
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbContext")).to_have_text(f"{OTHER_ID} · 1448/1")
-        expect(page.locator("#plbDetail")).to_be_hidden()
+        expect(page.locator("#plbPop")).to_be_hidden()
 
     # ── the panel: pinning ───────────────────────────────────────────────────
     def test_a_pin_travels_in_the_build_body_in_the_shape_the_current_page_sends(self) -> None:
         fake = _fake()
         page = self._open(fake)
         self._open_panel(page, "AI331")
-        page.check("#plbDetail input[value='12']")
-        self.assertEqual(self._cell(page, "AI331"), "Only §M2")
+        page.check("#plbPop input[value='12']")
+        self.assertEqual(self._cell(page, "AI331"), "Section M2")
         self.assertIn("AI331: only §M2 may be used.", self._text(page, "#plbStatus"))
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild")
         item = [c for c in fake.build_bodies[0]["shortlist"] if c["course_code"] == "AI331"][0]
         self.assertEqual(item["pinned_sections"], [{"term_section_id": 12, "section": "M2"}])
+        self._reopen(page)
         other = [c for c in fake.build_bodies[0]["shortlist"] if c["course_code"] == "AI342"][0]
         self.assertNotIn("pinned_sections", other)
         # Moving the allowance to another section: tick it, then untick the first.
-        page.check("#plbDetail input[value='17']")
-        page.uncheck("#plbDetail input[value='12']")
+        page.check("#plbPop input[value='17']")
+        page.uncheck("#plbPop input[value='12']")
         page.click("#plbBuild")
         expect(page.locator("#plbBuildLine")).to_have_text("")
         item = [c for c in fake.build_bodies[1]["shortlist"] if c["course_code"] == "AI331"][0]
@@ -248,8 +229,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         fake = _fake()
         page = self._open(fake)
         self._open_panel(page, "AI331")
-        page.check("#plbDetail input[value='12']")
-        page.check("#plbDetail input[value='any']")
+        page.check("#plbPop input[value='12']")
+        page.check("#plbPop input[value='any']")
         self.assertEqual(self._cell(page, "AI331"), "Any section")
         self.assertIn("AI331: any section may be used.", self._text(page, "#plbStatus"))
         page.click("#plbBuild")
@@ -262,25 +243,27 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
     ) -> None:
         page = self._open(_fake())
         self._open_panel(page, "AI331")
-        self.assertTrue(page.locator("#plbDetail input[value='11']").is_disabled())  # clashes
-        self.assertTrue(page.locator("#plbDetail input[value='16']").is_disabled())  # full
-        self.assertFalse(page.locator("#plbDetail input[value='17']").is_disabled())
+        self.assertTrue(page.locator("#plbPop input[value='11']").is_disabled())  # clashes
+        self.assertTrue(page.locator("#plbPop input[value='16']").is_disabled())  # full
+        self.assertFalse(page.locator("#plbPop input[value='17']").is_disabled())
         # Allow full sections and ignore registered courses: both become usable.
         self._rules(page, full=True, mode="ignore")
+        self._reopen(page)
         for tsid in (11, 16):
-            self.assertFalse(page.locator(f"#plbDetail input[value='{tsid}']").is_disabled())
+            self.assertFalse(page.locator(f"#plbPop input[value='{tsid}']").is_disabled())
         self.assertNotIn("Clashes", self._section_text(page, 11))
-        page.check("#plbDetail input[value='16']")
-        page.check("#plbDetail input[value='11']")
+        page.check("#plbPop input[value='16']")
+        page.check("#plbPop input[value='11']")
         self._rules(page, full=False, mode="keep")
+        self._reopen(page)
         for tsid in (11, 16):
-            self.assertTrue(page.locator(f"#plbDetail input[value='{tsid}']").is_checked())
+            self.assertTrue(page.locator(f"#plbPop input[value='{tsid}']").is_checked())
             self.assertIn("Ticked, but it can no longer be used.", self._section_text(page, tsid))
         self.assertIn("clashes with a registered class", self._section_text(page, 11))
         # The unusable ticks are still in the plan: nothing dropped them.
-        self.assertEqual(self._cell(page, "AI331"), "Only §M1 or §M3")
+        self.assertEqual(self._cell(page, "AI331"), "Sections M1, M3")
         fake_item = page.evaluate(
-            "() => document.querySelector(\"#plbDetail input[value='11']\").checked"
+            "() => document.querySelector(\"#plbPop input[value='11']\").checked"
         )
         self.assertTrue(fake_item)
 
@@ -288,18 +271,19 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         fake = _fake()
         page = self._open(fake)
         self._open_panel(page, "AI331")
-        page.check("#plbDetail input[value='12']")
+        page.check("#plbPop input[value='12']")
         fake.catalog_payload = {
             **DETAIL_CATALOG,
             "sections": [s for s in DETAIL_CATALOG["sections"] if s["term_section_id"] != 12],
         }
         self._rules(page, prog=False)  # reloads the catalogue
-        expect(page.locator("#plbDetail [data-tsid='12']")).to_contain_text("not in the current")
-        self.assertTrue(page.locator("#plbDetail input[value='12']").is_checked())
+        self._reopen(page)
+        expect(page.locator("#plbPop [data-tsid='12']")).to_contain_text("not in the current")
+        self.assertTrue(page.locator("#plbPop input[value='12']").is_checked())
         self.assertIn(
             "Ticked, but it is not in the current section list.", self._section_text(page, 12)
         )
-        self.assertEqual(self._cell(page, "AI331"), "Only §M2")
+        self.assertEqual(self._cell(page, "AI331"), "Section M2")
 
     def test_the_panel_names_the_options_that_chose_each_section(self) -> None:
         page, _ = self._built(_fake())
@@ -308,31 +292,29 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertIn("in C1, B2", self._section_text(page, 11))
         self.assertNotIn(" in ", " " + self._section_text(page, 17))
         # A stale build still says it.
-        page.click("#plbDetail input[value='17']")
+        page.click("#plbPop input[value='17']")
         self._stale(page)
         self.assertIn("in B1, C2, B3", self._section_text(page, 12))
 
-    def test_a_course_not_in_the_plan_is_read_only_until_it_is_added(self) -> None:
+    def test_a_course_not_in_the_plan_has_no_popover_its_sections_are_on_its_row(self) -> None:
         page = self._open(_fake())
-        self._open_panel(page, "CS351")
-        self.assertEqual(page.locator("#plbDetail input[type='radio']").count(), 0)
-        self.assertIn("not in the plan yet", self._text(page, "#plbDetail"))
-        # No radio is drawn here, and its absence must not print the word "null".
-        self.assertNotIn("null", self._text(page, "#plbDetail"))
-        self.assertIn("37 of 40 taken", self._section_text(page, 14))
-        self.assertIn("3 seats left", self._section_text(page, 14))
-        self.assertEqual(page.locator("#plbDetail [data-act='dt-remove']").count(), 0)
-        page.click("#plbDetail [data-act='dt-add']")
+        self.assertEqual(page.locator("#plbPlanList [data-code='CS351']").count(), 0)
+        page.click("#plbAvailList [data-code='CS351'] button[data-act='open']")
+        row = self._text(page, "#plbAvailList [data-code='CS351'] .plb-sec[data-tsid='14']")
+        self.assertIn("Thu 09:00-11:30", row)
+        self.assertIn("3 left", row)
+        self.assertNotIn("null", self._text(page, "#plbAvailList [data-code='CS351']"))
+        # Adding it gives it a popover of its own, with the same sections.
+        page.check("#plbAvailList [data-code='CS351'] input[data-act='tick']")
+        page.click("#plbXAdd")
         self.assertEqual(self._rows(page, "new")[-1], "CS351")
-        expect(page.locator("#plbDetailTitle")).to_contain_text("CS351")
-        expect(page.locator("#plbDetail [data-act='dt-remove']")).to_be_visible()
-        self.assertEqual(page.locator("#plbDetail input[type='radio']").count(), 2)
-        expect(page.locator("#plbDetailTitle")).to_be_focused()
-        self.assertEqual(page.get_attribute("#plbTable tr[data-code='CS351']", "data-open"), "true")
-        # Remove from plan puts it back among the suggestions, panel still open and read-only.
-        page.click("#plbDetail [data-act='dt-remove']")
+        self._open_panel(page, "CS351")
+        self.assertIn("37 of 40 taken", self._section_text(page, 14))
+        self.assertEqual(page.locator("#plbPop input[type='radio']").count(), 2)
+        # Removing it closes its popover and puts it back among the courses to add.
+        page.click("#plbPlanList button[data-act='remove'][data-code='CS351']")
+        expect(page.locator("#plbPop")).to_be_hidden()
         self.assertIn("CS351", self._rows(page, "could"))
-        expect(page.locator("#plbDetail [data-act='dt-add']")).to_be_visible()
 
     # ── seat warnings ────────────────────────────────────────────────────────
     def test_few_seats_show_in_the_panel_the_row_and_the_tab_and_unknown_never_does(self) -> None:
@@ -394,26 +376,26 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
 
     # ── a build goes out of date ─────────────────────────────────────────────
     def test_each_change_to_the_plan_or_a_rule_marks_the_build_out_of_date(self) -> None:
-        for change in ("add", "remove", "must", "rule", "pin", "panel-must", "panel-remove"):
+        for change in ("add", "remove", "must", "rule", "pin", "add-all", "remove-all"):
             with self.subTest(change=change):
                 page, fake = self._built(_fake())
                 self.assertIsNone(page.get_attribute("#plbStrip", "data-stale"))
                 if change == "add":
-                    page.click("#plbTable button[data-act='add'][data-code='CS351']")
+                    self._add(page, "CS351")
+                elif change == "add-all":
+                    page.select_option("#plbSource", "eligible")
+                    page.click("#plbXAddAll")
+                elif change == "remove-all":
+                    page.click("#plbXRemAll")
                 elif change == "remove":
-                    page.click("#plbTable button[data-act='remove'][data-code='AI342']")
+                    page.click("#plbPlanList button[data-act='remove'][data-code='AI342']")
                 elif change == "must":
-                    page.check("#plbTable input[data-act='must'][data-code='AI331']")
+                    page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
                 elif change == "rule":
                     self._rules(page, full=True)
                 else:
                     self._open_panel(page, "AI331")
-                    if change == "pin":
-                        page.check("#plbDetail input[value='12']")
-                    elif change == "panel-must":
-                        page.check("#plbDetail input[data-act='dt-must']")
-                    else:
-                        page.click("#plbDetail [data-act='dt-remove']")
+                    page.check("#plbPop input[value='12']")
                 self._stale(page)
                 # The tabs can still be selected and read.
                 self._pick(page, "B2")  # one of the "More options"
@@ -436,7 +418,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
 
     def test_a_row_added_after_the_build_says_it_is_not_in_the_build(self) -> None:
         page, _ = self._built(_fake())
-        page.click("#plbTable button[data-act='add'][data-code='CS351']")
+        self._add(page, "CS351")
         self.assertEqual(self._cell(page, "CS351"), "not in this build")
         self.assertEqual(
             self._cell(page, "AI331"), "§M1"
@@ -445,7 +427,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
     def test_another_student_and_a_save_still_remove_the_options(self) -> None:
         page, _ = self._built(_fake())
         self._open_panel(page, "AI331")
-        page.click("#plbDetail input[value='12']")
+        page.click("#plbPop input[value='12']")
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbBuildLine")).to_have_text(
             "The plan changed. Build again to see options."
@@ -501,9 +483,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page.click("#plbReview")
         page.evaluate(
             """() => {
-              const box = document.querySelector("#plbTable input[data-act='must'][data-code='AI331']");
-              box.checked = true;
-              box.dispatchEvent(new Event('change', { bubbles: true }));
+              document.querySelector("#plbPlanList button[data-act='must'][data-code='AI331']").click();
             }"""
         )
         expect(page.locator("#plbApplyDialog")).to_be_hidden()
@@ -586,7 +566,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
     def test_the_age_check_does_not_take_the_keyboard_away(self) -> None:
         # The check runs on a timer and redraws the strip and the table: whoever is on a tab or
         # on a row's control at minute 30 must still be there afterwards.
-        remove = "#plbTable tr[data-code='AI331'] [data-act='remove']"
+        remove = "#plbPlanList [data-act='remove'][data-code='AI331']"
         for selector in ("#plbTab_B1", remove):
             with self.subTest(selector=selector):
                 page, _ = self._built(_fake(), clock=True)
@@ -600,7 +580,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page, _ = self._built(_fake())
         page.click("#plbWhyBtn")
         expect(page.locator("#plbWhy")).to_be_visible()
-        for selector in ("#plbAdd", "#plbTab_B1"):
+        for selector in ("#plbFind", "#plbTab_B1"):
             with self.subTest(selector=selector):
                 page.focus(selector)
                 page.keyboard.press("Escape")
@@ -818,8 +798,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(page.evaluate("document.documentElement.dir"), "rtl")
         self.assertEqual(self._text(page, "#plbWhyBtn"), "لماذا هذه الخيارات")
         self._open_panel(page, "AI331")
-        self.assertEqual(self._text(page, "#plbDetail [data-act='dt-close']"), "إغلاق")
-        text = self._text(page, "#plbDetail")
+        self.assertEqual(self._text(page, "#plbPop [data-act='dt-close']"), "إغلاق")
+        text = self._text(page, "#plbPop")
         for arabic in ("أي شعبة", "تتعارض مع مقرر مسجّل", "20 من 40 مشغولة", "ممتلئة", "الشعبة"):
             self.assertIn(arabic, text)
         self.assertIn("في B1، C2، B3", self._section_text(page, 12))
@@ -827,13 +807,13 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertIn(
             "غير متاحة: الشُعب الممتلئة غير مسموحة في القواعد.", self._section_text(page, 16)
         )
-        self.assertEqual(self._text(page, "#plbDetail [data-act='dt-remove']"), "إزالة من الخطة")
-        # Mirrored: the panel is the column beside the courses, which is the left edge in right-to-left.
-        self.assertLess(
-            page.locator("#plbDetail").bounding_box()["x"],
-            page.locator(".plb-courses").bounding_box()["x"],
-        )
-        page.check("#plbDetail input[value='12']")
+        # Mirrored: the plan is the left panel in right-to-left, and the popover hangs inside it.
+        plan = page.locator("#plbPlan").bounding_box()
+        pop = page.locator("#plbPop").bounding_box()
+        self.assertLess(plan["x"], page.locator("#plbAvail").bounding_box()["x"])
+        self.assertGreaterEqual(pop["x"], plan["x"] - 1)
+        self.assertLessEqual(pop["x"] + pop["width"], plan["x"] + plan["width"] + 1)
+        page.check("#plbPop input[value='12']")
         self._stale(
             page, "تغيّرت الخطة منذ هذا البناء. أعد البناء قبل التطبيق.", rebuild="أعد البناء"
         )
@@ -873,7 +853,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
                     self._open_panel(page, "AI331")
                     found = list(page.evaluate(OVERFLOWS))
                     page.click("#plbWhyBtn")
-                    page.check("#plbDetail input[value='12']")  # a stale build, with the panel open
+                    self._reopen(page)
+                    page.check("#plbPop input[value='12']")  # a stale build, with the panel open
                     found += page.evaluate(OVERFLOWS)
                     page.click("#plbTab_B1")
                     found += page.evaluate(OVERFLOWS)
@@ -890,8 +871,8 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
             page = self._open(_fake(), width=width, height=900 if width > 400 else 844)
             self._open_panel(page, "AI331")
             sizes = page.evaluate(
-                "() => [...document.querySelectorAll('#plbDetail .plb-dt-close, #plbDetail .btn, "
-                "#plbDetail .plb-dt-sec, #plbDetail .plb-dt-must, .plb-sc-btn')]"
+                "() => [...document.querySelectorAll('#plbPop .plb-dt-close, #plbPop .btn, "
+                "#plbPop .plb-dt-sec, .plb-secbtn')]"
                 ".map(e => [e.className, Math.round(e.getBoundingClientRect().height)])"
             )
             self.assertEqual([s for s in sizes if s[1] < floor], [], f"{width}px")
@@ -923,7 +904,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
                     )
                     if width == 1440 and (len(stats) != 4 or len({s[0] for s in stats}) != 1):
                         problems.append(f"{label}: the four facts are not on one row: {stats}")
-                    for sel in (".plb-nb", "tbody[data-group='could'] .plb-grp-end"):
+                    for sel in (".plb-nb", "#plbPlanLoad", "#plbAvailTicked"):
                         for broken in page.eval_on_selector_all(
                             sel,
                             "ns => ns.filter(n => new Set([...n.getClientRects()]"
@@ -936,10 +917,4 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         page, _ = self._built(_fake(), language="ar", width=1152, height=800)
         self.assertGreater(page.locator(".plb-nb").count(), 0)
         self.assertIn("1 س 45 د", self._text(page, "#plbTab_B1"))
-        self.assertEqual(
-            page.eval_on_selector_all(
-                "tbody[data-group='could'] .plb-grp-end",
-                "ns => ns.map(n => n.textContent)",
-            ),
-            ["3 ساعات متاحة"],
-        )
+        self.assertIn("3 ساعات متاحة", self._text(page, "#plbMeterLine"))
