@@ -7840,6 +7840,7 @@ html[data-theme="dark"] .plb {
   font-family: var(--font-serif); font-size: var(--text-numeral); font-weight: 400; line-height: 1.1; color: var(--ink);
   overflow-wrap: anywhere;
 }
+.plb-big-u { font-family: var(--font-body); font-size: var(--text-sm); color: var(--t3); }
 .plb-big--name { font-size: var(--text-xl); line-height: 1.25; }
 .plb-big--muted { font-size: var(--text-md); line-height: 1.4; color: var(--t3); }
 .plb-smeta { font-size: var(--text-sm); line-height: 18px; color: var(--t3); overflow-wrap: anywhere; }
@@ -8319,8 +8320,10 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
   .plb-guide::before { display: none; }
   .plb-grad:has(+ .plb-guide[hidden]) { grid-column: auto; }
 }
-@container plb (max-width: 480px) {
+@container plb (max-width: 320px) {
   .plb-sgrid { grid-template-columns: minmax(0, 1fr); }
+}
+@container plb (max-width: 480px) {
   .plb-rc-row, .plb-seg { width: 100%; }
   .plb-seg-o { flex: 1 1 0; text-align: center; }
   .plb-rc-row--max .plb-rc-in { width: 100%; }

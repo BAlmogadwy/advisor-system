@@ -802,7 +802,9 @@
         el('div', 'plb-smeta', `${T.idLabel} `, bdi(st.student_id), st.program ? ' · ' : null, st.program ? bdi(st.program) : null,
           advisor ? ` · ${T.advisor} ` : null, advisor ? bdi(advisor) : null)),
       fact(T.bandProgress,
-        el('div', 'plb-big', progress ? bdi(`${progress.done}/${progress.total}`) : '—'),
+        el('div', 'plb-big', ...(progress
+          ? [bdi(`${progress.done} / ${progress.total}`), ' ', el('span', 'plb-big-u', T.creditUnit(progress.total))]
+          : ['—'])),
         progress ? (() => {
           const bar = el('div', 'plb-bar', el('i'));
           bar.firstChild.style.inlineSize = `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%`;
@@ -1149,8 +1151,9 @@
     const codes = [...new Set(rows.map((r) => String(r.course_code || r.course_key || '')).filter(Boolean))];
     if (!codes.length) return [T.curTTNone];
     return codes.flatMap((code, i) => [
-      ...(i ? ['; '] : []), bdi(code), ' ',
-      ...whenNodes(rows.filter((r) => String(r.course_code || r.course_key || '') === code)),
+      ...(i ? [IS_AR ? '؛ ' : '; '] : []),
+      el('bdi', '', bdi(code), ' ',
+        ...whenNodes(rows.filter((r) => String(r.course_code || r.course_key || '') === code))),
     ]);
   }
   // The "Current timetable" disclosure under the student band: closed by default, the registered

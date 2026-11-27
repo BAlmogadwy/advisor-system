@@ -128,6 +128,8 @@ class PlannerBoardZonesTests(PlannerBoardCase):
     def test_the_current_timetable_says_so_in_arabic_and_without_timed_classes(self) -> None:
         page = self._open(BuildFake(), language="ar")
         self.assertEqual(self._text(page, ".plb-curtt-t"), "الجدول الحالي")
+        self.assertIn("؛ ", self._text(page, "#plbCurTTDigest"))
+        self.assertEqual(page.locator("#plbCurTTDigest > bdi").count(), 3)
         expect(page.locator(".plb-curtt-show")).to_have_text("عرض")
         page.click("#plbCurTT > summary")
         expect(page.locator(".plb-curtt-hide")).to_have_text("إخفاء")
@@ -161,7 +163,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         self.assertTrue(facts[0].startswith("STUDENT Sample Student"), facts[0])
         self.assertIn("4500000 · AI", facts[0])
         # plan credits passed over the plan's, and the GPA as the small line under it
-        expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_have_text("6/30")
+        expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_have_text("6 / 30 cr")
         self.assertIn("GPA 3.42", self._text(page, "#plbStudent .plb-sf:nth-child(2)"))
         self.assertEqual(
             page.eval_on_selector("#plbStudent .plb-bar > i", "n => n.style.inlineSize"), "20%"
@@ -188,7 +190,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_have_text("—")
         self.assertEqual(page.locator("#plbStudent .plb-bar").count(), 0)
         fake.pending_plan.pop().fulfill(json=_plan_with_passed())
-        expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_have_text("6/30")
+        expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_have_text("6 / 30 cr")
         page.context.close()
         failing = BuildFake()
         failing.plan_status = 500
@@ -205,7 +207,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         text = self._text(page, "#plbStudent")
         for word in ("الطالب", "التقدم", "المسجّل الآن", "يتخرّج كما هو الحال", "بعد أول بناء"):
             self.assertIn(word, text)
-        expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_have_text("6/30")
+        expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_contain_text("6 / 30")
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("أعد البناء")
         done = self._text(page, "#plbStudent .plb-sf:nth-child(4) .plb-big")
@@ -227,8 +229,8 @@ class PlannerBoardZonesTests(PlannerBoardCase):
                     if width == 1440:
                         self.assertEqual(rows, 1, lefts)  # four facts in one row
                     if width == 390:
-                        self.assertEqual(len({left for _, left in lefts}), 1, lefts)  # one column
-                        self.assertEqual(rows, 4)
+                        self.assertEqual(len({left for _, left in lefts}), 2, lefts)  # two columns
+                        self.assertEqual(rows, 2)
                     # the six rules are all reachable at every width
                     for selector in (
                         "#plbRegKeep",
