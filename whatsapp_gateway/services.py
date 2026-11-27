@@ -21,8 +21,8 @@ from core.services.rbac import (
     get_user_role,
     get_user_scope,
 )
-from core.services.sendgrid_email import SendGridDeliveryError, send_transactional_email
 from core.services.student_identity import student_email
+from core.services.transactional_email import EmailDeliveryError, send_transactional_email
 from core.services.virtual_advisor import answer_virtual_advisor
 from whatsapp_gateway.models import (
     WhatsAppConversation,
@@ -212,7 +212,7 @@ def start_link_challenge(
                 expires_at=expires_at,
             )
         # Keep provider admission outside the challenge transaction. The shared
-        # SendGrid counter must commit before the network request and must not be
+        # The provider counter must commit before the network request and must not be
         # rolled back when delivery fails (the provider may still have counted an
         # ambiguous timeout against its allowance).
         send_transactional_email(
@@ -224,7 +224,7 @@ def start_link_challenge(
                 "This code expires in 5 minutes. If you did not request it, ignore this email."
             ),
         )
-    except SendGridDeliveryError:
+    except EmailDeliveryError:
         # The provider adapter has already collapsed the failure to a safe code.
         # Do not surface recipients, message contents, or provider response bodies.
         WhatsAppOtpChallenge.objects.filter(pk=challenge.pk).delete()

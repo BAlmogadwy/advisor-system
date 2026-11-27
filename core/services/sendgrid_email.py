@@ -26,6 +26,10 @@ class SendGridDeliveryError(Exception):
     """A safe-to-log SendGrid failure category (never the provider response)."""
 
 
+def sanitize_message_id(raw: str) -> str:
+    return _MESSAGE_ID_SAFE.sub("", raw)[:255]
+
+
 def _message_id(headers: Any) -> str:
     """Return a bounded, display-safe X-Message-ID from an SDK response."""
 
@@ -48,7 +52,7 @@ def _message_id(headers: Any) -> str:
             raw = raw[0] if raw else ""
         if isinstance(raw, bytes):
             raw = raw.decode("ascii", errors="ignore")
-        return _MESSAGE_ID_SAFE.sub("", str(raw))[:255]
+        return sanitize_message_id(str(raw))
     except Exception:  # noqa: BLE001 - an optional receipt must never fail delivery
         return ""
 

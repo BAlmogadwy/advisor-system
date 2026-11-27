@@ -1,4 +1,4 @@
-"""Send a data-free test email through Twilio SendGrid.
+"""Send a data-free test email through the configured provider.
 
 python manage.py send_test_email --to you@example.com
 """
@@ -6,11 +6,11 @@ python manage.py send_test_email --to you@example.com
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from core.services.sendgrid_email import SendGridDeliveryError, send_transactional_email
+from core.services.transactional_email import EmailDeliveryError, send_transactional_email
 
 
 class Command(BaseCommand):
-    help = "Send a data-free test email to confirm Twilio SendGrid delivery."
+    help = "Send a data-free test email to confirm transactional email delivery."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -21,26 +21,32 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         to = str(options["to"] or "").strip()
-        enabled = bool(getattr(settings, "STUDENT_OTP_SENDGRID_ENABLED", False))
-        self.stdout.write(
-            "provider=sendgrid "
-            f"enabled={'true' if enabled else 'false'} "
-            f"api_key={'set' if settings.SENDGRID_API_KEY else 'missing'} "
-            f"from_email={'set' if settings.SENDGRID_FROM_EMAIL else 'missing'} "
-            f"timeout_seconds={settings.SENDGRID_TIMEOUT_SECONDS}"
-        )
-        if not enabled:
-            raise CommandError("SendGrid student email is disabled.")
+        provider = settings.STUDENT_OTP_EMAIL_PROVIDER
+        if provider == "sendgrid":
+            label = "SendGrid"
+            enabled = settings.STUDENT_OTP_SENDGRID_ENABLED
+            self.stdout.write(
+                "provider=sendgrid "
+                f"enabled={'true' if enabled else 'false'} "
+                f"api_key={'set' if settings.SENDGRID_API_KEY else 'missing'} "
+                f"from_email={'set' if settings.SENDGRID_FROM_EMAIL else 'missing'} "
+                f"timeout_seconds={settings.SENDGRID_TIMEOUT_SECONDS}"
+            )
+            if not enabled:
+                raise CommandError("SendGrid student email is disabled.")
+        else:
+            label = "Brevo / Amazon SES" if provider == "brevo_ses" else "Brevo"
+            self.stdout.write(f"provider={provider}")
         try:
             message_id = send_transactional_email(
                 to,
-                "Advisor system — SendGrid delivery test",
+                f"Advisor system — {label} delivery test",
                 "This is a delivery test. It contains no student data or verification code.",
             )
-        except SendGridDeliveryError:
-            raise CommandError("SendGrid did not accept the test message.") from None
+        except EmailDeliveryError:
+            raise CommandError(f"{label} did not accept the test message.") from None
         self.stdout.write(
             self.style.SUCCESS(
-                f"SendGrid accepted the test message; message_id={message_id or 'not-returned'}."
+                f"{label} accepted the test message; message_id={message_id or 'not-returned'}."
             )
         )

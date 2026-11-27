@@ -377,8 +377,8 @@ if TELEGRAM_SEND_TIMETABLE_IMAGES or TELEGRAM_SEND_GRADUATION_IMAGES:
         if _loopback not in ALLOWED_HOSTS:
             ALLOWED_HOSTS.append(_loopback)
 
-# Twilio SendGrid is the production student-email transport.  It is disabled by
-# default so a local checkout never opens an external socket accidentally.
+# Existing deployments may continue to select SendGrid during rollout.
+STUDENT_OTP_EMAIL_PROVIDER = os.getenv("STUDENT_OTP_EMAIL_PROVIDER", "sendgrid").strip().lower()
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
 SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "").strip()
 SENDGRID_FROM_NAME = os.getenv("SENDGRID_FROM_NAME", "بوابة الطالب").strip() or "بوابة الطالب"
@@ -389,6 +389,16 @@ SENDGRID_TIMEOUT_SECONDS = int(os.getenv("SENDGRID_TIMEOUT_SECONDS", "3"))
 SENDGRID_MAX_SUBMISSIONS = int(os.getenv("SENDGRID_MAX_SUBMISSIONS", "4700"))
 SENDGRID_SUBMISSION_WINDOW_SECONDS = int(os.getenv("SENDGRID_SUBMISSION_WINDOW_SECONDS", "86400"))
 STUDENT_OTP_SENDGRID_ENABLED = os.getenv("STUDENT_OTP_SENDGRID_ENABLED", "false").lower() == "true"
+STUDENT_OTP_FROM_EMAIL = os.getenv("STUDENT_OTP_FROM_EMAIL", "").strip()
+STUDENT_OTP_FROM_NAME = os.getenv("STUDENT_OTP_FROM_NAME", SENDGRID_FROM_NAME).strip()
+STUDENT_OTP_EMAIL_TIMEOUT_SECONDS = int(os.getenv("STUDENT_OTP_EMAIL_TIMEOUT_SECONDS", "5"))
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+BREVO_FROM_EMAIL = os.getenv("BREVO_FROM_EMAIL", "").strip()
+BREVO_MAX_SUBMISSIONS = int(os.getenv("BREVO_MAX_SUBMISSIONS", "300"))
+AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1").strip()
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "").strip()
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
+AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN", "").strip()
 STUDENT_OTP_RESEND_DELAY_SECONDS = int(os.getenv("STUDENT_OTP_RESEND_DELAY_SECONDS", "50"))
 STUDENT_OTP_RESPONSE_FLOOR_SECONDS = max(
     0.0, float(os.getenv("STUDENT_OTP_RESPONSE_FLOOR_SECONDS", "3.5"))
@@ -434,7 +444,7 @@ EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "").strip() or (
 )
 # Historical environment-variable name retained so existing worker/cron settings
 # do not drift during deployment. It now means that the process cannot serve the
-# public student-email routes and therefore does not need SendGrid credentials.
+# public student-email routes and therefore does not need email credentials.
 ALLOW_NO_SMTP_PROCESS = os.getenv("ALLOW_NO_SMTP_PROCESS", "false").lower() == "true"
 DEFAULT_FROM_EMAIL = (
     os.getenv("DEFAULT_FROM_EMAIL", "").strip() or SENDGRID_FROM_EMAIL or "advisor-bot@localhost"
@@ -475,16 +485,51 @@ def _require_production_sendgrid(
         raise ImproperlyConfigured("SENDGRID_SUBMISSION_WINDOW_SECONDS must be positive.")
 
 
-_require_production_sendgrid(
-    debug=DEBUG,
-    allow_no_smtp_process=ALLOW_NO_SMTP_PROCESS,
-    enabled=STUDENT_OTP_SENDGRID_ENABLED,
-    api_key=SENDGRID_API_KEY,
-    from_email=SENDGRID_FROM_EMAIL,
-    async_email=STUDENT_OTP_ASYNC_EMAIL,
-    max_submissions=SENDGRID_MAX_SUBMISSIONS,
-    submission_window_seconds=SENDGRID_SUBMISSION_WINDOW_SECONDS,
-)
+if STUDENT_OTP_EMAIL_PROVIDER == "sendgrid":
+    _require_production_sendgrid(
+        debug=DEBUG,
+        allow_no_smtp_process=ALLOW_NO_SMTP_PROCESS,
+        enabled=STUDENT_OTP_SENDGRID_ENABLED,
+        api_key=SENDGRID_API_KEY,
+        from_email=SENDGRID_FROM_EMAIL,
+        async_email=STUDENT_OTP_ASYNC_EMAIL,
+        max_submissions=SENDGRID_MAX_SUBMISSIONS,
+        submission_window_seconds=SENDGRID_SUBMISSION_WINDOW_SECONDS,
+    )
+elif STUDENT_OTP_EMAIL_PROVIDER in {"brevo", "brevo_ses"}:
+    if not DEBUG and not ALLOW_NO_SMTP_PROCESS:
+        if STUDENT_OTP_ASYNC_EMAIL:
+            raise ImproperlyConfigured("STUDENT_OTP_ASYNC_EMAIL must be false in production.")
+        credentials = {"BREVO_API_KEY": BREVO_API_KEY}
+        if STUDENT_OTP_EMAIL_PROVIDER == "brevo_ses":
+            credentials.update(
+                STUDENT_OTP_FROM_EMAIL=STUDENT_OTP_FROM_EMAIL,
+                AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID,
+                AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY,
+            )
+            if AWS_REGION != "ap-southeast-1":
+                raise ImproperlyConfigured(
+                    "AWS_REGION must be ap-southeast-1 for Advisor SES delivery."
+                )
+        else:
+            credentials["BREVO_FROM_EMAIL or STUDENT_OTP_FROM_EMAIL"] = (
+                BREVO_FROM_EMAIL or STUDENT_OTP_FROM_EMAIL
+            )
+        missing = [name for name, value in credentials.items() if not value]
+        if missing:
+            raise ImproperlyConfigured(
+                ", ".join(missing) + " are required for production student OTP delivery."
+            )
+        if not 1 <= BREVO_MAX_SUBMISSIONS <= 300:
+            raise ImproperlyConfigured("BREVO_MAX_SUBMISSIONS must be between 1 and 300.")
+        if not 1 <= STUDENT_OTP_EMAIL_TIMEOUT_SECONDS <= 60:
+            raise ImproperlyConfigured(
+                "STUDENT_OTP_EMAIL_TIMEOUT_SECONDS must be between 1 and 60."
+            )
+        if min(SENDGRID_MAX_SUBMISSIONS, SENDGRID_SUBMISSION_WINDOW_SECONDS) < 1:
+            raise ImproperlyConfigured("The shared email submission limits must be positive.")
+else:
+    raise ImproperlyConfigured("STUDENT_OTP_EMAIL_PROVIDER must be sendgrid, brevo, or brevo_ses.")
 # Student OTP-login email domain. The canonical cohort-aware local-part rule is
 # implemented centrally in core.services.student_identity.student_email.
 STUDENT_EMAIL_DOMAIN = os.getenv("STUDENT_EMAIL_DOMAIN", "taibahu.edu.sa")
@@ -663,8 +708,8 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
-        # The SendGrid transport's dependency logs request payloads and
-        # Authorization headers at DEBUG.  OTPs, recipients, and API keys must
+        # Vendor SDKs can log request payloads and Authorization headers at
+        # DEBUG. OTPs, recipients, and API keys must
         # never reach application logs even if another logger becomes verbose.
         "discard_vendor_email": {
             "class": "logging.NullHandler",
@@ -692,6 +737,21 @@ LOGGING = {
             "propagate": False,
         },
         "sendgrid": {
+            "handlers": ["discard_vendor_email"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "boto3": {
+            "handlers": ["discard_vendor_email"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "botocore": {
+            "handlers": ["discard_vendor_email"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "urllib3": {
             "handlers": ["discard_vendor_email"],
             "level": "WARNING",
             "propagate": False,

@@ -24,14 +24,15 @@ from django.utils import timezone
 
 from core.models import Student, StudentLoginOTP
 from core.services.rbac import ROLE_NAMES, ROLE_STUDENT, ensure_role_groups, set_user_scope
-from core.services.sendgrid_email import send_transactional_email
 from core.services.student_identity import normalize_student_id, student_email
+from core.services.transactional_email import send_transactional_email
 
 logger = logging.getLogger(__name__)
 
 STUDENT_AUTHENTICATED_AT_SESSION_KEY = "student_authenticated_at"
 DEFAULT_RECENT_AUTH_SECONDS = 10 * 60
 CHANNEL_SMTP = "smtp"
+# Historical value stored for OTPs sent through a transactional email provider.
 CHANNEL_SENDGRID = "sendgrid"
 
 _DELIVERY_PENDING = StudentLoginOTP.DeliveryStatus.PENDING
@@ -294,8 +295,8 @@ def issue_otp(
     """Create and dispatch a code under a per-student serialization lock.
 
     SMTP remains an explicit local/test compatibility channel.  Production views
-    select SendGrid.  SendGrid candidates start inactive and replace an existing
-    active code only after Mail Send returns HTTP 202.
+    select the transactional email provider. Candidates start inactive and replace an existing
+    active code only after the provider accepts the email.
     """
 
     try:
@@ -406,7 +407,7 @@ def verify_otp(student_id: int | str, code: str) -> bool:
         otp.consumed = ok
         otp.save(update_fields=["attempts", "consumed"])
         if ok:
-            # A replacement request may already be waiting on SendGrid while the
+            # A replacement request may already be waiting on the email provider while the
             # student submits the previous valid code.  Cancel it under the same
             # stable student lock so its late 202 cannot change the login code.
             StudentLoginOTP.objects.filter(

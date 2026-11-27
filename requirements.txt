@@ -23,6 +23,9 @@ sendgrid==6.12.5
 # The adapter relies on this SDK transport's timeout propagation and response
 # header contract; pin the transitive dependency so production cannot drift.
 python-http-client==3.3.7
+# Official AWS SDK and explicit client configuration for SES HTTPS delivery.
+boto3==1.44.12
+botocore==1.44.12
 # Direct runtime dependency used by the adviser policy store.  Keep this
 # explicit so a clean production install does not rely on dev tooling pulling
 # it in transitively.
