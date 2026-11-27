@@ -155,7 +155,6 @@ class PlannerBoardEligibilityRequestTests(PlannerBoardCase):
         fake = _fake()
         page = self._open(fake)
         # The rules default to strict, and the page says so.
-        self.assertEqual(page.input_value("#plbRuleElig"), "strict")
         expect(page.locator("#plbEligStrict")).to_be_checked()
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "strict")
         self.assertTrue(fake.plan_urls and "eligibility_mode=strict" in fake.plan_urls[-1])
@@ -163,9 +162,7 @@ class PlannerBoardEligibilityRequestTests(PlannerBoardCase):
         expect(page.locator("#plbBuild")).to_be_enabled()
         self.assertEqual(fake.build_bodies[-1]["eligibility_mode"], "strict")
         # Relaxed: the suggestions reload with it, on both student requests, and so does a build.
-        page.click("#plbEditRules")
-        page.select_option("#plbRuleElig", "relaxed")
-        page.click("#plbRulesApply")
+        page.click("#plbEligRelaxed")
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
         # The reload asks for the student, then for the plan: wait for the second request.
         for _ in range(250):
@@ -199,12 +196,6 @@ class PlannerBoardAuditTests(PlannerBoardCase):
         """Yield a label for each state of the board worth measuring, once it has settled."""
         self._settle(page, script)
         yield "loaded"
-        page.click("#plbEditRules")
-        expect(page.locator("#plbRulesDialog")).to_be_visible()
-        self._settle(page, script)
-        yield "rules dialog"
-        page.click("#plbRulesCancel")
-        expect(page.locator("#plbRulesDialog")).to_be_hidden()
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_be_enabled()
         tabs = page.locator("#plbTabs [role='tab']")

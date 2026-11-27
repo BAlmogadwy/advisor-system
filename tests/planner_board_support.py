@@ -789,23 +789,22 @@ class PlannerBoardCase(StaticLiveServerTestCase):
 
     @staticmethod
     def _rules(page, **values) -> None:
-        """Open Edit rules, set the given controls, press Apply rules."""
-        page.click("#plbEditRules")
-        expect(page.locator("#plbRulesDialog")).to_be_visible()
+        """Set the given rules on the board's own controls (a changed eligibility over an edited
+        course list is confirmed with "Change and reset")."""
         if "mode" in values:
-            page.select_option("#plbRuleMode", values["mode"])
+            page.click("#plbRegIgnore" if values["mode"] == "ignore" else "#plbRegKeep")
         if "elig" in values:
-            page.select_option("#plbRuleElig", values["elig"])
+            page.click("#plbEligRelaxed" if values["elig"] == "relaxed" else "#plbEligStrict")
+            if page.locator("#plbEligConfirm").is_visible():
+                page.click("#plbEligGo")
         if "max" in values:
-            page.fill("#plbRuleMax", str(values["max"]))
-        for key, selector in (
-            ("prog", "#plbRuleProg"),
-            ("full", "#plbRuleFull"),
-            ("swap", "#plbRuleSwap"),
-        ):
-            if key in values:
-                page.set_checked(selector, values[key])
-        page.click("#plbRulesApply")
+            page.fill("#plbMaxIn", str(values["max"]))
+            page.press("#plbMaxIn", "Enter")
+        if "prog" in values:
+            page.click("#plbProgOnly" if values["prog"] else "#plbProgAny")
+        if "full" in values:
+            page.set_checked("#plbFullIn", values["full"])
+        assert "swap" not in values, "Suggest swaps is not available yet"
 
 
 # The page never scrolls sideways and nothing sits past the screen, except inside
@@ -815,7 +814,7 @@ OVERFLOWS = """() => {
   const root = document.documentElement;
   if (root.scrollWidth > W + 1) bad.push(`the page scrolls sideways: ${root.scrollWidth} > ${W}`);
   for (const el of document.querySelectorAll('.plb *, .plb-load *')) {
-    if (!el.getClientRects().length || el.closest('.plb-wkwrap') || el.closest('.sr-only')) continue;
+    if (!el.getClientRects().length || el.closest('.plb-wkwrap') || el.closest('.sr-only') || el.closest('.plb-curtt-d')) continue;
     const r = el.getBoundingClientRect();
     if (r.width <= 2 && r.height <= 2) continue;
     if (r.left < -0.5 || r.right > W + 0.5)

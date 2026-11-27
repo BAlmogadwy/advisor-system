@@ -217,7 +217,6 @@ def test_planner_board_offers_strict_first_and_defaults_its_rules_to_strict() ->
     template = (root / "core/templates/core/planner_board.html").read_text(encoding="utf-8")
     script = (root / "static/js/page-planner-board.js").read_text(encoding="utf-8")
 
-    assert 'id="plbRuleElig"' in template
-    assert '<option value="strict">' in template
-    assert template.index('<option value="strict">') < template.index('<option value="relaxed">')
+    assert 'id="plbEligStrict"' in template
+    assert template.index('id="plbEligStrict"') < template.index('id="plbEligRelaxed"')
     assert "mode: 'keep', eligibility: 'strict'" in script

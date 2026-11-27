@@ -49,7 +49,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
     def test_the_build_body_follows_the_rules_and_the_plan(self) -> None:
         fake = BuildFake()
         page = self._open(fake)
-        self._rules(page, mode="ignore", elig="relaxed", max=15, prog=False, full=True, swap=True)
+        self._rules(page, mode="ignore", elig="relaxed", max=15, prog=False, full=True)
         page.click("#plbTable tbody[data-group='new'] button[data-act='remove'][data-code='AI342']")
         page.check("#plbTable input[data-act='must'][data-code='AI331']")
         page.click("#plbBuild")
@@ -63,7 +63,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
                 "term": "1",
                 "mode": "ignore",
                 "eligibility_mode": "relaxed",
-                "swap": True,
+                "swap": False,
                 "program_sections_only": False,
                 "allow_full_sections": True,
                 "max_credits": 15,
@@ -606,11 +606,9 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self._assert_options_gone(page)
         self.assertEqual(self._cell(page, "AI331"), "Any section")
 
-    def test_applying_the_rules_dialog_with_nothing_changed_keeps_the_options(self) -> None:
+    def test_resetting_rules_that_are_already_the_usual_keeps_the_options(self) -> None:
         page, _ = self._built()
-        page.click("#plbEditRules")
-        page.click("#plbRulesApply")
-        expect(page.locator("#plbRulesDialog")).not_to_be_visible()
+        page.click("#plbRulesReset")
         self.assertEqual(self._tab_names(page), ["C1", "B1", "C2", "(registered)"])
         self.assertTrue(page.locator("#plbReview").is_enabled())
 

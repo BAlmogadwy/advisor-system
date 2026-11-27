@@ -161,17 +161,13 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(self._section_text(page, 15).count("seats unknown"), 1)
         self.assertNotIn("seats left", self._section_text(page, 15))
 
-    def test_the_panel_sits_in_the_third_column_wide_and_under_the_courses_when_narrow(
-        self,
-    ) -> None:
+    def test_the_panel_sits_beside_the_courses_wide_and_under_them_when_narrow(self) -> None:
         page = self._open(_fake())
         self._open_panel(page, "AI331")
         courses = page.locator(".plb-courses").bounding_box()
-        week = page.locator("#plbWeekPanel").bounding_box()
         detail = page.locator("#plbDetail").bounding_box()
-        self.assertGreater(week["x"], courses["x"])
-        self.assertGreater(detail["x"], week["x"])
-        self.assertLess(abs(detail["y"] - week["y"]), 30)
+        self.assertGreater(detail["x"], courses["x"] + courses["width"] - 1)
+        self.assertLess(abs(detail["y"] - courses["y"]), 30)
         page.context.close()
         page = self._open(_fake(), width=900, height=900)
         self._open_panel(page, "AI331")
@@ -184,9 +180,9 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self._open_panel(page, "AI331")
         table = page.locator("#plbTable").bounding_box()
         detail = page.locator("#plbDetail").bounding_box()
-        week = page.locator("#plbWeekPanel").bounding_box()
+        build = page.locator("#plbBuild").bounding_box()
         self.assertGreaterEqual(detail["y"], table["y"] + table["height"] - 1)
-        self.assertLess(detail["y"], week["y"])
+        self.assertLess(detail["y"], build["y"])
         self.assertEqual(page.get_attribute("#plbDetail", "role"), "region")
 
     def test_a_redraw_keeps_the_panel_open_and_the_focus_inside_it(self) -> None:
@@ -432,10 +428,9 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
                 self.assertEqual(len(fake.build_bodies), 2)
                 page.context.close()
 
-    def test_an_unchanged_rules_dialog_keeps_the_build_current(self) -> None:
+    def test_resetting_unchanged_rules_keeps_the_build_current(self) -> None:
         page, _ = self._built(_fake())
-        page.click("#plbEditRules")
-        page.click("#plbRulesApply")
+        page.click("#plbRulesReset")
         self.assertIsNone(page.get_attribute("#plbStrip", "data-stale"))
         self.assertTrue(page.locator("#plbReview").is_enabled())
 
@@ -833,10 +828,10 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
             "غير متاحة: الشُعب الممتلئة غير مسموحة في القواعد.", self._section_text(page, 16)
         )
         self.assertEqual(self._text(page, "#plbDetail [data-act='dt-remove']"), "إزالة من الخطة")
-        # Mirrored: the panel is the third column, which is the left edge in right-to-left.
+        # Mirrored: the panel is the column beside the courses, which is the left edge in right-to-left.
         self.assertLess(
             page.locator("#plbDetail").bounding_box()["x"],
-            page.locator("#plbWeekPanel").bounding_box()["x"],
+            page.locator(".plb-courses").bounding_box()["x"],
         )
         page.check("#plbDetail input[value='12']")
         self._stale(
@@ -923,11 +918,11 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
                     )
                     label = f"{language} {width} {font}"
                     stats = page.eval_on_selector_all(
-                        ".plb-stat",
+                        ".plb-sf",
                         "ns => ns.map(n => { const r = n.getBoundingClientRect(); return [Math.round(r.top), r.left, r.right]; })",
                     )
-                    if len(stats) != 3 or len({s[0] for s in stats}) != 1:
-                        problems.append(f"{label}: the three figures are not on one row: {stats}")
+                    if width == 1440 and (len(stats) != 4 or len({s[0] for s in stats}) != 1):
+                        problems.append(f"{label}: the four facts are not on one row: {stats}")
                     for sel in (".plb-nb", "tbody[data-group='could'] .plb-grp-end"):
                         for broken in page.eval_on_selector_all(
                             sel,

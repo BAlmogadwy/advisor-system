@@ -126,10 +126,14 @@
       return IS_AR ? 'الحد الإرشادي غير معروف.' : 'The advisory cap is not known.';
     },
     maxError: (max) => (IS_AR ? `أدخل عددًا صحيحًا من 1 إلى ${max}.` : `Enter a whole number from 1 to ${max}.`),
-    // The summary of the three rules that are not on the board.
-    ruleProg: { true: IS_AR ? 'شُعب البرنامج فقط' : 'This programme only', false: IS_AR ? 'أي برنامج' : 'Any programme' },
-    ruleFull: { true: IS_AR ? 'الشُعب الممتلئة مسموحة' : 'Full sections allowed', false: IS_AR ? 'بلا شُعب ممتلئة' : 'No full sections' },
-    ruleSwap: { true: IS_AR ? 'اقتراح تبديلات' : 'Suggest swaps', false: IS_AR ? 'بلا تبديلات' : 'No swaps' },
+    // The student band and the current-timetable disclosure.
+    bandStudent: IS_AR ? 'الطالب' : 'Student',
+    bandProgress: IS_AR ? 'التقدم' : 'Progress',
+    bandRegistered: IS_AR ? 'المسجّل الآن' : 'Registered now',
+    bandGraduates: IS_AR ? 'يتخرّج كما هو الحال' : 'Graduates as it stands',
+    afterFirstBuild: IS_AR ? 'بعد أول بناء' : 'After the first build',
+    curTTNone: IS_AR ? 'بلا محاضرات' : 'No timed classes',
+
     // Build, options and apply.
     buildFirst: IS_AR ? 'ابنِ الخيارات' : 'Build options',
     rebuild: IS_AR ? 'أعد البناء' : 'Rebuild',
@@ -450,6 +454,8 @@
     recs: [],
     planCourses: null, // null = not loaded / failed; [] = loaded, nothing
     planState: 'idle', // idle | loading | ready | error
+    bandEnds: '',      // the completion term the student band shows
+    planCredits: null, // {done, total}: the plan's credits passed and in all, once the plan reply is in
     catalog: null,     // Map normalised course code -> [section]; null = unknown
     shortlist: [],
     suggested: [],     // the courses the page suggested when the student loaded ("Reset to suggestions")
@@ -635,8 +641,11 @@
   }
   function renderRules() {
     const r = state.rules;
-    $('plbRules2').textContent = [T.ruleProg[r.programOnly], T.ruleFull[r.allowFull], T.ruleSwap[r.swap]].join(' · ');
     // The controls on the board show the rules in force.
+    $('plbProgOnly').checked = r.programOnly;
+    $('plbProgAny').checked = !r.programOnly;
+    $('plbFullIn').checked = r.allowFull;
+    $('plbSwapIn').checked = r.swap;
     $('plbRegKeep').checked = r.mode === 'keep';
     $('plbRegIgnore').checked = r.mode === 'ignore';
     $('plbEligStrict').checked = r.eligibility === 'strict';
@@ -656,7 +665,7 @@
   }
   const regulatoryMax = () => (state.student && finitePositive(state.student.regulatory_max_credits)) || 99;
   // Max credits as typed: '' is "not set" (null); a whole number from 1 to the regulatory maximum;
-  // anything else is refused. One reading for the dialog and for the field on the board.
+  // anything else is refused.
   function parseMaxCredits(raw) {
     // Arabic-Indic and Persian digits are read as the digits they are.
     const text = raw.trim().replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (c) => String(c.charCodeAt(0) & 15))
@@ -669,57 +678,10 @@
     return { ok: true, value };
   }
 
-  function fillRulesDialog(rules) {
-    $('plbRuleMode').value = rules.mode;
-    $('plbRuleElig').value = rules.eligibility;
-    $('plbRuleMax').value = rules.maxCredits === null ? '' : String(rules.maxCredits);
-    $('plbRuleProg').checked = rules.programOnly;
-    $('plbRuleFull').checked = rules.allowFull;
-    $('plbRuleSwap').checked = rules.swap;
-    $('plbRuleMaxErr').hidden = true;
-    $('plbRuleMaxErr').textContent = '';
-  }
-  // `preset` ({eligibility}) opens the dialog with that change already chosen, for Apply rules to confirm.
-  function openRulesDialog(preset) {
-    $('plbRuleMaxHint').textContent = maxHintText();
-    fillRulesDialog({ ...state.rules, ...(preset || {}) });
-    const note = $('plbRuleEligNote');
-    const dialog = $('plbRulesDialog');
-    if (preset && preset.eligibility) { note.dataset.flag = 'true'; dialog.dataset.from = 'eligibility'; }
-    else { delete note.dataset.flag; delete dialog.dataset.from; }
-    if (typeof dialog.showModal === 'function') dialog.showModal();
-    else dialog.setAttribute('open', '');
-    (preset && preset.eligibility ? $('plbRuleElig') : $('plbRuleMode')).focus();
-  }
-  function closeRulesDialog() {
-    const dialog = $('plbRulesDialog');
-    if (typeof dialog.close === 'function') dialog.close();
-    else dialog.removeAttribute('open');
-  }
-  function applyRulesDialog() {
-    const max = parseMaxCredits($('plbRuleMax').value);
-    if (!max.ok) {
-      const err = $('plbRuleMaxErr');
-      err.textContent = T.maxError(max.ceiling);
-      err.hidden = false;
-      $('plbRuleMax').setAttribute('aria-invalid', 'true');
-      $('plbRuleMax').focus();
-      return;
-    }
-    $('plbRuleMax').removeAttribute('aria-invalid');
-    closeRulesDialog();
-    commitRules({
-      mode: $('plbRuleMode').value === 'ignore' ? 'ignore' : 'keep',
-      eligibility: $('plbRuleElig').value === 'relaxed' ? 'relaxed' : 'strict',
-      maxCredits: max.value,
-      programOnly: $('plbRuleProg').checked,
-      allowFull: $('plbRuleFull').checked,
-      swap: $('plbRuleSwap').checked,
-    });
-  }
-  // What a change of rules does, for the dialog and for the controls on the board alike.
+  // What a change of rules does, whichever control made it.
   function commitRules(next) {
     const before = { ...state.rules };
+    closeEligConfirm(false);
     state.rules = next;
     renderRules();
     // Options built under other rules are not options for these: they stay, marked out of date.
@@ -736,14 +698,45 @@
   // A switch on the board.
   function changeRuleInPlace(key, value) {
     if (state.rules[key] === value) return;
-    // The reload would replace a course list the adviser has changed: the dialog says so and asks.
-    // The switch goes back to the rule in force; Apply rules makes the change, Cancel leaves it.
+    // The reload would replace a course list the adviser has changed: an inline confirm says so and
+    // asks. The switch keeps showing the rule in force until "Change and reset".
     if (key === 'eligibility' && state.ctx && !isSuggested()) {
       renderRules();
-      openRulesDialog({ eligibility: value });
+      openEligConfirm(value);
       return;
     }
+    closeEligConfirm(false);
     commitRules({ ...state.rules, [key]: value });
+  }
+  // The eligibility the confirm is asking about; null while it is closed.
+  let eligPending = null;
+  function openEligConfirm(value) {
+    eligPending = value;
+    $('plbEligConfirm').hidden = false;
+    $('plbEligGo').focus();
+  }
+  // `focusBack`: the keyboard returns to the Eligibility switch (Keep or Escape). Any other change
+  // closes the confirm and leaves the keyboard where it is.
+  function closeEligConfirm(focusBack) {
+    const box = $('plbEligConfirm');
+    if (box.hidden) return;
+    box.hidden = true;
+    eligPending = null;
+    if (focusBack) {
+      const on = document.querySelector('input[name="plbEligIn"]:checked');
+      if (on) on.focus();
+    }
+  }
+  function goEligConfirm() {
+    const value = eligPending;
+    if (!value) return;
+    const wasInside = $('plbEligConfirm').contains(document.activeElement);
+    closeEligConfirm(false);
+    commitRules({ ...state.rules, eligibility: value });
+    if (wasInside) {
+      const on = document.querySelector('input[name="plbEligIn"]:checked');
+      if (on) on.focus();
+    }
   }
   function commitMaxInPlace() {
     const field = $('plbMaxIn');
@@ -771,8 +764,18 @@
     chip.replaceChildren(bdi(`${state.ctx.studentId} · ${state.ctx.year}/${state.ctx.term}`));
     chip.hidden = false;
   }
-  function stat(value, label, sub) {
-    return el('div', 'plb-stat', el('b', '', value), el('span', '', label), sub ? el('span', '', sub) : null);
+  // One fact of the student band: a mono label, a big number, a small line.
+  function fact(label, big, ...rest) {
+    return el('div', 'plb-sf', el('span', 'plb-mic', label), big, ...rest);
+  }
+  // Plan credits passed over the plan's total, from the plan reply; null while it is loading or failed.
+  function planProgress() {
+    return state.planState === 'ready' && state.planCredits && state.planCredits.total > 0 ? state.planCredits : null;
+  }
+  // The completion term the band's last fact shows ('' before there is one).
+  function bandEndsKey() {
+    const row = projectionOf() ? projectionOf().baseline : null;
+    return isComplete(row) ? `${row.completion_academic_year}/${row.completion_term}` : '';
   }
   function renderStudent() {
     const host = $('plbStudent');
@@ -786,18 +789,33 @@
     // `registered_credits` is the registrar's running total (144 for a senior): beside an
     // 18-credit cap it reads as a mistake, and it is not what this screen is about.
     const registered = registeredCredits();
-    const cap = finitePositive(st.credit_cap);
-    const reg = finitePositive(st.regulatory_max_credits);
+    const courses = registeredCourses();
+    const codes = [...new Set(courses.map((c) => c.code).filter(Boolean))];
     const advisor = st.advisor_id === null || st.advisor_id === undefined ? '' : String(st.advisor_id).trim();
+    const progress = planProgress();
+    const baseline = projectionOf() ? projectionOf().baseline : null;
+    const ends = isComplete(baseline) ? completionParts(baseline) : [];
+    state.bandEnds = bandEndsKey();
     host.replaceChildren(
-      el('div', 'plb-who',
-        el('div', 'plb-sn', st.name ? String(st.name) : T.unnamed),
+      fact(T.bandStudent,
+        el('div', 'plb-big plb-big--name', st.name ? String(st.name) : T.unnamed),
         el('div', 'plb-smeta', `${T.idLabel} `, bdi(st.student_id), st.program ? ' · ' : null, st.program ? bdi(st.program) : null,
           advisor ? ` · ${T.advisor} ` : null, advisor ? bdi(advisor) : null)),
-      el('div', 'plb-stats',
-        stat(gpa === null ? '—' : gpa.toFixed(2), T.gpa),
-        stat(registered === null ? '—' : String(registered), T.registeredCredits),
-        stat(cap === null ? '—' : String(cap), T.creditCap, cap === null ? null : T.advisory(reg && reg > cap ? reg : null))),
+      fact(T.bandProgress,
+        el('div', 'plb-big', progress ? bdi(`${progress.done}/${progress.total}`) : '—'),
+        progress ? (() => {
+          const bar = el('div', 'plb-bar', el('i'));
+          bar.firstChild.style.inlineSize = `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%`;
+          bar.setAttribute('aria-hidden', 'true');
+          return bar;
+        })() : null,
+        el('div', 'plb-smeta', `${T.gpa} `, gpa === null ? '—' : gpa.toFixed(2))),
+      fact(T.bandRegistered,
+        el('div', 'plb-big', registered === null ? '—' : String(registered)),
+        el('div', 'plb-smeta', T.courseWord(courses.length ? new Set(courses.map((c) => c.key)).size : 0)),
+        codes.length ? el('div', 'plb-codes', ...codes.flatMap((c, i) => (i ? [' ', el('span', 'plb-cd', bdi(c))] : [el('span', 'plb-cd', bdi(c))]))) : null),
+      fact(T.bandGraduates,
+        ends.length ? el('div', 'plb-big', ...ends) : el('div', 'plb-big plb-big--muted', T.afterFirstBuild)),
     );
   }
 
@@ -1031,6 +1049,7 @@
     const host = $('plbWeek');
     const regModel = weekModel(registeredMeetings());
     renderTab(regModel);
+    renderCurTT();
     const opt = currentOption();
     const alts = altMeetings(opt);
     state.altShown = altSignature(opt, alts);
@@ -1057,7 +1076,14 @@
       partial ? el('p', 'plb-note', T.mappingPartial(partial)) : null,
       clashes ? el('p', 'plb-note', T.clashNote(clashes)) : null,
     ].filter(Boolean);
-    const model = opt ? weekModel(weekMeetings(opt)) : regModel;
+    drawWeekGrid(opt ? weekMeetings(opt) : registeredMeetings(), host, notes, alts);
+    markOpenBlocks();
+  }
+  // The week's grid for `meetings`, drawn into `host` with `notes` under it. `alts` are the dashed
+  // alternatives of an open course panel. The one builder for the week and for the current-timetable
+  // disclosure.
+  function drawWeekGrid(meetings, host, notes, alts) {
+    const model = weekModel(meetings);
     if (!model.meetings.length && !alts.length) {
       host.replaceChildren(...[el('p', 'plb-empty', T.noClassesAtAll), ...notes]);
       return;
@@ -1116,7 +1142,29 @@
       grid.append(foot);
     });
     host.replaceChildren(el('div', 'plb-wkwrap', grid), ...notes);
-    markOpenBlocks();
+  }
+  // The registered classes in one line: "CS101 Sun Tue 10:00-11:15; AI201 Mon 08:00-09:15".
+  function curTTDigest() {
+    const rows = state.baseline.filter((r) => normDay(r.day) && toMins(r.start_time) !== null && toMins(r.end_time) !== null);
+    const codes = [...new Set(rows.map((r) => String(r.course_code || r.course_key || '')).filter(Boolean))];
+    if (!codes.length) return [T.curTTNone];
+    return codes.flatMap((code, i) => [
+      ...(i ? ['; '] : []), bdi(code), ' ',
+      ...whenNodes(rows.filter((r) => String(r.course_code || r.course_key || '') === code)),
+    ]);
+  }
+  // The "Current timetable" disclosure under the student band: closed by default, the registered
+  // week drawn with the week's own grid when it is opened, redrawn while it stays open.
+  function renderCurTT() {
+    const box = $('plbCurTT');
+    box.hidden = !state.ctx;
+    if (!state.ctx) { $('plbCurTTWeek').replaceChildren(); return; }
+    $('plbCurTTDigest').replaceChildren(...curTTDigest());
+    if (!box.open) { $('plbCurTTWeek').replaceChildren(); return; }
+    const untimedRows = [...new Map(registeredCourses().filter((c) => !c.timed).map((c) => [`${c.code}::${c.name}`, c])).values()];
+    const shared = new Set(untimedRows.map((c) => c.code).filter((code, i, all) => all.indexOf(code) !== i));
+    const untimed = untimedRows.map((c) => (shared.has(c.code) && c.name ? `${c.code} ${c.name}` : c.code));
+    drawWeekGrid(registeredMeetings(), $('plbCurTTWeek'), untimed.length ? [el('p', 'plb-note', ...T.untimed(untimed))] : [], []);
   }
   // While a course's panel is open its blocks in the week are marked.
   function markOpenBlocks() {
@@ -1895,6 +1943,8 @@
   async function loadPlan(run) {
     state.planState = 'loading';
     state.planCourses = null;
+    state.planCredits = null;
+    renderStudent();
     renderCourses();
     try {
       const url = `/report/student-plan/?student_id=${encodeURIComponent(state.ctx.studentId)}`
@@ -1904,8 +1954,14 @@
       if (run !== state.gen) return;
       if (!response.ok || !data || data.error) throw new Error('plan');
       const courses = [];
+      let creditsDone = 0;
+      let creditsAll = 0;
       for (const term of data.terms || []) {
         for (const c of term.courses || []) {
+          // Every row of the plan counts toward the total; the rows the student has passed toward the first number.
+          const hours = Number(c.credit_hours) || 0;
+          creditsAll += hours;
+          if (String(c.status || '') === 'passed') creditsDone += hours;
           const code = norm(c.course_code);
           if (!code) continue;
           courses.push({
@@ -1916,13 +1972,16 @@
         }
       }
       state.planCourses = courses;
+      state.planCredits = { done: creditsDone, total: creditsAll };
       state.planState = 'ready';
     } catch (err) {
       if (run !== state.gen) return;
       state.planCourses = [];
+      state.planCredits = null;
       state.planState = 'error';
       setStatus('warn', T.planFailed);
     }
+    renderStudent();
     renderCourses();
     loadCatalog(run);
     // A build that was forecast before these rows were known is asked once more, now naming them.
@@ -2016,6 +2075,7 @@
     }
     $('plbRoot').removeAttribute('aria-busy');
     releaseFetch();
+    closeEligConfirm(false);
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
@@ -2041,6 +2101,7 @@
     state.shortlist = shortlistFromRecs(state.recs);
     state.suggested = JSON.parse(JSON.stringify(state.shortlist));
     state.planCourses = null;
+    state.planCredits = null;
     state.catalog = null;
     $('plbRoot').dataset.loaded = 'true';
     $('plbYear').value = state.ctx.year;
@@ -2140,7 +2201,7 @@
     }
     if (!again && more) again = document.querySelector(`#plbMoreList [data-more="${CSS.escape(more)}"]`);
     if (!again && inWeek >= 0) again = weekBlocksOf(code)[inWeek] || weekBlocksOf(code)[0] || null;
-    if (again && !again.disabled) again.focus();
+    if (again && !again.disabled) again.focus({ preventScroll: true });  // a redraw never scrolls the page
   }
   // A build older than 30 minutes is out of date. Checked when Review and apply is pressed, when
   // the page becomes visible again, and once a minute: there is no other timer.
@@ -2604,6 +2665,8 @@
   }
 
   function renderGrad() {
+    // "Graduates as it stands" reads the same forecast; the band is drawn again only when its word changes.
+    if (state.student && bandEndsKey() !== state.bandEnds) renderStudent();
     const grad = $('plbGrad');
     const hadFocus = grad.contains(document.activeElement);
     const line = $('plbGradLine');
@@ -3233,28 +3296,25 @@
     $('plbLoad').addEventListener('submit', (event) => { event.preventDefault(); loadStudent(); });
     // A click anywhere during a load means the user has moved on: Fetch does not take the keyboard back.
     document.addEventListener('pointerdown', () => { state.fetchKeyboard = false; }, true);
-    $('plbEditRules').addEventListener('click', () => openRulesDialog());
     for (const [id, key, value] of [
       ['plbRegKeep', 'mode', 'keep'], ['plbRegIgnore', 'mode', 'ignore'],
       ['plbEligStrict', 'eligibility', 'strict'], ['plbEligRelaxed', 'eligibility', 'relaxed'],
+      ['plbProgOnly', 'programOnly', true], ['plbProgAny', 'programOnly', false],
     ]) $(id).addEventListener('change', (event) => { if (event.target.checked) changeRuleInPlace(key, value); });
+    $('plbFullIn').addEventListener('change', (event) => changeRuleInPlace('allowFull', event.target.checked));
+    $('plbRulesReset').addEventListener('click', () => commitRules({ ...state.defaults }));
+    $('plbEligGo').addEventListener('click', goEligConfirm);
+    $('plbEligKeep').addEventListener('click', () => closeEligConfirm(true));
+    $('plbEligConfirm').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeEligConfirm(true); }
+    });
+    $('plbCurTT').addEventListener('toggle', renderCurTT);
     $('plbMaxIn').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); commitMaxInPlace(); }
     });
     // Typed in: a load leaves the field alone until it is committed or left.
     $('plbMaxIn').addEventListener('input', () => { state.maxDirty = true; });
     $('plbMaxIn').addEventListener('blur', () => { commitMaxInPlace(); state.maxDirty = false; });
-    $('plbRulesCancel').addEventListener('click', closeRulesDialog);
-    // A dialog opened by the Eligibility switch hands the keyboard back to it, however it closes.
-    $('plbRulesDialog').addEventListener('close', () => {
-      const dialog = $('plbRulesDialog');
-      if (dialog.dataset.from !== 'eligibility') return;
-      delete dialog.dataset.from;
-      const on = document.querySelector('input[name="plbEligIn"]:checked');
-      if (on) on.focus();
-    });
-    $('plbRulesReset').addEventListener('click', () => fillRulesDialog(state.defaults));
-    $('plbRulesForm').addEventListener('submit', (event) => { event.preventDefault(); applyRulesDialog(); });
 
     $('plbTable').addEventListener('click', (event) => {
       const target = event.target.closest('[data-act]');
@@ -3333,7 +3393,7 @@
       if (event.target.closest && event.target.closest('#plbDetail')) { event.preventDefault(); closeDetail(true); return; }
       // Only from the disclosure's own corner: Escape in the course search or on a tab is not
       // a request to close this, and must not pull the keyboard away from where it is.
-      if (state.whyOpen && event.target.closest && event.target.closest('.plb-acts')) { event.preventDefault(); setWhy(false, true); }
+      if (state.whyOpen && event.target.closest && event.target.closest('#plbWhyBtn, #plbWhy')) { event.preventDefault(); setWhy(false, true); }
       // The reasons close on Escape only while their button is on screen: on a tab whose forecast
       // has none (or lists them without a button) there is nothing to close and Escape is left alone.
       if (state.gradWhy && !$('plbGradWhyBtn').hidden && event.target.closest && event.target.closest('#plbGrad')) {

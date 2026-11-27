@@ -509,7 +509,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
     def test_an_out_of_date_build_keeps_the_texts_and_marks_them(self) -> None:
         page, _fake = self._projected(STANDARD)
         self.assertIsNone(page.locator(NEW.format("AI331")).get_attribute("data-stale"))
-        self._rules(page, swap=True)
+        self._rules(page, full=True)
         self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
         self.assertEqual(self._depends(page), ["AI331 · if postponed: 5 terms"])
         self.assertEqual(page.locator(NEW.format("AI331")).get_attribute("data-stale"), "changed")

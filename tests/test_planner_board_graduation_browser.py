@@ -583,7 +583,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
 
     def test_a_reply_after_a_plan_change_still_shows_with_the_refresh_line(self) -> None:
         page, fake = self._held()
-        self._rules(page, swap=True)
+        self._rules(page, full=True)
         fake.pending_projection.pop().fulfill(json=READY)
         expect(page.locator("#plbGradLine")).to_be_hidden()
         self.assertEqual(page.locator("#plbGrad .plb-rw").count(), 1)
@@ -1091,8 +1091,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         # tall as its tallest column. The guidance is there from the build and the runway arrives
         # with the forecast, so landing may add what the runway has beyond the guidance; after
         # that the band never gets shorter, so changing tab does not pull the tabs up. On a phone
-        # the page is scrolled to the tabs by then and the browser's scroll anchoring holds them:
-        # there the strip does not move when the forecast lands.
+        # the columns stack, nothing is held, and the strip is only ever pushed down.
         top = "document.getElementById('plbStrip').getBoundingClientRect().top"
         for kwargs in (
             {"width": 1152},
@@ -1119,9 +1118,10 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
                 page.click("#plbTab_B1")
                 self.assertAlmostEqual(page.evaluate(top), registered, delta=2, msg=kwargs)
             else:
-                self.assertAlmostEqual(landed, loading, delta=2, msg=str(kwargs))
-                page.click("#plbTabRegistered")
-                self.assertAlmostEqual(page.evaluate(top), loading, delta=2, msg=str(kwargs))
+                # One column: the strip sits under the whole band, which now lives in the options
+                # zone below the Build button, so the runway landing pushes it down. It is never
+                # pulled up (the redraw keeps the keyboard without scrolling the page).
+                self.assertGreaterEqual(landed, loading - 2, msg=str(kwargs))
 
     def test_no_assumptions_when_no_line_is_drawn(self) -> None:
         nothing = projection_reply(

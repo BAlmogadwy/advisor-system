@@ -1255,9 +1255,9 @@ def test_staff_planner_ui_uses_clear_positive_control_names() -> None:
     )
     script = (root / "static" / "js" / "page-planner-board.js").read_text(encoding="utf-8")
 
-    assert 'id="plbRuleProg" type="checkbox"' in template
-    assert 'id="plbRuleFull" type="checkbox"' in template
-    assert "Only this student's programme" in template
+    assert 'id="plbProgOnly"' in template
+    assert 'id="plbFullIn" type="checkbox"' in template
+    assert "This programme" in template
     assert "Include sections with no seats left" in template
     assert "program_sections_only: state.rules.programOnly," in script
     assert "allow_full_sections: state.rules.allowFull," in script
