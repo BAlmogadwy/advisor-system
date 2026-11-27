@@ -356,8 +356,8 @@ class PlannerBoardGapsTests(PlannerBoardCase):
     # ── 5. The advisor ───────────────────────────────────────────────────────
     def test_the_student_card_names_the_advisor(self) -> None:
         for language, text in (
-            ("en", "ID 4500000 · AI · Advisor 90210"),
-            ("ar", "الرقم 4500000 · AI · المرشد 90210"),
+            ("en", "Sample Student · 4500000 · Advisor 90210"),
+            ("ar", "Sample Student · 4500000 · المرشد 90210"),
         ):
             with self.subTest(language=language):
                 fake = _fake()
@@ -369,7 +369,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                 self.assertEqual(self._text(page, "#plbStudent .plb-smeta"), text)
                 self.assertEqual(
                     page.locator("#plbStudent .plb-smeta bdi[dir='ltr']").all_inner_texts(),
-                    ["4500000", "AI", "90210"],
+                    ["4500000", "90210"],
                 )
                 page.context.close()
 
@@ -382,7 +382,9 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                     context_for(str(body["student_id"]), advisor_id=v),
                 )
                 page = self._open(fake)
-                self.assertEqual(self._text(page, "#plbStudent .plb-smeta"), "ID 4500000 · AI")
+                self.assertEqual(
+                    self._text(page, "#plbStudent .plb-smeta"), "Sample Student · 4500000"
+                )
                 page.context.close()
 
     # ── 6. Fetch while a student loads ───────────────────────────────────────

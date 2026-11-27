@@ -1086,8 +1086,10 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(page.get_attribute("#plbTab_B1", "data-probe"), "1")
         self.assertEqual(page.get_attribute("#plbGrad .plb-rw", "data-probe"), "1")
 
-    def test_the_band_keeps_its_height_when_the_forecast_lands_and_between_tabs(self) -> None:
-        # The tabs sit under the band: they must not jump away from the pointer. The band is as
+    def test_the_tab_strip_is_only_pushed_down_never_up_when_the_forecast_lands(self) -> None:
+        # What this proves: when the forecast lands, and when another tab is chosen, the tab strip
+        # is only ever pushed down, never pulled up. Side by side, the band keeps the height it
+        # reached, so the strip does not move after landing. The band is as
         # tall as its tallest column. The guidance is there from the build and the runway arrives
         # with the forecast, so landing may add what the runway has beyond the guidance; after
         # that the band never gets shorter, so changing tab does not pull the tabs up. On a phone

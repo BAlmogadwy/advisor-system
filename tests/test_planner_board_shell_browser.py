@@ -98,9 +98,11 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         page.click("#plbFetch")
         expect(page.locator("#plbStatus")).to_have_text("Enter a student ID.")
         page.fill("#plbStudentId", STUDENT_ID)
+        page.click("#plbTermBtn")
         page.fill("#plbYear", "14")
         page.click("#plbFetch")
         expect(page.locator("#plbStatus")).to_have_text("Enter a four-digit year.")
+        expect(page.locator("#plbYear")).to_be_visible()  # the term opens for the fix
         self.assertEqual(len(fake.context_bodies), before)
 
     def test_a_slow_earlier_reply_cannot_paint_over_a_newer_one(self) -> None:

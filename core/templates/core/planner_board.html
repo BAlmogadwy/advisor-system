@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الطالب{% else %}Student Timetable Builder{% endif %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}خطة الفصل القادم{% else %}Plan next term{% endif %}{% endblock %}
 
 {% block extra_css %}{# All planner board styles live in static/css/global.css (PLANNER BOARD section, prefix plb-). #}{% endblock %}
 
@@ -9,7 +9,7 @@
 
 {% block content_width %}wide{% endblock %}
 
-{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}{% endblock %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}خطة الفصل القادم{% else %}Plan next term{% endif %}{% endblock %}
 
 {% block page_chips %}
             <span class="plb-ctx" id="plbContext" hidden></span>
@@ -18,8 +18,13 @@
 {% block page_header_right %}
       <form class="plb-load" id="plbLoad" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحميل طالب{% else %}Load a student{% endif %}" novalidate>
         <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}</span><input id="plbStudentId" class="plb-w-id" type="text" inputmode="numeric" autocomplete="off" dir="ltr"></label>
-        <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}</span><input id="plbYear" class="plb-w-year" type="text" inputmode="numeric" maxlength="4" autocomplete="off" dir="ltr" value="{{ default_year }}"></label>
-        <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}</span><select id="plbTerm"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+        <div class="plb-termwrap">
+          <button type="button" class="btn btn-sm btn-neutral plb-termbtn" id="plbTermBtn" aria-expanded="false" aria-controls="plbTermPop"></button>
+          <div class="plb-termpop" id="plbTermPop" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل الدراسي{% else %}Term{% endif %}" hidden>
+            <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}</span><input id="plbYear" class="plb-w-year" type="text" inputmode="numeric" maxlength="4" autocomplete="off" dir="ltr" value="{{ default_year }}"></label>
+            <label class="plb-cap"><span>{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}</span><select id="plbTerm"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+          </div>
+        </div>
         <button type="submit" id="plbFetch" class="btn btn-sm btn-neutral">{% if LANGUAGE_CODE == 'ar' %}جلب{% else %}Fetch{% endif %}</button>
       </form>
 {% endblock %}
@@ -53,8 +58,9 @@
         <section class="plb-zone" id="plbZoneRules" aria-labelledby="plbRulesTitle">
           <div class="plb-zh">
             <h2 id="plbRulesTitle"><span class="plb-zn">01</span> {% if LANGUAGE_CODE == 'ar' %}القواعد{% else %}Rules{% endif %}</h2>
+            <p class="plb-usual" id="plbRulesUsual">{% if LANGUAGE_CODE == 'ar' %}القواعد المعتادة{% else %}The usual rules{% endif %}</p>
             <p class="plb-changed" id="plbRulesChanged" hidden></p>
-            <button type="button" class="plb-lk plb-zh-act" id="plbRulesReset">{% if LANGUAGE_CODE == 'ar' %}استعادة القواعد المعتادة{% else %}Reset to the usual rules{% endif %}</button>
+            <button type="button" class="plb-lk plb-zh-act" id="plbRulesReset">{% if LANGUAGE_CODE == 'ar' %}استعادة{% else %}Reset{% endif %}</button>
           </div>
           <div class="plb-rules" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}قواعد هذا البناء{% else %}Rules for this build{% endif %}">
             <div class="plb-rc-row">
@@ -65,14 +71,14 @@
               </div>
             </div>
             <div class="plb-rc-row">
-              <span class="plb-rc-l" id="plbEligLabel">{% if LANGUAGE_CODE == 'ar' %}الأهلية{% else %}Eligibility{% endif %}</span>
+              <span class="plb-rc-l" id="plbEligLabel">{% if LANGUAGE_CODE == 'ar' %}المتطلبات السابقة{% else %}Prerequisites{% endif %}</span>
               <div class="plb-seg" role="radiogroup" aria-labelledby="plbEligLabel">
                 <label class="plb-seg-o"><input type="radio" name="plbEligIn" id="plbEligStrict" value="strict"><span>{% if LANGUAGE_CODE == 'ar' %}صارمة{% else %}Strict{% endif %}</span></label>
                 <label class="plb-seg-o"><input type="radio" name="plbEligIn" id="plbEligRelaxed" value="relaxed"><span>{% if LANGUAGE_CODE == 'ar' %}مرنة{% else %}Relaxed{% endif %}</span></label>
               </div>
             </div>
             <div class="plb-rc-row plb-rc-row--max">
-              <label class="plb-rc-l" for="plbMaxIn">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى للساعات{% else %}Max credits{% endif %}</label>
+              <label class="plb-rc-l" for="plbMaxIn">{% if LANGUAGE_CODE == 'ar' %}أقصى عدد للساعات{% else %}Most credits{% endif %}</label>
               <input id="plbMaxIn" class="plb-rc-in" type="text" inputmode="numeric" autocomplete="off" dir="ltr" aria-describedby="plbMaxInHint plbMaxInErr">
               <p class="plb-rc-hint" id="plbMaxInHint"></p>
               <p class="plb-err" id="plbMaxInErr" role="alert" hidden></p>
@@ -85,7 +91,7 @@
               </div>
             </div>
             <div class="plb-rc-row plb-rc-row--checks">
-              <label class="plb-check"><input id="plbFullIn" type="checkbox"><span>{% if LANGUAGE_CODE == 'ar' %}تضمين شُعب بلا مقاعد شاغرة{% else %}Include sections with no seats left{% endif %}</span></label>
+              <label class="plb-check"><input id="plbFullIn" type="checkbox"><span>{% if LANGUAGE_CODE == 'ar' %}استخدام الشُعب الممتلئة{% else %}Use full sections{% endif %}</span></label>
               <label class="plb-check plb-check--off"><input id="plbSwapIn" type="checkbox" disabled><span>{% if LANGUAGE_CODE == 'ar' %}اقتراح تبديلات (غير متاح بعد){% else %}Suggest swaps (not available yet){% endif %}</span></label>
             </div>
           </div>
@@ -214,5 +220,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=11"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=12"></script>
 {% endblock %}

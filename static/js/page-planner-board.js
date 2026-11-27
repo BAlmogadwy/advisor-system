@@ -127,7 +127,8 @@
     },
     maxError: (max) => (IS_AR ? `أدخل عددًا صحيحًا من 1 إلى ${max}.` : `Enter a whole number from 1 to ${max}.`),
     // The student band and the current-timetable disclosure.
-    bandStudent: IS_AR ? 'الطالب' : 'Student',
+    usualRules: IS_AR ? 'القواعد المعتادة' : 'The usual rules',
+    termButton: (year, term) => (IS_AR ? [`الفصل ${term}، `, bdi(year)] : [`Term ${term}, `, bdi(year)]),
     bandProgress: IS_AR ? 'التقدم' : 'Progress',
     bandRegistered: IS_AR ? 'المسجّل الآن' : 'Registered now',
     bandGraduates: IS_AR ? 'يتخرّج كما هو الحال' : 'Graduates as it stands',
@@ -454,6 +455,7 @@
     recs: [],
     planCourses: null, // null = not loaded / failed; [] = loaded, nothing
     planState: 'idle', // idle | loading | ready | error
+    curTT: { digest: null, drawn: null }, // the registered week the disclosure last drew
     bandEnds: '',      // the completion term the student band shows
     planCredits: null, // {done, total}: the plan's credits passed and in all, once the plan reply is in
     catalog: null,     // Map normalised course code -> [section]; null = unknown
@@ -662,6 +664,7 @@
     const badge = $('plbRulesChanged');
     badge.hidden = changed === 0;
     badge.textContent = changed ? T.rulesChanged(changed) : '';
+    $('plbRulesUsual').hidden = changed !== 0;
   }
   const regulatoryMax = () => (state.student && finitePositive(state.student.regulatory_max_credits)) || 99;
   // Max credits as typed: '' is "not set" (null); a whole number from 1 to the regulatory maximum;
@@ -708,11 +711,21 @@
     closeEligConfirm(false);
     commitRules({ ...state.rules, [key]: value });
   }
-  // The eligibility the confirm is asking about; null while it is closed.
+  // The eligibility the confirm is asking about; null while it is closed. `eligReset`: the question
+  // came from "Reset", so Go puts back every usual rule, not only the eligibility.
   let eligPending = null;
-  function openEligConfirm(value) {
+  let eligReset = false;
+  // Escape closes the confirm wherever the keyboard is while it is open.
+  function eligEscape(event) {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    event.preventDefault();
+    closeEligConfirm(true);
+  }
+  function openEligConfirm(value, reset) {
     eligPending = value;
+    eligReset = !!reset;
     $('plbEligConfirm').hidden = false;
+    document.addEventListener('keydown', eligEscape);
     $('plbEligGo').focus();
   }
   // `focusBack`: the keyboard returns to the Eligibility switch (Keep or Escape). Any other change
@@ -722,6 +735,8 @@
     if (box.hidden) return;
     box.hidden = true;
     eligPending = null;
+    eligReset = false;
+    document.removeEventListener('keydown', eligEscape);
     if (focusBack) {
       const on = document.querySelector('input[name="plbEligIn"]:checked');
       if (on) on.focus();
@@ -730,13 +745,24 @@
   function goEligConfirm() {
     const value = eligPending;
     if (!value) return;
+    const next = eligReset ? { ...state.defaults } : { ...state.rules, eligibility: value };
     const wasInside = $('plbEligConfirm').contains(document.activeElement);
     closeEligConfirm(false);
-    commitRules({ ...state.rules, eligibility: value });
+    commitRules(next);
     if (wasInside) {
       const on = document.querySelector('input[name="plbEligIn"]:checked');
       if (on) on.focus();
     }
+  }
+  // "Reset": back to the usual rules. Putting back another eligibility reloads the suggestions, so
+  // over an edited course list it asks first, as the switch does.
+  function resetRules() {
+    if (state.ctx && !isSuggested() && state.defaults.eligibility !== state.rules.eligibility) {
+      openEligConfirm(state.defaults.eligibility, true);
+      return;
+    }
+    closeEligConfirm(false);
+    commitRules({ ...state.defaults });
   }
   function commitMaxInPlace() {
     const field = $('plbMaxIn');
@@ -758,6 +784,18 @@
   }
 
   /* ── Student ───────────────────────────────────────────────────────────── */
+  // The header shows the term as one button; Year and Semester sit behind it.
+  function renderTermBtn() {
+    const year = $('plbYear').value.trim() || '—';
+    const term = $('plbTerm').value;
+    $('plbTermBtn').replaceChildren(...T.termButton(year, term), svg(ICONS.chev, 12));
+  }
+  function setTermPop(open, focusBack) {
+    $('plbTermPop').hidden = !open;
+    $('plbTermBtn').setAttribute('aria-expanded', String(open));
+    if (open) $('plbYear').focus();
+    else if (focusBack) $('plbTermBtn').focus();
+  }
   function renderContextChip() {
     const chip = $('plbContext');
     if (!state.ctx) { chip.hidden = true; return; }
@@ -797,9 +835,9 @@
     const ends = isComplete(baseline) ? completionParts(baseline) : [];
     state.bandEnds = bandEndsKey();
     host.replaceChildren(
-      fact(T.bandStudent,
-        el('div', 'plb-big plb-big--name', st.name ? String(st.name) : T.unnamed),
-        el('div', 'plb-smeta', `${T.idLabel} `, bdi(st.student_id), st.program ? ' · ' : null, st.program ? bdi(st.program) : null,
+      fact(T.programme,
+        el('div', 'plb-big', st.program ? bdi(st.program) : '—'),
+        el('div', 'plb-smeta', st.name ? isolate(st.name) : T.unnamed, ' · ', bdi(st.student_id),
           advisor ? ` · ${T.advisor} ` : null, advisor ? bdi(advisor) : null)),
       fact(T.bandProgress,
         el('div', 'plb-big', ...(progress
@@ -961,10 +999,10 @@
     if (m.kind !== 'new') return null;
     return state.shortlist.find((c) => norm(c.course_code) === norm(m.key)) || null;
   }
-  function weekBlock(m, rowStart, rowEnd, col) {
+  function weekBlock(m, rowStart, rowEnd, col, inert) {
     const rows = rowEnd - rowStart;
     const range = `${hhmm(m.st)}-${hhmm(m.en)}`;
-    const item = plannedItem(m);
+    const item = inert ? null : plannedItem(m);
     const block = el(item ? 'button' : 'div', 'plb-b');
     if (item) {
       block.type = 'button';
@@ -1084,7 +1122,7 @@
   // The week's grid for `meetings`, drawn into `host` with `notes` under it. `alts` are the dashed
   // alternatives of an open course panel. The one builder for the week and for the current-timetable
   // disclosure.
-  function drawWeekGrid(meetings, host, notes, alts) {
+  function drawWeekGrid(meetings, host, notes, alts, inert) {
     const model = weekModel(meetings);
     if (!model.meetings.length && !alts.length) {
       host.replaceChildren(...[el('p', 'plb-empty', T.noClassesAtAll), ...notes]);
@@ -1133,7 +1171,7 @@
       for (const m of list) {
         const rowStart = 2 + Math.floor((m.st - geo.startMin) / 15);
         const rowEnd = Math.max(rowStart + 1, 2 + Math.ceil((m.en - geo.startMin) / 15));
-        grid.append(weekBlock(m, rowStart, rowEnd, i + 2));
+        grid.append(weekBlock(m, rowStart, rowEnd, i + 2, inert));
       }
       const foot = list.length
         ? el('div', 'plb-df', el('b', '', T.classWord(list.length)),
@@ -1158,16 +1196,25 @@
   }
   // The "Current timetable" disclosure under the student band: closed by default, the registered
   // week drawn with the week's own grid when it is opened, redrawn while it stays open.
+  const weekKey = () => state.baseline.map((r) => [r.course_code, r.course_key, r.section, r.day, r.start_time, r.end_time].join('|')).join(';');
   function renderCurTT() {
     const box = $('plbCurTT');
     box.hidden = !state.ctx;
-    if (!state.ctx) { $('plbCurTTWeek').replaceChildren(); return; }
-    $('plbCurTTDigest').replaceChildren(...curTTDigest());
-    if (!box.open) { $('plbCurTTWeek').replaceChildren(); return; }
+    if (!state.ctx) { $('plbCurTTWeek').replaceChildren(); state.curTT = { digest: null, drawn: null }; return; }
+    const key = weekKey();
+    // The digest and the grid are drawn again only when the registered week changed (a student
+    // load), not on every redraw of the week below.
+    if (state.curTT.digest !== key) {
+      $('plbCurTTDigest').replaceChildren(...curTTDigest());
+      state.curTT.digest = key;
+    }
+    if (!box.open) { $('plbCurTTWeek').replaceChildren(); state.curTT.drawn = null; return; }
+    if (state.curTT.drawn === key) return;
+    state.curTT.drawn = key;
     const untimedRows = [...new Map(registeredCourses().filter((c) => !c.timed).map((c) => [`${c.code}::${c.name}`, c])).values()];
     const shared = new Set(untimedRows.map((c) => c.code).filter((code, i, all) => all.indexOf(code) !== i));
     const untimed = untimedRows.map((c) => (shared.has(c.code) && c.name ? `${c.code} ${c.name}` : c.code));
-    drawWeekGrid(registeredMeetings(), $('plbCurTTWeek'), untimed.length ? [el('p', 'plb-note', ...T.untimed(untimed))] : [], []);
+    drawWeekGrid(registeredMeetings(), $('plbCurTTWeek'), untimed.length ? [el('p', 'plb-note', ...T.untimed(untimed))] : [], [], true);
   }
   // While a course's panel is open its blocks in the week are marked.
   function markOpenBlocks() {
@@ -2042,7 +2089,7 @@
     const year = reuse ? state.ctx.year : $('plbYear').value.trim();
     const term = reuse ? state.ctx.term : $('plbTerm').value;
     if (!/^\d+$/.test(studentId)) { setStatus('error', T.enterStudent); return; }
-    if (!/^\d{4}$/.test(year)) { setStatus('error', T.enterYear); return; }
+    if (!/^\d{4}$/.test(year)) { setStatus('error', T.enterYear); setTermPop(true); return; }
 
     const mine = ++state.ctxGen;
     const failed = (line) => {
@@ -2109,6 +2156,7 @@
     $('plbRoot').dataset.loaded = 'true';
     $('plbYear').value = state.ctx.year;
     if ([...$('plbTerm').options].some((o) => o.value === state.ctx.term)) $('plbTerm').value = state.ctx.term;
+    renderTermBtn();
     setStatus('ok', T.loaded);
     renderContextChip();
     renderStudent();
@@ -3297,6 +3345,15 @@
   /* ── Wiring ────────────────────────────────────────────────────────────── */
   function wire() {
     $('plbLoad').addEventListener('submit', (event) => { event.preventDefault(); loadStudent(); });
+    $('plbTermBtn').addEventListener('click', () => setTermPop($('plbTermPop').hidden, false));
+    $('plbYear').addEventListener('input', renderTermBtn);
+    $('plbTerm').addEventListener('change', renderTermBtn);
+    $('plbTermPop').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); setTermPop(false, true); }
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!$('plbTermPop').hidden && !event.target.closest('.plb-termwrap')) setTermPop(false, false);
+    });
     // A click anywhere during a load means the user has moved on: Fetch does not take the keyboard back.
     document.addEventListener('pointerdown', () => { state.fetchKeyboard = false; }, true);
     for (const [id, key, value] of [
@@ -3305,12 +3362,9 @@
       ['plbProgOnly', 'programOnly', true], ['plbProgAny', 'programOnly', false],
     ]) $(id).addEventListener('change', (event) => { if (event.target.checked) changeRuleInPlace(key, value); });
     $('plbFullIn').addEventListener('change', (event) => changeRuleInPlace('allowFull', event.target.checked));
-    $('plbRulesReset').addEventListener('click', () => commitRules({ ...state.defaults }));
+    $('plbRulesReset').addEventListener('click', resetRules);
     $('plbEligGo').addEventListener('click', goEligConfirm);
     $('plbEligKeep').addEventListener('click', () => closeEligConfirm(true));
-    $('plbEligConfirm').addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { event.preventDefault(); closeEligConfirm(true); }
-    });
     $('plbCurTT').addEventListener('toggle', renderCurTT);
     $('plbMaxIn').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); commitMaxInPlace(); }
@@ -3499,6 +3553,7 @@
     const term = root.dataset.defaultTerm;
     if ([...$('plbTerm').options].some((o) => o.value === term)) $('plbTerm').value = term;
     wire();
+    renderTermBtn();
     renderRules();
     renderStudent();
     renderWeek();
@@ -3513,6 +3568,7 @@
       const paramTerm = params.get('term');
       if (year) $('plbYear').value = year;
       if (paramTerm && [...$('plbTerm').options].some((o) => o.value === paramTerm)) $('plbTerm').value = paramTerm;
+      renderTermBtn();
       loadStudent();
     } else if (document.activeElement === document.body || !document.activeElement) {
       // An empty screen starts where the work starts. Once, here: nothing takes it back later.

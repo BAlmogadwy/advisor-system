@@ -160,8 +160,8 @@ class PlannerBoardZonesTests(PlannerBoardCase):
             "#plbStudent .plb-sf", "n => n.map(x => x.innerText.replace(/\\s+/g, ' ').trim())"
         )
         self.assertEqual(len(facts), 4)
-        self.assertTrue(facts[0].startswith("STUDENT Sample Student"), facts[0])
-        self.assertIn("4500000 · AI", facts[0])
+        self.assertTrue(facts[0].startswith("PROGRAMME AI"), facts[0])
+        self.assertIn("Sample Student · 4500000", facts[0])
         # plan credits passed over the plan's, and the GPA as the small line under it
         expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_have_text("6 / 30 cr")
         self.assertIn("GPA 3.42", self._text(page, "#plbStudent .plb-sf:nth-child(2)"))
@@ -205,7 +205,7 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         fake.projection_answer = lambda body: (200, READY)
         page = self._open(fake, language="ar")
         text = self._text(page, "#plbStudent")
-        for word in ("الطالب", "التقدم", "المسجّل الآن", "يتخرّج كما هو الحال", "بعد أول بناء"):
+        for word in ("البرنامج", "التقدم", "المسجّل الآن", "يتخرّج كما هو الحال", "بعد أول بناء"):
             self.assertIn(word, text)
         expect(page.locator("#plbStudent .plb-sf:nth-child(2) .plb-big")).to_contain_text("6 / 30")
         page.click("#plbBuild")
@@ -242,3 +242,142 @@ class PlannerBoardZonesTests(PlannerBoardCase):
                     ):
                         self.assertEqual(page.locator(selector).count(), 1)
                     page.context.close()
+
+    # ── reset, escape and the inert disclosure ───────────────────────────────
+    def test_reset_over_an_edited_list_and_a_changed_eligibility_asks_first(self) -> None:
+        fake = BuildFake()
+        page = self._open(fake)
+        page.click("#plbEligRelaxed")  # the list is still the suggestions: applied at once
+        expect(page.locator("#plbEligRelaxed")).to_be_checked()
+        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        self.assertEqual(self._rows(page, "new"), ["AI331"])
+        loads = len(fake.context_bodies)
+        page.click("#plbRulesReset")
+        expect(page.locator("#plbEligConfirm")).to_be_visible()
+        expect(page.locator("#plbEligGo")).to_be_focused()
+        # Keep: nothing changes
+        page.click("#plbEligKeep")
+        expect(page.locator("#plbEligConfirm")).to_be_hidden()
+        expect(page.locator("#plbEligRelaxed")).to_be_checked()
+        self.assertEqual(self._rows(page, "new"), ["AI331"])
+        self.assertEqual(len(fake.context_bodies), loads)
+        # Go: the usual rules come back and the suggestions are reloaded
+        page.click("#plbRulesReset")
+        page.click("#plbEligGo")
+        expect(page.locator("#plbEligStrict")).to_be_checked()
+        expect(page.locator("#plbRulesUsual")).to_be_visible()
+        expect(
+            page.locator("#plbTable tbody[data-group='new'] tr[data-code='AI342']")
+        ).to_be_visible()
+        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
+        self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "strict")
+
+    def test_reset_without_an_edited_list_applies_at_once(self) -> None:
+        page = self._open(BuildFake())
+        page.click("#plbEligRelaxed")
+        page.click("#plbRulesReset")
+        expect(page.locator("#plbEligConfirm")).to_be_hidden()
+        expect(page.locator("#plbEligStrict")).to_be_checked()
+
+    def test_escape_closes_the_eligibility_confirm_wherever_the_keyboard_is(self) -> None:
+        page = self._open(BuildFake())
+        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbEligRelaxed")
+        expect(page.locator("#plbEligConfirm")).to_be_visible()
+        page.focus("#plbAdd")
+        page.keyboard.press("Escape")
+        expect(page.locator("#plbEligConfirm")).to_be_hidden()
+        expect(page.locator("#plbEligStrict")).to_be_focused()
+
+    def test_the_current_timetable_blocks_are_inert(self) -> None:
+        page, _ = self._built()
+        page.click("#plbCurTT > summary")
+        expect(page.locator("#plbCurTTWeek .plb-b")).to_have_count(6)
+        self.assertEqual(
+            page.locator(
+                "#plbCurTTWeek button, #plbCurTTWeek [data-act], #plbCurTTWeek [tabindex]"
+            ).count(),
+            0,
+        )
+
+    def test_the_disclosure_is_drawn_again_only_when_the_registered_week_changes(self) -> None:
+        from tests.planner_board_support import _row, context_for
+
+        fake = BuildFake()
+
+        def answer(body):
+            payload = context_for(str(body["student_id"]))
+            if str(body["student_id"]) == OTHER_ID:
+                payload["baseline"] = [_row("AI499", "Thesis", "M1", 3, "THU", "09:00", "10:00", 9)]
+            return 200, payload
+
+        fake.context_answer = answer
+        page, _ = self._built(fake)
+        page.click("#plbCurTT > summary")
+        expect(page.locator("#plbCurTTWeek .plb-b")).to_have_count(6)
+        tag = "document.querySelector('#plbCurTTWeek .plb-wk').__tag = 1"
+        read = "document.querySelector('#plbCurTTWeek .plb-wk').__tag === 1"
+        page.evaluate(tag)
+        page.click("#plbRegIgnore")  # the build goes out of date: the week below is drawn again
+        expect(page.locator("#plbBuildLine")).to_contain_text("plan changed")
+        self.assertTrue(page.evaluate(read))
+        self._fetch(page, OTHER_ID)
+        expect(page.locator("#plbCurTTWeek .plb-b")).to_have_count(1)
+        self.assertNotEqual(page.evaluate(read), True)
+
+    # ── the header and the rules wording ─────────────────────────────────────
+    def test_the_title_and_the_term_button(self) -> None:
+        for language, title, button in (
+            ("en", "Plan next term", "Term 1, 1447"),
+            ("ar", "خطة الفصل القادم", "الفصل 1، 1447"),
+        ):
+            with self.subTest(language=language):
+                page = self._open(BuildFake(), language=language, load=False)
+                self.assertIn(title, page.title())
+                expect(page.locator("#plbStudentId")).to_be_visible()
+                expect(page.locator("#plbFetch")).to_be_visible()
+                expect(page.locator("#plbYear")).to_be_hidden()
+                expect(page.locator("#plbTermBtn")).to_have_attribute("aria-expanded", "false")
+                page.click("#plbTermBtn")
+                expect(page.locator("#plbTermBtn")).to_have_attribute("aria-expanded", "true")
+                expect(page.locator("#plbYear")).to_be_visible()
+                expect(page.locator("#plbYear")).to_be_focused()
+                page.select_option("#plbTerm", "1")
+                page.fill("#plbYear", "1447")
+                self.assertIn(button, " ".join(self._text(page, "#plbTermBtn").split()))
+                page.keyboard.press("Escape")
+                expect(page.locator("#plbYear")).to_be_hidden()
+                expect(page.locator("#plbTermBtn")).to_be_focused()
+                # the fields keep their ids and still drive the load
+                self.assertEqual(page.input_value("#plbYear"), "1447")
+                page.context.close()
+
+    def test_the_rules_wording_and_the_usual_rules_line(self) -> None:
+        for language, usual, reset, labels in (
+            (
+                "en",
+                "The usual rules",
+                "Reset",
+                ["Prerequisites", "Most credits", "Use full sections", "Sections from"],
+            ),
+            (
+                "ar",
+                "القواعد المعتادة",
+                "استعادة",
+                ["المتطلبات السابقة", "أقصى عدد للساعات", "استخدام الشُعب الممتلئة", "الشُعب من"],
+            ),
+        ):
+            with self.subTest(language=language):
+                page = self._open(BuildFake(), language=language)
+                zone = self._text(page, "#plbZoneRules")
+                for label in labels:
+                    self.assertIn(label, zone)
+                self.assertEqual(self._text(page, "#plbRulesUsual"), usual)
+                self.assertEqual(self._text(page, "#plbRulesReset"), reset)
+                page.click("#plbRegIgnore")
+                expect(page.locator("#plbRulesUsual")).to_be_hidden()
+                expect(page.locator("#plbRulesChanged")).to_be_visible()
+                page.click("#plbRulesReset")
+                expect(page.locator("#plbRulesUsual")).to_be_visible()
+                expect(page.locator("#plbRulesChanged")).to_be_hidden()
+                page.context.close()

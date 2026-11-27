@@ -53,7 +53,7 @@ class TestBoardIsThePage:
     ) -> None:
         # The deep link itself is measured in a browser: test_planner_board_guards_browser.py.
         html = staff_client.get("/planner/?student=4500000").content.decode()
-        assert "js/page-planner-board.js?v=11" in html
+        assert "js/page-planner-board.js?v=12" in html
         assert "js/page-planner.js" not in html
 
     def test_the_page_has_arabic_and_right_to_left_from_the_server(
@@ -64,7 +64,8 @@ class TestBoardIsThePage:
         assert 'lang="ar"' in html
         assert 'dir="rtl"' in html
         assert "التخرّج المتوقع" in html
-        assert "استعادة القواعد المعتادة" in html
+        assert "القواعد المعتادة" in html
+        assert "خطة الفصل القادم" in html
 
 
 @pytest.mark.django_db

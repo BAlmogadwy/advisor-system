@@ -289,8 +289,8 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def test_in_arabic_the_controls_say_arabic_and_work(self) -> None:
         page = self._open(BuildFake(), language="ar")
         self.assertEqual(self._text(page, "#plbRegLabel"), "المقررات المسجّلة")
-        self.assertEqual(self._text(page, "#plbEligLabel"), "الأهلية")
-        self.assertEqual(self._text(page, "#plbRulesReset"), "استعادة القواعد المعتادة")
+        self.assertEqual(self._text(page, "#plbEligLabel"), "المتطلبات السابقة")
+        self.assertEqual(self._text(page, "#plbRulesReset"), "استعادة")
         self.assertEqual(
             page.eval_on_selector_all(
                 ".plb-seg-o", "n => n.map(x => x.textContent.replace(/\\s+/g, ' ').trim())"
@@ -307,7 +307,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
 
     def test_the_other_rules_are_on_the_board_and_swaps_are_not_available(self) -> None:
         page = self._open(BuildFake())
-        self.assertEqual(self._text(page, "#plbRulesReset"), "Reset to the usual rules")
+        self.assertEqual(self._text(page, "#plbRulesReset"), "Reset")
         expect(page.locator("#plbProgOnly")).to_be_checked()
         expect(page.locator("#plbFullIn")).to_be_visible()
         expect(page.locator("#plbSwapIn")).to_be_disabled()
@@ -396,7 +396,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page = self._open(BuildFake(), load=False)
         expect(page.locator("#plbStudentId")).to_be_focused()
         # Once: moving on is respected, nothing takes the keyboard back.
-        page.focus("#plbYear")
+        page.focus("#plbFetch")
         page.click("#plbRegIgnore")
         page.fill("#plbMaxIn", "15")
         page.press("#plbMaxIn", "Enter")

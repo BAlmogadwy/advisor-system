@@ -79,6 +79,7 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/instructor_management.html", "imModalCancel"),
     # The new planner screen (planner_board.html): Fetch and the eligibility confirm's Go.
     ("core/templates/core/planner_board.html", "plbFetch"),
+    ("core/templates/core/planner_board.html", "plbTermBtn"),
     ("core/templates/core/planner_board.html", "plbEligGo"),
     # ... and "Review and apply", neutral in the template (no build exists yet; the board's
     # script makes it the filled button once a build can be applied, which its own browser

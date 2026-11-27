@@ -1258,7 +1258,7 @@ def test_staff_planner_ui_uses_clear_positive_control_names() -> None:
     assert 'id="plbProgOnly"' in template
     assert 'id="plbFullIn" type="checkbox"' in template
     assert "This programme" in template
-    assert "Include sections with no seats left" in template
+    assert "Use full sections" in template
     assert "program_sections_only: state.rules.programOnly," in script
     assert "allow_full_sections: state.rules.allowFull," in script
     assert "mustTake: IS_AR ? 'إلزامي' : 'Must-take'" in script
