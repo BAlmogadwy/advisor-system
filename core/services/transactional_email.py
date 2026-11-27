@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+from contextlib import closing
 from datetime import timedelta
 from email.header import Header
 from uuid import uuid4
@@ -121,7 +122,7 @@ def _send_via_ses(to_email: str, subject: str, body: str, *, timeout: int) -> st
         from_address = f"{from_name} <{from_address}>"
 
     try:
-        with boto3.client(
+        client = boto3.client(
             "sesv2",
             region_name=settings.AWS_REGION,
             endpoint_url=_SES_ENDPOINT,
@@ -133,7 +134,8 @@ def _send_via_ses(to_email: str, subject: str, body: str, *, timeout: int) -> st
                 read_timeout=timeout,
                 retries={"mode": "standard", "total_max_attempts": 1},
             ),
-        ) as client:
+        )
+        with closing(client):
             response = client.send_email(
                 FromEmailAddress=from_address,
                 Destination={"ToAddresses": [to_email]},

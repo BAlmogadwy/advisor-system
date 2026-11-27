@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import boto3  # type: ignore[import-untyped]
 import pytest
+from botocore.stub import ANY, Stubber  # type: ignore[import-untyped]
 from django.utils import timezone
 
 from core.models import RateLimitBucket
@@ -49,10 +50,7 @@ def providers(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock, Mock, Mock]:
         "ResponseMetadata": {"HTTPStatusCode": 200},
         "MessageId": "ses-id",
     }
-    ses_connection = Mock()
-    ses_connection.__enter__ = Mock(return_value=ses)
-    ses_connection.__exit__ = Mock(return_value=False)
-    ses_factory = Mock(return_value=ses_connection)
+    ses_factory = Mock(return_value=ses)
     monkeypatch.setattr(boto3, "client", ses_factory)
     return brevo, response, ses_factory, ses
 
@@ -99,6 +97,7 @@ def test_explicit_primary_rejection_falls_back_once_with_the_same_code(
     assert config["config"].retries["total_max_attempts"] == 1
     assert config["config"].read_timeout == config["config"].connect_timeout == 5
     ses.send_email.assert_called_once()
+    ses.close.assert_called_once_with()
     message = ses.send_email.call_args.kwargs
     assert message["FromEmailAddress"].isascii()
     assert message["FromEmailAddress"].endswith(f" <{SENDER}>")
@@ -110,6 +109,47 @@ def test_explicit_primary_rejection_falls_back_once_with_the_same_code(
         }
     }
     assert _shared_attempts() == 2
+
+
+def test_ses_fallback_uses_a_real_sdk_client_and_closes_it(
+    providers: tuple[Mock, Mock, Mock, Mock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, response, ses_factory, _ = providers
+    response.status = 429
+    client = boto3.session.Session().client(
+        "sesv2",
+        region_name="ap-southeast-1",
+        aws_access_key_id="offline",
+        aws_secret_access_key="offline",
+    )
+    ses_factory.return_value = client
+    close = Mock(wraps=client.close)
+    monkeypatch.setattr(client, "close", close)
+    monkeypatch.setattr(
+        client._endpoint.http_session,
+        "send",
+        Mock(side_effect=AssertionError("unit test attempted a live provider call")),
+    )
+
+    with Stubber(client) as requests:
+        requests.add_response(
+            "send_email",
+            {"ResponseMetadata": {"HTTPStatusCode": 200}, "MessageId": "offline-ses-id"},
+            {
+                "FromEmailAddress": ANY,
+                "Destination": {"ToAddresses": [RECIPIENT]},
+                "Content": {
+                    "Simple": {
+                        "Subject": {"Data": SUBJECT, "Charset": "UTF-8"},
+                        "Body": {"Text": {"Data": BODY, "Charset": "UTF-8"}},
+                    }
+                },
+            },
+        )
+        assert send_transactional_email(RECIPIENT, SUBJECT, BODY) == "offline-ses-id"
+        requests.assert_no_pending_responses()
+
+    close.assert_called_once_with()
 
 
 def test_separate_authenticated_sender_for_each_provider(
