@@ -306,8 +306,12 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "subnav_guide": ("Guide", "الدليل"),
     # The queue, narrowed by a link from the report
     "filter_from_report": (
-        "Only the cases the report counted: {parts}.",
-        "تُعرض الحالات التي احتسبها التقرير فقط: {parts}.",
+        "Only the cases the report counted, withdrawn feedback aside: {parts}.",
+        "تُعرض الحالات التي احتسبها التقرير فقط، دون الملاحظات المسحوبة: {parts}.",
+    ),
+    "filter_from_report_plain": (
+        "Only the cases the report counted, withdrawn feedback aside.",
+        "تُعرض الحالات التي احتسبها التقرير فقط، دون الملاحظات المسحوبة.",
     ),
     "filter_from_report_clear": ("Show every case", "عرض جميع الحالات"),
     "report_part_term": ("Term {term}", "الفصل الدراسي {term}"),

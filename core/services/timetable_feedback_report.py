@@ -85,7 +85,9 @@ def programme_code() -> Upper:
 # conditions to the links the report gives it, so a row's count and the cases
 # the queue then lists can never disagree.
 
-_TERM = re.compile(r"^[0-9]{3,4}/[0-9]{1,2}$")
+#: A term as the report writes it: the stored year and term (at most 8 and 4
+#: characters), letters or digits, either side of a slash.
+_TERM = re.compile(r"^[0-9A-Za-z]{1,8}/[0-9A-Za-z]{1,4}$")
 
 
 def parse_term(value: object) -> str:
@@ -210,7 +212,10 @@ def programmes_of(cases: QuerySet[TimetableFeedback]) -> list[str]:
 @dataclass(frozen=True)
 class Totals:
     students: int
+    #: Every case counted, withdrawn ones too: the work, by status and by day.
     cases: int
+    #: The cases that still say what students ask: withdrawn ones aside.
+    live_cases: int
     points: int
     open: int
     waiting_on_staff: int
@@ -371,6 +376,7 @@ def _totals(
     )
     # Who asked: students with feedback they have not withdrawn.
     people = live.aggregate(
+        live_cases=Count("pk"),
         students=Count("student_id", distinct=True),
         registered_students=Count(
             "student_id", distinct=True, filter=Q(has_registration_at_submission=True)

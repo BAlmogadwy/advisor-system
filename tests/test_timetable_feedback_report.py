@@ -239,9 +239,43 @@ def test_a_withdrawn_case_says_nothing_of_what_students_ask_but_counts_as_work(p
     assert data.moves == [] and data.missing == []
     assert [(row.programme, row.students, row.cases) for row in data.by_programme] == [(PROG, 1, 1)]
     # Still a case sent, and counted where it is.
-    assert (data.totals.cases, data.totals.withdrawn) == (2, 1)
+    assert (data.totals.cases, data.totals.live_cases, data.totals.withdrawn) == (2, 1, 1)
     assert data.by_status["WITHDRAWN"] == 1
     assert sum(n for _day, n in data.timeline) == 2
+    # The programme table adds up to the cases that still say something, and so
+    # does the key figure's own count of cases.
+    assert sum(row.cases for row in data.by_programme) == data.totals.live_cases
+    hint = scopy.text("kpi_students_hint", "en", cases=copy.bdi(1), points=copy.bdi(1))
+    assert str(hint) in _page(people["admin"])
+
+
+def test_the_queue_opened_from_the_report_sets_withdrawn_feedback_aside_too(people):
+    withdrawn = _case(S_MINE, "WITHDRAWN")
+    _point(withdrawn, "TIME_CLASH", course="CS113::Programming", section="M33")
+    standing = _case(S_MESSY)
+    _point(standing, "TIME_CLASH", course="CS113::Programming", section="M33")
+
+    html = _page(people["admin"], term=report.EVERY_TERM)
+    (row,) = _build(people["admin"], term=report.EVERY_TERM).sections
+    assert row.students == 1
+    for wanted in ({"section": "M33"}, {"reason": "TIME_CLASH"}):
+        link = _link_with(html, **wanted)
+        page, listed = _listed(_as(people["admin"]), link)
+        assert listed == {standing.reference}, wanted
+        assert 'id="ttfsReportFilter"' in page
+    # Without the report's mark, the queue lists both, as it always did.
+    plain = _as(people["admin"]).get(QUEUE, {"tab": "all", "reason": "TIME_CLASH"})
+    assert {withdrawn.reference, standing.reference} <= set(
+        re.findall(r'href="/ops/timetable-feedback/(TTF-\d{4}-\d{5})/"', plain.content.decode())
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "read"),
+    [("1448/1", "1448/1"), ("1448/S", "1448/S"), ("1448", ""), ("1448/1/2", ""), ("x y/1", "")],
+)
+def test_the_queue_reads_a_term_only_in_the_reports_own_form(value, read):
+    assert report.parse_term(value) == read
 
 
 def test_a_move_is_only_a_section_the_form_offered(people):

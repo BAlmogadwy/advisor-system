@@ -269,6 +269,9 @@ class _Filters:
     window: str = ""
     #: The programme the student wrote in, as a code, or ''.
     sent_programme: str = ""
+    #: Opened from the report: like the report, the queue then sets withdrawn
+    #: feedback aside, which says nothing about what students ask.
+    report: bool = False
 
     @classmethod
     def read(cls, query: QueryDict, staff: service.Staff) -> _Filters:
@@ -296,11 +299,12 @@ class _Filters:
             sent_programme=str(query.get("sent_programme") or "")
             .strip()
             .upper()[:_SECTION_FILTER_MAX],
+            report=query.get("from") == "report",
         )
 
     @property
     def from_report(self) -> bool:
-        return bool(self.course or self.term or self.window or self.sent_programme)
+        return bool(self.report or self.course or self.term or self.window or self.sent_programme)
 
     def q(self) -> Q:
         """Everything but the tab."""
@@ -355,6 +359,8 @@ class _Filters:
             q &= report.sent_since_q(self.window, timezone.now())
         if self.sent_programme:
             q &= report.sent_from_programme_q(self.sent_programme)
+        if self.from_report:
+            q &= ~Q(status=TimetableFeedback.Status.WITHDRAWN)
         return q
 
     def query_for(self, **changes: object) -> str:
@@ -373,6 +379,7 @@ class _Filters:
             "term": self.term,
             "window": self.window,
             "sent_programme": self.sent_programme,
+            "from": "report" if self.report else "",
         }
         values.update({key: str(value) for key, value in changes.items()})
         query = QueryDict(mutable=True)
@@ -406,6 +413,8 @@ def _report_filter_line(filters: _Filters, language: str) -> object:
                 section=copy.bdi(filters.section),
             )
         )
+    if not parts:
+        return scopy.strings(language)["filter_from_report_plain"]
     return scopy.text(
         "filter_from_report",
         language,
@@ -556,7 +565,7 @@ def queue_view(request: HttpRequest) -> HttpResponse:
             empty=t[f"empty_{empty}"] if empty in ("NO_ADVISOR_ID", "NO_DEPARTMENTS") else "",
             report_filter=_report_filter_line(filters, language),
             report_clear_query=filters.query_for(
-                course="", section="", term="", window="", sent_programme=""
+                course="", section="", term="", window="", sent_programme="", **{"from": ""}
             ),
             reasons=[(code, scopy.reason_label(code, language)) for code in scopy.REASON],
             programmes=_programmes(staff),
@@ -1229,6 +1238,7 @@ def _queue_link(**params: object) -> str:
     """The queue narrowed to ``params``, across every tab: the report's way in."""
     query = QueryDict(mutable=True)
     query["tab"] = "all"
+    query["from"] = "report"
     for key, value in params.items():
         if value:
             query[key] = str(value)
@@ -1284,7 +1294,9 @@ def _kpis(data: report.Report, language: str) -> list[dict[str, Any]]:
             "hint": scopy.text(
                 "kpi_students_hint",
                 language,
-                cases=copy.bdi(totals.cases),
+                # The cases still saying what students ask, as the programme table
+                # counts them; withdrawn ones show in "where the cases are".
+                cases=copy.bdi(totals.live_cases),
                 points=copy.bdi(totals.points),
             ),
         },
