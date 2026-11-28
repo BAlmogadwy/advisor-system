@@ -325,18 +325,30 @@
     min-width: 0;
   }
 
-  /* The name is for the eye only (the empty text after the slash): a screen
-     reader already says the column's name from the table's roles. */
   .ttfs-queue .ttfs-points-cell::before,
   .ttfs-queue .ttfs-days-cell::before,
   .ttfs-queue .ttfs-handler-cell::before,
   .ttfs-queue .ttfs-activity-cell::before {
     color: var(--t2);
-    content: attr(data-label) / "";
+    content: attr(data-label);
     display: block;
     font-size: var(--text-xs);
     font-weight: 600;
     margin-block-end: 2px;
+  }
+}
+
+/* Where the browser can, a card's names are for the eye only (the empty text
+   after the slash): a screen reader already says the column's name from the
+   table's roles. Elsewhere the names still show, read out twice. */
+@supports (content: "" / "") {
+  @container ttfs-queue (max-width: 959px) {
+    .ttfs-queue .ttfs-points-cell::before,
+    .ttfs-queue .ttfs-days-cell::before,
+    .ttfs-queue .ttfs-handler-cell::before,
+    .ttfs-queue .ttfs-activity-cell::before {
+      content: attr(data-label) / "";
+    }
   }
 }
 

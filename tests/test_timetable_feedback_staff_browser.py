@@ -447,15 +447,12 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         days = page.locator("#ttfsQueue tbody tr").first.locator(".ttfs-days-cell")
         self.assertNotEqual(days.evaluate("el => getComputedStyle(el, '::before').content"), "none")
         self.assertNotIn(scopy.strings("ar")["col_days"], days.aria_snapshot())
-        # A focused card is tinted as one, not cell by cell.
-        page.locator('#ttfsQueue input[name="pick"]').first.focus()
-        tint = page.evaluate(
-            "() => { const row = document.querySelector('#ttfsQueue tbody tr');"
-            " return [getComputedStyle(row).backgroundColor,"
-            " getComputedStyle(row.querySelector('.ttfs-days-cell')).backgroundColor]; }"
-        )
-        self.assertEqual(tint[1], "rgba(0, 0, 0, 0)")
-        self.assertNotEqual(tint[0], "rgba(0, 0, 0, 0)")
+        # A focused card is tinted as one, not cell by cell. The row's tint fades
+        # in (global.css), so the checks wait for it.
+        card = page.locator("#ttfsQueue tbody tr").first
+        card.locator('input[name="pick"]').focus()
+        expect(card).not_to_have_css("background-color", "rgba(0, 0, 0, 0)")
+        expect(card.locator(".ttfs-days-cell")).to_have_css("background-color", "rgba(0, 0, 0, 0)")
         # With no filter on, the filters fold into their title.
         box = page.locator("#ttfsFiltersBox")
         self.assertFalse(box.evaluate("el => el.open"))
