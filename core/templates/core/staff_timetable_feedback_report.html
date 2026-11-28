@@ -1,0 +1,282 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ t.report_title }}{% endblock %}
+
+{% block content_width %}wide{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=3">{% endblock %}
+
+{% block page_heading %}{{ t.report_title }}{% endblock %}
+
+{% block page_intro %}
+<p class="mb-0" dir="auto">{{ t.report_intro }}</p>
+{% endblock %}
+
+{% block content %}
+{% comment %}
+  What students ask, counted by the view over the cases this person may open.
+  Every number is also said in words or sits under a column heading; the bars are
+  drawn as SVG lengths (no inline style), hidden from assistive technology, and
+  mirrored for right-to-left pages by the stylesheet. Each row that names a group
+  of cases links to the queue narrowed to them.
+{% endcomment %}
+{% include "core/partials/ttfs_subnav.html" with current="report" %}
+
+<p class="ttfr-scope" id="ttfrScope" dir="auto">{{ scope }}</p>
+
+<form method="get" class="card ttfr-filters" id="ttfrFilters" aria-labelledby="ttfrFiltersTitle">
+  <h2 class="visually-hidden" id="ttfrFiltersTitle">{{ t.report_filters_title }}</h2>
+  <div class="ttfr-filter">
+    <label class="ttf-label" for="ttfrTerm">{{ t.report_term }}</label>
+    <select class="form-select" id="ttfrTerm" name="term">
+      {% for term in terms %}<option value="{{ term }}"{% if filters.term == term %} selected{% endif %}>{{ term }}</option>{% endfor %}
+      <option value="{{ every_term }}"{% if not filters.term %} selected{% endif %}>{{ t.report_every_term }}</option>
+    </select>
+  </div>
+  <div class="ttfr-filter">
+    <label class="ttf-label" for="ttfrProgramme">{{ t.report_programme }}</label>
+    <select class="form-select" id="ttfrProgramme" name="programme">
+      <option value="">{{ t.filter_any }}</option>
+      {% for programme in programmes %}<option value="{{ programme }}"{% if filters.programme == programme %} selected{% endif %}>{{ programme }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="ttfr-filter">
+    <label class="ttf-label" for="ttfrIssue">{{ t.report_issue }}</label>
+    <select class="form-select" id="ttfrIssue" name="reason">
+      <option value="">{{ t.filter_any }}</option>
+      {% for code, label in reason_choices %}<option value="{{ code }}"{% if filters.reason == code %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="ttfr-filter">
+    <label class="ttf-label" for="ttfrWindow">{{ t.report_window }}</label>
+    <select class="form-select" id="ttfrWindow" name="window">
+      {% for value, label in windows %}<option value="{{ value }}"{% if filters.window == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="ttfr-filter-actions">
+    <button class="btn btn-primary" type="submit">{{ t.report_apply }}</button>
+    <a class="btn btn-outline-secondary" href="{% url 'staff_timetable_feedback_report' %}">{{ t.report_clear }}</a>
+  </div>
+</form>
+
+{% if report_empty %}
+<div class="ttf-notice" id="ttfrEmpty" role="status"><span dir="auto">{{ t.report_empty }}</span></div>
+{% else %}
+
+<section class="ttfr-figures" aria-labelledby="ttfrFiguresTitle">
+  <h2 class="visually-hidden" id="ttfrFiguresTitle">{{ t.report_figures }}</h2>
+  <dl class="ttfr-kpis">
+    {% for kpi in kpis %}
+    <div class="ttfr-kpi{% if kpi.tone %} is-{{ kpi.tone }}{% endif %}" id="ttfrKpi-{{ kpi.id }}">
+      <dt class="ttfr-kpi-label">{{ kpi.label }}</dt>
+      <dd class="ttfr-kpi-value"><bdi dir="ltr">{{ kpi.value }}</bdi>{% if kpi.unit %} <span class="ttfr-kpi-unit">{{ kpi.unit }}</span>{% endif %}</dd>
+      <dd class="ttfr-kpi-hint" dir="auto">{{ kpi.hint }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+</section>
+
+<div class="ttfr-grid ttfr-grid-wide-first">
+  <section class="card ttfr-card" id="ttfrReasons" aria-labelledby="ttfrReasonsTitle">
+    <header class="ttfr-card-head">
+      <h2 class="ttfr-card-title" id="ttfrReasonsTitle">{{ t.report_reasons_title }}</h2>
+      <p class="ttfr-card-intro" dir="auto">{{ t.report_reasons_intro }}</p>
+    </header>
+    {% if reasons %}
+    <ol class="ttfr-bars">
+      {% for row in reasons %}
+      <li>
+        <a class="ttfr-bar-row" href="{{ row.url }}" id="ttfrReason-{{ row.code }}">
+          <span class="ttfr-bar-label" dir="auto">{{ row.label }}</span>
+          <span class="ttfr-bar-track" aria-hidden="true"><svg viewBox="0 0 100 10" preserveAspectRatio="none" focusable="false"><rect x="0" y="0" width="{{ row.bar }}" height="10" rx="2"></rect></svg></span>
+          <span class="ttfr-bar-value"><span class="visually-hidden">{{ t.report_col_students }}: </span><bdi dir="ltr">{{ row.students }}</bdi> <span class="ttfr-bar-share"><span class="visually-hidden">{{ t.report_col_share }}: </span><bdi dir="ltr">{{ row.share }}%</bdi></span></span>
+        </a>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="mb-0" dir="auto">{{ t.report_reasons_none }}</p>
+    {% endif %}
+  </section>
+
+  <section class="card ttfr-card" id="ttfrStatuses" aria-labelledby="ttfrStatusesTitle">
+    <header class="ttfr-card-head">
+      <h2 class="ttfr-card-title" id="ttfrStatusesTitle">{{ t.report_status_title }}</h2>
+    </header>
+    <ul class="ttfr-bars ttfr-bars-status">
+      {% for row in statuses %}
+      <li class="ttfr-bar-row" data-status="{{ row.code }}">
+        <span class="ttfr-bar-label"><span class="ttf-status" data-status="{{ row.code }}">{{ row.label }}</span></span>
+        <span class="ttfr-bar-track" aria-hidden="true"><svg viewBox="0 0 100 10" preserveAspectRatio="none" focusable="false"><rect x="0" y="0" width="{{ row.bar }}" height="10" rx="2"></rect></svg></span>
+        <span class="ttfr-bar-value"><bdi dir="ltr">{{ row.count }}</bdi></span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+
+<section class="card ttfr-card" id="ttfrSections" aria-labelledby="ttfrSectionsTitle">
+  <header class="ttfr-card-head">
+    <h2 class="ttfr-card-title" id="ttfrSectionsTitle">{{ t.report_sections_title }}</h2>
+    <p class="ttfr-card-intro" dir="auto">{{ t.report_sections_intro }}</p>
+  </header>
+  {% if sections %}
+  <div class="table-wrap ttfr-table-wrap">
+    <table role="table" class="table ttfr-table" id="ttfrSectionsTable">
+      <caption class="visually-hidden">{{ t.report_sections_title }}</caption>
+      <thead role="rowgroup">
+        <tr role="row">
+          <th role="columnheader" scope="col">{{ t.report_col_course }}</th>
+          <th role="columnheader" scope="col">{{ t.report_col_section }}</th>
+          <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_students }}</th>
+          <th role="columnheader" scope="col">{{ t.report_col_issues }}</th>
+          <th role="columnheader" scope="col">{{ t.report_col_asked_for }}</th>
+          <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_registered }}</th>
+          <th role="columnheader" scope="col"><span class="visually-hidden">{{ t.report_see_cases }}</span></th>
+        </tr>
+      </thead>
+      <tbody role="rowgroup">
+        {% for row in sections %}
+        <tr role="row">
+          <th role="rowheader" scope="row" class="ttfr-course"><bdi dir="ltr" class="ttfr-code">{{ row.course_code }}</bdi>{% if row.course_name %}<span class="ttfr-course-name" dir="auto">{{ row.course_name }}</span>{% endif %}</th>
+          <td role="cell" data-label="{{ t.report_col_section }}"><bdi dir="ltr" class="ttfr-chip">{{ row.section }}</bdi></td>
+          <td role="cell" class="ttfr-num" data-label="{{ t.report_col_students }}"><span class="ttfr-inline-bar"><bdi dir="ltr">{{ row.students }}</bdi><span class="ttfr-bar-track" aria-hidden="true"><svg viewBox="0 0 100 10" preserveAspectRatio="none" focusable="false"><rect x="0" y="0" width="{{ row.bar }}" height="10" rx="2"></rect></svg></span></span></td>
+          <td role="cell" class="ttfr-wide" data-label="{{ t.report_col_issues }}"><ul class="ttfr-chips">{% for label, n in row.issues %}<li class="ttfr-chip"><span dir="auto">{{ label }}</span> <bdi dir="ltr" class="ttfr-chip-count">{{ n }}</bdi></li>{% endfor %}</ul></td>
+          <td role="cell" data-label="{{ t.report_col_asked_for }}">{% if row.moves %}<ul class="ttfr-chips">{% for label, n in row.moves %}<li class="ttfr-chip ttfr-chip-move"><bdi dir="ltr">{{ label }}</bdi> <bdi dir="ltr" class="ttfr-chip-count">{{ n }}</bdi></li>{% endfor %}</ul>{% else %}<span class="ttfr-muted">—</span>{% endif %}</td>
+          <td role="cell" class="ttfr-num" data-label="{{ t.report_col_registered }}"><bdi dir="ltr">{{ row.registered }}</bdi></td>
+          <td role="cell" class="ttfr-link-cell"><a href="{{ row.url }}">{{ t.report_see_cases }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if sections_more %}<p class="ttfr-more mb-0" dir="auto">{{ sections_more }}</p>{% endif %}
+  {% else %}
+  <p class="mb-0" dir="auto">{{ t.report_none_listed }}</p>
+  {% endif %}
+</section>
+
+<div class="ttfr-grid">
+  <section class="card ttfr-card" id="ttfrMoves" aria-labelledby="ttfrMovesTitle">
+    <header class="ttfr-card-head">
+      <h2 class="ttfr-card-title" id="ttfrMovesTitle">{{ t.report_moves_title }}</h2>
+      <p class="ttfr-card-intro" dir="auto">{{ t.report_moves_intro }}</p>
+    </header>
+    {% if moves %}
+    <div class="table-wrap ttfr-table-wrap">
+      <table role="table" class="table ttfr-table" id="ttfrMovesTable">
+        <caption class="visually-hidden">{{ t.report_moves_title }}</caption>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader" scope="col">{{ t.report_col_course }}</th>
+            <th role="columnheader" scope="col">{{ t.report_col_from }}</th>
+            <th role="columnheader" scope="col">{{ t.report_col_to }}</th>
+            <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_students }}</th>
+          </tr>
+        </thead>
+        <tbody role="rowgroup">
+          {% for row in moves %}
+          <tr role="row">
+            <th role="rowheader" scope="row" class="ttfr-course"><a href="{{ row.url }}"><bdi dir="ltr" class="ttfr-code">{{ row.course_code }}</bdi></a>{% if row.course_name %}<span class="ttfr-course-name" dir="auto">{{ row.course_name }}</span>{% endif %}</th>
+            <td role="cell" data-label="{{ t.report_col_from }}"><bdi dir="ltr" class="ttfr-chip">{{ row.from }}</bdi></td>
+            <td role="cell" data-label="{{ t.report_col_to }}"><bdi dir="ltr" class="ttfr-chip ttfr-chip-move">{{ row.to }}</bdi></td>
+            <td role="cell" class="ttfr-num" data-label="{{ t.report_col_students }}"><bdi dir="ltr">{{ row.students }}</bdi></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="mb-0" dir="auto">{{ t.report_none_listed }}</p>
+    {% endif %}
+  </section>
+
+  <section class="card ttfr-card" id="ttfrMissing" aria-labelledby="ttfrMissingTitle">
+    <header class="ttfr-card-head">
+      <h2 class="ttfr-card-title" id="ttfrMissingTitle">{{ t.report_missing_title }}</h2>
+      <p class="ttfr-card-intro" dir="auto">{{ t.report_missing_intro }}</p>
+    </header>
+    {% if missing %}
+    <div class="table-wrap ttfr-table-wrap">
+      <table role="table" class="table ttfr-table" id="ttfrMissingTable">
+        <caption class="visually-hidden">{{ t.report_missing_title }}</caption>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader" scope="col">{{ t.report_col_course }}</th>
+            <th role="columnheader" scope="col">{{ t.report_col_programmes }}</th>
+            <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_students }}</th>
+          </tr>
+        </thead>
+        <tbody role="rowgroup">
+          {% for row in missing %}
+          <tr role="row">
+            <th role="rowheader" scope="row" class="ttfr-course"><bdi dir="ltr" class="ttfr-code">{{ row.course_code }}</bdi>{% if row.course_name %}<span class="ttfr-course-name" dir="auto">{{ row.course_name }}</span>{% endif %}</th>
+            <td role="cell" data-label="{{ t.report_col_programmes }}"><ul class="ttfr-chips">{% for programme in row.programmes %}<li class="ttfr-chip"><bdi dir="ltr">{{ programme }}</bdi></li>{% endfor %}</ul></td>
+            <td role="cell" class="ttfr-num" data-label="{{ t.report_col_students }}"><bdi dir="ltr">{{ row.students }}</bdi></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="ttfr-more mb-0"><a href="{{ missing_url }}">{{ t.report_see_cases }}</a></p>
+    {% else %}
+    <p class="mb-0" dir="auto">{{ t.report_none_listed }}</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card ttfr-card" id="ttfrProgrammes" aria-labelledby="ttfrProgrammesTitle">
+  <header class="ttfr-card-head">
+    <h2 class="ttfr-card-title" id="ttfrProgrammesTitle">{{ t.report_programmes_title }}</h2>
+  </header>
+  <div class="table-wrap ttfr-table-wrap">
+    <table role="table" class="table ttfr-table" id="ttfrProgrammesTable">
+      <caption class="visually-hidden">{{ t.report_programmes_title }}</caption>
+      <thead role="rowgroup">
+        <tr role="row">
+          <th role="columnheader" scope="col">{{ t.report_col_programme }}</th>
+          <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_students }}</th>
+          <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_cases }}</th>
+          <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_open }}</th>
+          <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_waiting }}</th>
+          <th role="columnheader" scope="col" class="ttfr-num">{{ t.report_col_answered }}</th>
+          <th role="columnheader" scope="col">{{ t.report_col_top_issue }}</th>
+        </tr>
+      </thead>
+      <tbody role="rowgroup">
+        {% for row in by_programme %}
+        <tr role="row">
+          <th role="rowheader" scope="row">{% if row.programme %}<a href="{{ row.url }}"><bdi dir="ltr">{{ row.programme }}</bdi></a>{% else %}—{% endif %}</th>
+          <td role="cell" class="ttfr-num" data-label="{{ t.report_col_students }}"><bdi dir="ltr">{{ row.students }}</bdi></td>
+          <td role="cell" class="ttfr-num" data-label="{{ t.report_col_cases }}"><bdi dir="ltr">{{ row.cases }}</bdi></td>
+          <td role="cell" class="ttfr-num" data-label="{{ t.report_col_open }}"><bdi dir="ltr">{{ row.open }}</bdi></td>
+          <td role="cell" class="ttfr-num" data-label="{{ t.report_col_waiting }}"><bdi dir="ltr">{{ row.waiting }}</bdi></td>
+          <td role="cell" class="ttfr-num" data-label="{{ t.report_col_answered }}"><bdi dir="ltr">{{ row.answered }}</bdi></td>
+          <td role="cell" dir="auto" data-label="{{ t.report_col_top_issue }}">{{ row.top_issue|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card ttfr-card" id="ttfrTimeline" aria-labelledby="ttfrTimelineTitle">
+  <header class="ttfr-card-head">
+    <h2 class="ttfr-card-title" id="ttfrTimelineTitle">{{ t.report_timeline_title }}</h2>
+    <p class="ttfr-card-intro" id="ttfrTimelineSummary" dir="auto">{{ timeline_summary }}</p>
+  </header>
+  <div class="ttfr-columns" dir="ltr" aria-hidden="true">
+    {% for day in timeline %}
+    <span class="ttfr-column{% if day.count %} has-value{% endif %}" title="{{ day.day }}: {{ day.count }}"><svg viewBox="0 0 10 100" preserveAspectRatio="none" focusable="false"><rect x="0" y="{{ day.gap }}" width="10" height="{{ day.height }}" rx="1"></rect></svg></span>
+    {% endfor %}
+  </div>
+  <div class="ttfr-axis" dir="ltr" aria-hidden="true">{% with first=timeline|first last=timeline|last %}<span>{{ first.day }}</span><span>{{ last.day }}</span>{% endwith %}</div>
+  <table class="visually-hidden" id="ttfrTimelineTable">
+    <caption>{{ t.report_timeline_title }}</caption>
+    <thead><tr><th scope="col">{{ t.report_col_day }}</th><th scope="col">{{ t.report_col_cases }}</th></tr></thead>
+    <tbody>{% for day in timeline %}<tr><th scope="row"><bdi dir="ltr">{{ day.day }}</bdi></th><td><bdi dir="ltr">{{ day.count }}</bdi></td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

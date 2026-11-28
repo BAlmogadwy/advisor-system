@@ -1,5 +1,6 @@
 """The staff side of timetable feedback: the queue, one case, the actions on it,
-removing words, many cases at once, and the guide.
+removing words, many cases at once, the guide, and the report of what students
+ask (counted by `timetable_feedback_report`, over the same scope as the queue).
 
 WHO. Every route is wrapped in ``login_required(role_required(ROLE_ADVISOR))`` in
 urls.py, so students and the exam committee never reach a view. Inside, every case
@@ -47,6 +48,7 @@ from core.models import (
 )
 from core.services import timetable_feedback as feedback
 from core.services import timetable_feedback_copy as copy
+from core.services import timetable_feedback_report as report
 from core.services import timetable_feedback_staff as service
 from core.services import timetable_feedback_staff_copy as scopy
 from core.services import timetable_feedback_workflow as workflow
@@ -66,6 +68,8 @@ NOTICE_TAG = "ttfs"
 QUEUE_PAGE_SIZE = service.BULK_MAX
 #: Refusals about text that was typed, which are shown at its field too.
 _TEXT_CODES = frozenset({"BODY_REQUIRED", "BODY_TOO_LONG", "BODY_INVALID"})
+#: The longest course identity or section label the queue's section filter reads.
+_SECTION_FILTER_MAX = 200
 #: Which field a refusal is about, beyond the typed text.
 _FIELD_OF_CODE = {
     "CLOSE_REASON_REQUIRED": "close_reason",
@@ -197,6 +201,12 @@ def _students(student_ids: set[int]) -> dict[int, dict[str, Any]]:
     }
 
 
+def _identity_label(identity: str) -> str:
+    """'CS113 — Programming' for 'CS113::Programming'; a bare code as it is."""
+    code, _, name = str(identity or "").partition("::")
+    return f"{code.strip()} — {name.strip()}" if name.strip() else code.strip()
+
+
 def _point_summary(point: TimetableFeedbackPoint, language: str) -> str:
     reason = scopy.reason_label(point.reason_code, language)
     if point.anchor_kind == TimetableFeedbackPoint.AnchorKind.SECTION:
@@ -244,12 +254,18 @@ class _Filters:
     graduating: bool
     unrouted: bool
     page: str
+    #: One physical section, as the report names it: its course as CODE::NAME and
+    #: its label. Both or neither: a label alone names a section of any course.
+    course: str = ""
+    section: str = ""
 
     @classmethod
     def read(cls, query: QueryDict, staff: service.Staff) -> _Filters:
         tab = str(query.get("tab") or "")
         reason = str(query.get("reason") or "").strip().upper()
         registered = str(query.get("registered") or "")
+        course = str(query.get("course") or "").strip()[:_SECTION_FILTER_MAX]
+        section = str(query.get("section") or "").strip()[:_SECTION_FILTER_MAX]
         return cls(
             tab=tab if tab in service.TABS else service.TABS[0],
             search=str(query.get("q") or "").strip(),
@@ -261,6 +277,8 @@ class _Filters:
             # The catch-all is the department's; for anyone else it filters nothing.
             unrouted=query.get("unrouted") == "1" and staff.is_department,
             page=str(query.get("page") or "1"),
+            course=course if course and section else "",
+            section=section if course and section else "",
         )
 
     def q(self) -> Q:
@@ -298,6 +316,17 @@ class _Filters:
             )
         if self.unrouted:
             q &= service.unrouted_q()
+        if self.course:
+            q &= Q(
+                Exists(
+                    TimetableFeedbackPoint.objects.filter(
+                        case=OuterRef("pk"),
+                        withdrawn_at__isnull=True,
+                        section_course_identity=self.course,
+                        section_label=self.section,
+                    )
+                )
+            )
         return q
 
     def query_for(self, **changes: object) -> str:
@@ -311,6 +340,8 @@ class _Filters:
             "new": "1" if self.new else "",
             "graduating": "1" if self.graduating else "",
             "unrouted": "1" if self.unrouted else "",
+            "course": self.course,
+            "section": self.section,
         }
         values.update({key: str(value) for key, value in changes.items()})
         query = QueryDict(mutable=True)
@@ -461,6 +492,17 @@ def queue_view(request: HttpRequest) -> HttpResponse:
             ),
             next_query=(filters.query_for(page=page.next_page_number()) if page.has_next() else ""),
             empty=t[f"empty_{empty}"] if empty in ("NO_ADVISOR_ID", "NO_DEPARTMENTS") else "",
+            section_filter=(
+                scopy.text(
+                    "filter_section_active",
+                    language,
+                    course=copy.bdi(_identity_label(filters.course)),
+                    section=copy.bdi(filters.section),
+                )
+                if filters.course
+                else ""
+            ),
+            section_clear_query=filters.query_for(course="", section=""),
             reasons=[(code, scopy.reason_label(code, language)) for code in scopy.REASON],
             programmes=_programmes(staff),
             templates=[(key, scopy.template_name(key, language)) for key in copy.REPLY_TEMPLATES],
@@ -1108,5 +1150,276 @@ def guide_view(request: HttpRequest) -> HttpResponse:
                 for code, advice in scopy.GUIDE_REASONS.items()
             ],
             rules=[scopy.fill(rule, language) for rule in scopy.GUIDE_RULES],
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# The report
+# ---------------------------------------------------------------------------
+
+#: The statuses in the order a case moves through them, for "where the cases are".
+_STATUS_ORDER = (
+    TimetableFeedback.Status.SUBMITTED,
+    TimetableFeedback.Status.IN_REVIEW,
+    TimetableFeedback.Status.NEEDS_INFORMATION,
+    TimetableFeedback.Status.FORWARDED,
+    TimetableFeedback.Status.ANSWERED,
+    TimetableFeedback.Status.CLOSED,
+    TimetableFeedback.Status.WITHDRAWN,
+)
+
+
+def _queue_link(**params: object) -> str:
+    """The queue narrowed to ``params``, across every tab: the report's way in."""
+    query = QueryDict(mutable=True)
+    query["tab"] = "all"
+    for key, value in params.items():
+        if value:
+            query[key] = str(value)
+    return f"{reverse('staff_timetable_feedback_queue')}?{query.urlencode()}"
+
+
+def _share(part: int, whole: int) -> int:
+    """A whole percentage; 0 when there is nothing to share."""
+    return round(100 * part / whole) if whole else 0
+
+
+def _bar(value: int, top: int) -> int:
+    """A bar's length out of 100. Anything above nothing shows at least a sliver."""
+    if value <= 0 or top <= 0:
+        return 0
+    return max(2, round(100 * value / top))
+
+
+def _median_wait(hours: float | None, language: str) -> tuple[str, str]:
+    """The median wait for a first action, as (value, unit)."""
+    t = scopy.strings(language)
+    if hours is None:
+        return t["kpi_no_data"], ""
+    if hours < 1:
+        return t["kpi_less_than_one"], t["kpi_in_hours"]
+    if hours <= 72:
+        return str(round(hours)), t["kpi_in_hours"]
+    return f"{hours / 24:.1f}", t["kpi_in_days"]
+
+
+def _scope_line(staff: service.Staff, language: str) -> object:
+    if staff.role == ROLE_GENERAL_ADVISOR:
+        return scopy.text(
+            "report_scope_department",
+            language,
+            programmes=copy.bdi(scopy.strings(language)["list_separator"].join(staff.departments)),
+        )
+    if staff.is_department:
+        return scopy.strings(language)["report_scope_admin"]
+    return scopy.strings(language)["report_scope_advisor"]
+
+
+def _kpis(data: report.Report, language: str) -> list[dict[str, Any]]:
+    t = scopy.strings(language)
+    totals, response = data.totals, data.response
+    wait, unit = _median_wait(response.median_hours, language)
+    judged = response.helpful_yes + response.helpful_no
+    return [
+        {
+            "id": "students",
+            "label": t["kpi_students"],
+            "value": totals.students,
+            "hint": scopy.text(
+                "kpi_students_hint",
+                language,
+                cases=copy.bdi(totals.cases),
+                points=copy.bdi(totals.points),
+            ),
+        },
+        {
+            "id": "open",
+            "label": t["kpi_open"],
+            "value": totals.open,
+            "hint": scopy.text(
+                "kpi_open_hint",
+                language,
+                staff=copy.bdi(totals.waiting_on_staff),
+                student=copy.bdi(totals.waiting_on_student),
+            ),
+        },
+        {
+            "id": "untouched",
+            "label": t["kpi_untouched"],
+            "value": totals.untouched,
+            "hint": t["kpi_untouched_hint"],
+            "tone": "warning" if totals.untouched else "",
+        },
+        {
+            "id": "first-action",
+            "label": t["kpi_first_action"],
+            "value": wait,
+            "unit": unit,
+            "hint": scopy.text(
+                "kpi_first_action_hint",
+                language,
+                acted=copy.bdi(response.acted_on),
+                prompt=copy.bdi(response.prompt),
+            ),
+        },
+        {
+            "id": "helpful",
+            "label": t["kpi_helpful"],
+            "value": f"{_share(response.helpful_yes, judged)}%" if judged else t["kpi_no_data"],
+            "hint": scopy.text(
+                "kpi_helpful_hint",
+                language,
+                yes=copy.bdi(response.helpful_yes),
+                no=copy.bdi(response.helpful_no),
+            ),
+        },
+        {
+            "id": "department",
+            "label": t["kpi_with_department"],
+            "value": totals.with_department,
+            "hint": scopy.text(
+                "kpi_with_department_hint",
+                language,
+                registered=copy.bdi(totals.registered_students),
+                graduating=copy.bdi(totals.graduating_students),
+            ),
+        },
+    ]
+
+
+@never_cache
+@require_GET
+def report_view(request: HttpRequest) -> HttpResponse:
+    begun = _begin(request)
+    if isinstance(begun, HttpResponse):
+        return begun
+    language, staff = begun
+    t = scopy.strings(language)
+    data = report.build(staff, request.GET)
+    narrowed = data.filters
+    common = {"programme": narrowed.programme}
+
+    top_reason = max((row.students for row in data.reasons), default=0)
+    reasons = [
+        {
+            "code": row.code,
+            "label": scopy.reason_label(row.code, language),
+            "students": row.students,
+            "points": row.points,
+            "share": _share(row.students, data.totals.students),
+            "bar": _bar(row.students, top_reason),
+            "url": _queue_link(reason=row.code, **common),
+        }
+        for row in data.reasons
+    ]
+    top_status = max(data.by_status.values(), default=0)
+    statuses = [
+        {
+            "code": code,
+            "label": scopy.status_label(code, language),
+            "count": data.by_status.get(code, 0),
+            "bar": _bar(data.by_status.get(code, 0), top_status),
+        }
+        for code in _STATUS_ORDER
+    ]
+    top_section = max((row.students for row in data.sections), default=0)
+    sections = [
+        {
+            "course_code": row.course_code,
+            "course_name": row.course_name,
+            "section": row.section,
+            "students": row.students,
+            "points": row.points,
+            "bar": _bar(row.students, top_section),
+            "issues": [(scopy.reason_label(code, language), n) for code, n in row.reasons],
+            "moves": row.moves,
+            "registered": row.registered_students,
+            "url": _queue_link(
+                course=row.course_identity,
+                section=row.section,
+                reason=narrowed.reason,
+                **common,
+            ),
+        }
+        for row in data.sections
+    ]
+    top_day = max((n for _day, n in data.timeline), default=0)
+    busiest = max(data.timeline, key=lambda pair: pair[1], default=None)
+    timeline = []
+    for day, n in data.timeline:
+        height = _bar(n, top_day)
+        timeline.append({"day": day.isoformat(), "count": n, "height": height, "gap": 100 - height})
+    sent = sum(n for _day, n in data.timeline)
+    return render(
+        request,
+        "core/staff_timetable_feedback_report.html",
+        _context(
+            request,
+            language,
+            staff=staff,
+            filters=narrowed,
+            scope=_scope_line(staff, language),
+            terms=data.terms,
+            every_term=report.EVERY_TERM,
+            programmes=data.programmes,
+            reason_choices=[(code, scopy.reason_label(code, language)) for code in scopy.REASON],
+            windows=[("", t["report_window_all"])]
+            + [(days, t[f"report_window_{days}"]) for days in report.WINDOWS],
+            report_empty=data.empty,
+            kpis=_kpis(data, language),
+            reasons=reasons,
+            statuses=statuses,
+            sections=sections,
+            sections_more=(
+                scopy.text("report_sections_more", language, count=copy.bdi(data.sections_more))
+                if data.sections_more
+                else ""
+            ),
+            moves=[
+                {
+                    "course_code": row.course_code,
+                    "course_name": row.course_name,
+                    "from": row.section_from,
+                    "to": row.section_to,
+                    "students": row.students,
+                    "url": _queue_link(
+                        course=row.course_identity,
+                        section=row.section_from,
+                        reason=TimetableFeedbackPoint.Reason.PREFER_OTHER_SECTION,
+                        **common,
+                    ),
+                }
+                for row in data.moves
+            ],
+            missing=data.missing,
+            missing_url=_queue_link(reason=TimetableFeedbackPoint.Reason.MISSING_COURSE, **common),
+            by_programme=[
+                {
+                    "programme": row.programme,
+                    "students": row.students,
+                    "cases": row.cases,
+                    "open": row.open,
+                    "waiting": row.waiting_on_staff,
+                    "answered": row.answered,
+                    "top_issue": scopy.reason_label(row.top_reason, language)
+                    if row.top_reason
+                    else "",
+                    "url": _queue_link(programme=row.programme, reason=narrowed.reason),
+                }
+                for row in data.by_programme
+            ],
+            timeline=timeline,
+            timeline_summary=(
+                scopy.text(
+                    "report_timeline_summary",
+                    language,
+                    total=copy.bdi(sent),
+                    day=copy.bdi(busiest[0].isoformat()),
+                    count=copy.bdi(busiest[1]),
+                )
+                if busiest and busiest[1]
+                else t["report_timeline_quiet"]
+            ),
         ),
     )

@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.guide_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=2">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=3">{% endblock %}
 
 {% block page_heading %}{{ t.guide_title }}{% endblock %}
 
@@ -11,6 +11,8 @@
 
 {% block content %}
 {% comment %}The advisor guide: every word from the staff copy deck.{% endcomment %}
+{% include "core/partials/ttfs_subnav.html" with current="guide" %}
+
 <section class="card p-3 mb-3" aria-labelledby="ttfsGuideSteps">
   <h2 class="ttfs-section-title" id="ttfsGuideSteps">{{ t.guide_steps_title }}</h2>
   <ol class="ttfs-guide-list">

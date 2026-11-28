@@ -1,0 +1,10 @@
+{% comment %}
+  The staff feedback pages' own navigation: the cases, the report and the guide.
+  `current` names the page it sits on, which is marked for assistive technology
+  and drawn with a heavier edge and weight, never by colour alone.
+{% endcomment %}
+<nav class="ttfs-subnav" aria-label="{{ t.subnav_label }}">
+  <a href="{% url 'staff_timetable_feedback_queue' %}" id="ttfsNavCases"{% if current == "cases" %} aria-current="page"{% endif %}>{{ t.subnav_cases }}</a>
+  <a href="{% url 'staff_timetable_feedback_report' %}" id="ttfsNavReport"{% if current == "report" %} aria-current="page"{% endif %}>{{ t.subnav_report }}</a>
+  <a href="{% url 'staff_timetable_feedback_guide' %}" id="ttfsNavGuide"{% if current == "guide" %} aria-current="page"{% endif %}>{{ t.subnav_guide }}</a>
+</nav>

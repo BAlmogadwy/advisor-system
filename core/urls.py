@@ -538,6 +538,12 @@ urlpatterns = [
         login_required(role_required(ROLE_ADVISOR)(staff_feedback.bulk_view), login_url="login"),
         name="staff_timetable_feedback_bulk",
     ),
+    # What students ask, counted over the same scope as the queue.
+    path(
+        "ops/timetable-feedback/report/",
+        login_required(role_required(ROLE_ADVISOR)(staff_feedback.report_view), login_url="login"),
+        name="staff_timetable_feedback_report",
+    ),
     re_path(
         r"^ops/timetable-feedback/(?P<reference>TTF-[0-9]{4}-[0-9]{5,})/$",
         login_required(role_required(ROLE_ADVISOR)(staff_feedback.case_view), login_url="login"),
