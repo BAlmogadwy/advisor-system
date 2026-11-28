@@ -7748,18 +7748,31 @@ html[data-theme="dark"] {
   --plb-reg-edge: hsl(232 50% 62%);
   --plb-new: hsl(162 60% 90%);
   --plb-new-edge: hsl(162 60% 32%);
-  --plb-c1: hsl(150 55% 36%);
-  --plb-c1-t: hsl(150 62% 92%);
-  --plb-c2: hsl(38 55% 36%);
-  --plb-c2-t: hsl(38 80% 92%);
-  --plb-c3: hsl(345 55% 36%);
-  --plb-c3-t: hsl(345 62% 92%);
-  --plb-c4: hsl(185 55% 36%);
-  --plb-c4-t: hsl(185 62% 92%);
-  --plb-c5: hsl(265 55% 36%);
-  --plb-c5-t: hsl(265 62% 92%);
-  --plb-c6: hsl(215 55% 36%);
-  --plb-c6-t: hsl(215 62% 92%);
+  /* One colour per course, ten of them (S6): an edge/swatch colour and the tint a week block
+     sits on. Chosen in OKLCH, 36 degrees apart with the lightness alternating round the wheel,
+     and numbered so that consecutive numbers (first-free assignment) are 108 degrees apart.
+     Least pairwise OKLab distance: edges 0.139, tints 0.061 (light); 0.124 and 0.062 (dark).
+     --ink and --t2 on every tint are at least 6.8:1 (light) and 6.1:1 (dark). */
+  --plb-c1: #c95f47;
+  --plb-c1-t: #feded6;
+  --plb-c2: #26731f;
+  --plb-c2-t: #bee1ba;
+  --plb-c3: #3587d3;
+  --plb-c3-t: #d4e9ff;
+  --plb-c4: #9b3660;
+  --plb-c4-t: #fbc5d6;
+  --plb-c5: #8e8700;
+  --plb-c5-t: #ebeab8;
+  --plb-c6: #016c7e;
+  --plb-c6-t: #a4e2f0;
+  --plb-c7: #a964b4;
+  --plb-c7-t: #fad9ff;
+  --plb-c8: #865400;
+  --plb-c8-t: #f2cfa8;
+  --plb-c9: #029983;
+  --plb-c9-t: #b8f5e6;
+  --plb-c10: #5c50ab;
+  --plb-c10-t: #d2d1fe;
   display: flex; flex-direction: column; gap: 8px;
   font-size: var(--text-sm); line-height: 18px; color: var(--t2);
   font-variant-numeric: tabular-nums;
@@ -7769,18 +7782,26 @@ html[data-theme="dark"] .plb {
   --plb-reg-edge: hsl(232 55% 66%);
   --plb-new: hsl(162 45% 18%);
   --plb-new-edge: hsl(162 60% 52%);
-  --plb-c1: hsl(150 65% 62%);
-  --plb-c1-t: hsl(150 40% 20%);
-  --plb-c2: hsl(38 65% 62%);
-  --plb-c2-t: hsl(38 40% 20%);
-  --plb-c3: hsl(345 65% 62%);
-  --plb-c3-t: hsl(345 40% 20%);
-  --plb-c4: hsl(185 65% 62%);
-  --plb-c4-t: hsl(185 40% 20%);
-  --plb-c5: hsl(265 65% 62%);
-  --plb-c5-t: hsl(265 40% 20%);
-  --plb-c6: hsl(215 65% 62%);
-  --plb-c6-t: hsl(215 40% 20%);
+  --plb-c1: #feb19f;
+  --plb-c1-t: #592e24;
+  --plb-c2: #74b46d;
+  --plb-c2-t: #1a3717;
+  --plb-c3: #9cccff;
+  --plb-c3-t: #1f3e5c;
+  --plb-c4: #dd80a1;
+  --plb-c4-t: #48202f;
+  --plb-c5: #d1cc6b;
+  --plb-c5-t: #403e0f;
+  --plb-c6: #1eb4cf;
+  --plb-c6-t: #01363f;
+  --plb-c7: #ecadf6;
+  --plb-c7-t: #4c3050;
+  --plb-c8: #d19345;
+  --plb-c8-t: #432801;
+  --plb-c9: #60e1c7;
+  --plb-c9-t: #01473c;
+  --plb-c10: #9b96e9;
+  --plb-c10-t: #2d294e;
 }
 .plb-status { margin: 0; min-height: 18px; font-size: var(--text-xs); color: var(--t3); }
 .plb-status[data-kind="error"] { color: var(--sev-critical); font-weight: 600; }
@@ -8509,11 +8530,13 @@ html[data-theme="dark"] .plb-req[aria-pressed="true"] { background: rgba(46,201,
   .plb-xb[data-side="list-to-plan"] .plb-dir, html[dir="rtl"] .plb-xb[data-side="list-to-plan"] .plb-dir { transform: rotate(90deg); }
   .plb-xb[data-side="plan-to-list"] .plb-dir, html[dir="rtl"] .plb-xb[data-side="plan-to-list"] .plb-dir { transform: rotate(-90deg); }
 }
-/* Zone 03, one colour per planned course (--plb-c1..6 and their tints, light and dark above) */
+/* Zone 03, one colour per course (--plb-c1..10 and their tints, light and dark above) */
 .plb-sw { display: inline-block; flex: none; inline-size: 10px; block-size: 10px; border-radius: 3px; background: var(--t4); }
 .plb-sw[data-hue="1"] { background: var(--plb-c1); } .plb-sw[data-hue="2"] { background: var(--plb-c2); }
 .plb-sw[data-hue="3"] { background: var(--plb-c3); } .plb-sw[data-hue="4"] { background: var(--plb-c4); }
 .plb-sw[data-hue="5"] { background: var(--plb-c5); } .plb-sw[data-hue="6"] { background: var(--plb-c6); }
+.plb-sw[data-hue="7"] { background: var(--plb-c7); } .plb-sw[data-hue="8"] { background: var(--plb-c8); }
+.plb-sw[data-hue="9"] { background: var(--plb-c9); } .plb-sw[data-hue="10"] { background: var(--plb-c10); }
 .plb-sw:not([data-hue]) { display: none; }
 .plb-prow .plb-code:has(> .plb-sw) { display: inline-flex; align-items: center; gap: 6px; }
 .plb-b[data-hue="1"] { --h: var(--plb-c1); --ht: var(--plb-c1-t); }
@@ -8522,6 +8545,10 @@ html[data-theme="dark"] .plb-req[aria-pressed="true"] { background: rgba(46,201,
 .plb-b[data-hue="4"] { --h: var(--plb-c4); --ht: var(--plb-c4-t); }
 .plb-b[data-hue="5"] { --h: var(--plb-c5); --ht: var(--plb-c5-t); }
 .plb-b[data-hue="6"] { --h: var(--plb-c6); --ht: var(--plb-c6-t); }
+.plb-b[data-hue="7"] { --h: var(--plb-c7); --ht: var(--plb-c7-t); }
+.plb-b[data-hue="8"] { --h: var(--plb-c8); --ht: var(--plb-c8-t); }
+.plb-b[data-hue="9"] { --h: var(--plb-c9); --ht: var(--plb-c9-t); }
+.plb-b[data-hue="10"] { --h: var(--plb-c10); --ht: var(--plb-c10-t); }
 .plb-b[data-hue] { background: var(--ht); border: 1px solid var(--h); border-inline-start: 3px solid var(--h); }
 
 /* the options zone: week and the "at a glance" aside */
@@ -8553,7 +8580,7 @@ html[data-theme="dark"] .plb-req[aria-pressed="true"] { background: rgba(46,201,
 .plb-gterm { font-family: var(--font-serif); font-size: var(--text-xl); font-weight: 400; line-height: 1.1; color: var(--ink); overflow-wrap: anywhere; }
 .plb-gpill { padding: 2px 10px; border-radius: var(--radius-pill); font-size: var(--text-xs); font-weight: 700; line-height: 18px; color: var(--ink); background: var(--plb-reg); border: 1px solid var(--plb-reg-edge); }
 .plb-gpill[data-result="sooner"] { background: var(--plb-new); border-color: var(--plb-new-edge); }
-.plb-gpill[data-result="later"] { background: var(--plb-c2-t); border-color: var(--plb-c2); }
+.plb-gpill[data-result="later"] { background: var(--plb-c8-t); border-color: var(--plb-c8); }
 
 /* the apply bar's status */
 .plb-acts-st { margin: 0; display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); font-weight: 700; line-height: 20px; color: var(--ink); }

@@ -40,7 +40,7 @@ TINTS = """() => {
   const probe = document.createElement('span');
   root.append(probe);
   const out = [];
-  for (let i = 1; i <= 6; i += 1) {
+  for (let i = 1; i <= 10; i += 1) {
     probe.style.background = `var(--plb-c${i}-t)`;
     const tint = rgb(getComputedStyle(probe).backgroundColor);
     for (const token of ['--ink', '--t2']) {

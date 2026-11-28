@@ -1058,10 +1058,10 @@
     if (m.kind !== 'new') return null;
     return state.shortlist.find((c) => norm(c.course_code) === norm(m.key)) || null;
   }
-  // One colour per planned course, given the first time the course appears for this student and
-  // kept while other courses come and go; a hue freed by a removed course goes to a NEW course only.
-  // Kept registered courses have none.
-  const HUES = 6;
+  // One colour per course (planned and registered), given the first time the course appears for
+  // this student and kept while other courses come and go; a hue freed by a removed course goes to
+  // a NEW course only. Ten hues (--plb-c1..10): past ten courses the least-used hue is shared.
+  const HUES = 10;
   function planKeys() {
     const keys = state.shortlist.map((c) => norm(c.course_code));
     for (const c of registeredCourses()) if (c.key && !keys.includes(norm(c.key))) keys.push(norm(c.key));
@@ -1074,10 +1074,13 @@
     if (!keys.includes(key)) return 0;
     for (const k of Object.keys(state.hues)) if (!keys.includes(k)) delete state.hues[k];
     if (!state.hues[key]) {
-      const taken = new Set(Object.values(state.hues));
-      let hue = 1;
-      while (hue <= HUES && taken.has(hue)) hue += 1;
-      state.hues[key] = hue <= HUES ? hue : (Object.keys(state.hues).length % HUES) + 1;
+      // The first free hue; when all ten are taken, the one fewest courses share (the lowest of
+      // those), never a count-based guess that can land on the most-used one.
+      const uses = new Array(HUES + 1).fill(0);
+      for (const hue of Object.values(state.hues)) if (hue >= 1 && hue <= HUES) uses[hue] += 1;
+      let pick = 1;
+      for (let hue = 2; hue <= HUES; hue += 1) if (uses[hue] < uses[pick]) pick = hue;
+      state.hues[key] = pick;
     }
     return state.hues[key];
   }
@@ -1758,7 +1761,8 @@
     }
     if (!opt || state.build.rules.mode === 'keep') {
       for (const c of registeredCourses()) {
-        const row = el('li', 'plb-sr plb-sr--kept', el('span', 'plb-code', bdi(c.code)),
+        // A registered course has its colour too: the same swatch as its blocks in the week.
+        const row = el('li', 'plb-sr plb-sr--kept', swatch(c.key), el('span', 'plb-code', bdi(c.code)),
           el('span', 'plb-nm', c.name ? isolate(c.name) : ''),
           c.section ? el('span', 'plb-sch', bdi(`§${c.section}`)) : null, el('span', 'plb-kt', T.keptTag));
         row.dataset.code = c.key;
