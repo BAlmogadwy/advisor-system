@@ -20,11 +20,12 @@ from django.utils.html import escape
 from core.models import TimetableFeedback
 from core.services import timetable_feedback_copy as copy
 from core.services import timetable_feedback_staff_copy as scopy
-from core.services.rbac import ROLE_ADVISOR
+from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR
 from core.student_timetable_feedback_views import _progress
 from tests.test_timetable_feedback_staff import staff_user
 from tests.test_timetable_feedback_student_views import (
     LIST,
+    PROG,
     SID,
     _client,
     _detail_url,
@@ -279,6 +280,75 @@ def test_a_refused_move_reopens_its_disclosure(world, advisor):
     assert " open" in _details_of(html, "ttfsCloseForm")
     assert " open" not in _details_of(html, "ttfsForwardForm")
     assert 'id="ttfsErrors"' in html
+
+
+@pytest.mark.parametrize(
+    ("action", "form", "fields"),
+    [
+        ("forward", "ttfsForwardForm", {"body": "The department should see this."}),
+        ("close", "ttfsCloseForm", {"reason": "DUPLICATE", "body": "Same as before."}),
+    ],
+)
+def test_a_stale_version_reopens_the_refused_moves_disclosure(world, advisor, action, form, fields):
+    """CASE_CHANGED is no field's error, yet the form that was sent must be open,
+    with what was typed in it."""
+    _student, case = _sent(world)
+    client = _as(advisor)
+    url = f"/ops/timetable-feedback/{case.reference}/action/"
+    html = _html(client.post(url, {"action": action, "version": case.version + 7, **fields}))
+    assert 'id="ttfsErrors"' in html
+    assert " open" in _details_of(html, form)
+    others = {"ttfsForwardForm", "ttfsCloseForm"} - {form}
+    for other in others:
+        assert " open" not in _details_of(html, other), other
+    assert escape(fields["body"]) in html
+
+
+def test_a_stale_assignment_reopens_its_disclosure_with_the_typed_id(world, advisor):
+    """To an advisor who exists, so the refusal is the stale version itself, no
+    field's error: only the refused action can open the disclosure."""
+    department = staff_user("layout-dept", ROLE_GENERAL_ADVISOR, departments=PROG)
+    _student, case = _sent(world)
+    client = _as(department)
+    html = _case_page(client, case)
+    assert 'id="ttfsAssignForm"' in html
+    assert " open" not in _details_of(html, "ttfsAssignForm")
+    url = f"/ops/timetable-feedback/{case.reference}/action/"
+    html = _html(
+        client.post(url, {"action": "assign", "version": case.version + 7, "advisor_id": ADV})
+    )
+    assert str(scopy.refusal("CASE_CHANGED", "en")) in html
+    assert " open" in _details_of(html, "ttfsAssignForm")
+    assert f'value="{ADV}"' in html
+
+
+def test_a_refused_question_comes_back_in_its_own_form_for_the_composer_to_open(world, advisor):
+    """A stale question keeps its text in the question's form: what the composer
+    opens on (an empty one is a field's error, which it opens on too)."""
+    _student, case = _sent(world)
+    url = f"/ops/timetable-feedback/{case.reference}/action/"
+    html = _html(
+        _as(advisor).post(url, {"action": "ask", "version": case.version + 7, "body": "Which day?"})
+    )
+    form = html.split('id="ttfsAskForm"')[1].split("</form>")[0]
+    assert "Which day?" in form
+    assert "Which day?" not in html.split('id="ttfsAnswerForm"')[1].split("</form>")[0]
+
+
+def test_each_step_says_its_state_and_the_line_stays_a_list(world):
+    student, case = _sent(world, status="IN_REVIEW")
+    html = _html(_get(student, _detail_url(case.reference)))
+    line = html.split('id="ttfProgress"')[1].split("</ol>")[0]
+    words = copy.strings("en")
+    hidden = re.findall(r'<span class="visually-hidden">([^<]*)</span>', line)
+    separator = words["list_separator"]
+    assert hidden == [
+        separator + words["detail_step_done"],
+        separator + words["detail_step_current"],
+        separator + words["detail_step_next"],
+        separator + words["detail_step_next"],
+    ]
+    assert 'id="ttfProgress" role="list"' in html
 
 
 def test_the_case_page_lays_the_side_out_before_the_work(world, advisor):

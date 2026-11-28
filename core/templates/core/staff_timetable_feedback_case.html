@@ -205,7 +205,7 @@
     <h3 class="ttfs-more-title">{{ t.more_actions }}</h3>
 
     {% if offered.forward %}
-    <details class="ttfs-more-item"{% if error_for.forward_body %} open{% endif %}>
+    <details class="ttfs-more-item"{% if refused_action == "forward" or error_for.forward_body %} open{% endif %}>
       <summary>{{ t.action_forward_title }}</summary>
       <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsForwardForm" novalidate>
         {% csrf_token %}
@@ -217,7 +217,7 @@
     {% endif %}
 
     {% if offered.assign %}
-    <details class="ttfs-more-item"{% if error_for.assign_advisor %} open{% endif %}>
+    <details class="ttfs-more-item"{% if refused_action == "assign" or error_for.assign_advisor %} open{% endif %}>
       <summary>{{ t.action_assign_title }}</summary>
       <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsAssignForm" novalidate>
         {% csrf_token %}
@@ -234,7 +234,7 @@
     {% endif %}
 
     {% if offered.close %}
-    <details class="ttfs-more-item"{% if error_for.close_reason or error_for.close_body %} open{% endif %}>
+    <details class="ttfs-more-item"{% if refused_action == "close" or error_for.close_reason or error_for.close_body %} open{% endif %}>
       <summary>{{ t.action_close_title }}</summary>
       <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsCloseForm" novalidate>
         {% csrf_token %}

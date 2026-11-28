@@ -167,10 +167,17 @@
 
 .ttfs-bulk.is-active {
   border-color: var(--line-strong);
-  box-shadow: var(--shadow-lift);
-  inset-block-end: 12px;
-  position: sticky;
-  z-index: var(--z-sticky);
+}
+
+/* Kept in view only where the screen has room: on a phone the two forms stack
+   into a tall bar, which would sit over the very rows being ticked. */
+@media (min-width: 641px) {
+  .ttfs-bulk.is-active {
+    box-shadow: var(--shadow-lift);
+    inset-block-end: 12px;
+    position: sticky;
+    z-index: var(--z-sticky);
+  }
 }
 
 .ttfs-bulk-count {
@@ -374,6 +381,9 @@
    start, the staff's at the far side, staff-only comments in their own dashed
    amber (above). */
 .ttf-thread .ttf-message:not(.ttfs-from-student) {
+  /* On the far side, so the small corner, the bubble's tail, is at the end. */
+  border-end-end-radius: var(--radius-xs);
+  border-end-start-radius: var(--radius);
   justify-self: end;
 }
 

@@ -808,15 +808,28 @@ def _progress(status: str, language: str) -> list[dict[str, Any]]:
     if at is None:
         return []
     closed = status == TimetableFeedback.Status.CLOSED
-    return [
-        {
-            "label": copy.status_label(status if index == at else step, language),
-            "done": index < at or closed,
-            "current": index == at and not closed,
-            "waiting": index == at and status == TimetableFeedback.Status.NEEDS_INFORMATION,
-        }
-        for index, step in enumerate(_STEPS)
-    ]
+    words = copy.strings(language)
+    steps = []
+    for index, step in enumerate(_STEPS):
+        done = index < at or closed
+        current = index == at and not closed
+        steps.append(
+            {
+                "label": copy.status_label(status if index == at else step, language),
+                "done": done,
+                "current": current,
+                "waiting": index == at and status == TimetableFeedback.Status.NEEDS_INFORMATION,
+                # Said, not only drawn: each step's state for a screen reader.
+                "state": words[
+                    "detail_step_done"
+                    if done
+                    else "detail_step_current"
+                    if current
+                    else "detail_step_next"
+                ],
+            }
+        )
+    return steps
 
 
 #: The student's actions a case page may offer, by the service's own names.

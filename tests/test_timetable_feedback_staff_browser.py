@@ -340,8 +340,32 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         page.get_by_label(f"Select {case.reference}").check()
         expect(bulk).to_be_visible()
         expect(page.locator("#ttfsBulkCount")).to_contain_text("1")
+        # At a desk it stays in view at the foot of the page.
+        self.assertEqual(bulk.evaluate("el => getComputedStyle(el).position"), "sticky")
         page.get_by_label(f"Select {case.reference}").uncheck()
         expect(bulk).to_be_hidden()
+
+    def test_on_a_phone_the_bulk_actions_follow_the_list_and_tabs_read_right_to_left(self):
+        case = self._waiting_case()
+        page = self._page(self.advisor, "ar", PHONE)
+        page.goto(f"{self.live_server_url}/ops/timetable-feedback/?tab=all")
+        page.locator(f'input[name="pick"][value^="{case.reference}@"]').check()
+        bulk = page.locator("#ttfsBulk")
+        expect(bulk).to_be_visible()
+        # Not kept in view: on a phone it would cover the rows being ticked.
+        self.assertNotEqual(bulk.evaluate("el => getComputedStyle(el).position"), "sticky")
+        self._check(page, "8-bulk-phone-ar")
+
+        page.goto(f"{self.live_server_url}/ops/timetable-feedback/{case.reference}/")
+        tabs = page.get_by_role("tablist").get_by_role("tab")
+        first, second = tabs.nth(0), tabs.nth(1)
+        first.focus()
+        # Right to left: the next tab is to the left.
+        page.keyboard.press("ArrowLeft")
+        expect(second).to_be_focused()
+        expect(second).to_have_attribute("aria-selected", "true")
+        page.keyboard.press("ArrowRight")
+        expect(first).to_be_focused()
 
     def test_the_staff_pages_fit_a_phone_and_read_right_to_left_in_arabic(self):
         case = TimetableFeedback.objects.create(

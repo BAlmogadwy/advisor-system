@@ -40,9 +40,10 @@
   {% if progress %}
   {% comment %}Where the case has got to. Each step says its name; the step the case
   is at is marked for assistive technology, and a step done is drawn filled.{% endcomment %}
-  <ol class="ttf-steps" id="ttfProgress" aria-label="{{ t.detail_progress }}">
+  {% comment %}role="list": without bullets, Safari would no longer read it as one.{% endcomment %}
+  <ol class="ttf-steps" id="ttfProgress" role="list" aria-label="{{ t.detail_progress }}">
     {% for step in progress %}
-    <li class="ttf-step{% if step.done %} is-done{% endif %}{% if step.current %} is-current{% endif %}{% if step.waiting %} is-waiting{% endif %}"{% if step.current %} aria-current="step"{% endif %}><span class="ttf-step-dot" aria-hidden="true"></span><span class="ttf-step-label">{{ step.label }}</span></li>
+    <li class="ttf-step{% if step.done %} is-done{% endif %}{% if step.current %} is-current{% endif %}{% if step.waiting %} is-waiting{% endif %}"{% if step.current %} aria-current="step"{% endif %}><span class="ttf-step-dot" aria-hidden="true"></span><span class="ttf-step-label">{{ step.label }}</span><span class="visually-hidden">{{ t.list_separator }}{{ step.state }}</span></li>
     {% endfor %}
   </ol>
   {% endif %}

@@ -110,8 +110,10 @@
       }
     };
 
-    // Open where the page needs the person: a form that was refused, else one
-    // that holds typed text, else the first.
+    // Open where the page needs the person: a form with an error at a field, else
+    // one that holds typed text, else the first. That covers every refusal: an
+    // empty text is a field's error, and anything else came back with its text
+    // (only a ready-made answer comes back empty, and the answer is first).
     var start = -1;
     panels.forEach(function (panel, i) {
       if (start < 0 && panel.querySelector('[aria-invalid="true"], .ttf-field-error')) {
