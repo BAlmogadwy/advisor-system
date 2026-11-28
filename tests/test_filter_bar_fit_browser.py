@@ -54,6 +54,8 @@ WIDTHS = (390, 1440)
 # by its tab, i.e. its URL hash).
 SCREENS = {
     "advisor portfolio": ("/advisor-portfolio/", "main .filter-bar"),
+    # its scope (advisor, program) sits beside the page title, not in the toolbar
+    "advisor portfolio: scope": ("/advisor-portfolio/", "#apScope"),
     "instructor management": ("/instructor-management/", "main .filter-bar"),
     "planner": ("/planner/", "#plbLoad"),
     "timetable workspace": ("/timetable-workspace/", "#twGenBar"),

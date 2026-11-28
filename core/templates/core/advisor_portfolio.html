@@ -9,94 +9,113 @@
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}{% endblock %}
 
+{% comment %}
+  The top of the page is three zones, each opened once and each named
+  (global.css, "ADVISOR PORTFOLIO — top section"):
+  (a) the masthead: the title, the page's one sentence under it, and the
+      scope (advisor and program) level with the title. There is no picker
+      row, no advisor or count chip (the picker and the Students tile already
+      say both) and no "Loaded" time;
+  (b) the overview band: "Needs action" (the three alert tiles, each opening
+      the list it counts) | "Cohort profile" (students, average GPA with its
+      spread, programs);
+  (c) the roster: its heading with the exports, the toolbar, the table.
+{% endcomment %}
 {% block page_chips %}
-            <span class="ph-chip ph-chip-gray" id="apAdvisorChip">{% if LANGUAGE_CODE == 'ar' %}لا يوجد مرشد{% else %}No advisor{% endif %}</span>
-            <span class="ph-chip ph-chip-gray" id="apCountChip">{% if LANGUAGE_CODE == 'ar' %}0 طالب{% else %}0 students{% endif %}</span>
+          <p class="panel-sub ap-intro">{% if LANGUAGE_CODE == 'ar' %}عرض وإدارة الطلاب المشرف عليهم ومتابعة التقدم الأكاديمي.{% else %}View and manage student advisees, track academic progress and insights.{% endif %}</p>
 {% endblock %}
 
-{% block page_intro %}
-      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}عرض وإدارة الطلاب المشرف عليهم ومتابعة التقدم الأكاديمي.{% else %}View and manage student advisees, track academic progress and insights.{% endif %}</div>
+{% block page_header_right %}
+        {% comment %}
+          The PICKER hides only when the JS will actually load a portfolio without
+          it — role ADVISOR *and* an advisor id. It used to hide on the role alone,
+          while the JS branched on `role === 'ADVISOR' && USER_ADVISOR_ID`. Those
+          disagree exactly when the id is blank: the else branch ran, called
+          /report/advisors/, took a 403, swallowed it, and left an empty table
+          inviting the user to "choose an advisor above" — from a control CSS had
+          hidden. One condition now, written once, passed to the JS.
+
+          The program filter is NOT inside the hidden capsule: an adviser whose
+          own portfolio loads still filters it by program.
+        {% endcomment %}
+        <div class="ap-scope fb-fit" id="apScope" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}نطاق المحفظة{% else %}Portfolio scope{% endif %}">
+          <div class="fb-search ap-scope-field{% if hide_advisor_picker %} d-none{% endif %}" id="apAdvisorBar">
+            <label class="fb-lbl" for="apAdvisorSelect">{% if LANGUAGE_CODE == 'ar' %}المرشد{% else %}Advisor{% endif %}</label>
+            <select id="apAdvisorSelect" autofocus>
+              <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر مرشدًا…{% else %}Select advisor…{% endif %}</option>
+            </select>
+          </div>
+          <div class="fb-search ap-scope-field" id="apRosterTools">
+            <label class="fb-lbl" for="apProgramFilter">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
+            <select id="apProgramFilter" class="ap-program-filter" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب البرنامج{% else %}Filter by program{% endif %}">
+              <option value="">{% if LANGUAGE_CODE == 'ar' %}كل البرامج{% else %}All programs{% endif %}</option>
+            </select>
+          </div>
+        </div>
 {% endblock %}
 
 {% block content %}
-      {% comment %}
-        The PICKER hides only when the JS will actually load a portfolio without
-        it — role ADVISOR *and* an advisor id. It used to hide on the role alone,
-        while the JS branched on `role === 'ADVISOR' && USER_ADVISOR_ID`. Those
-        disagree exactly when the id is blank: the else branch ran, called
-        /report/advisors/, took a 403, swallowed it, and left an empty table
-        inviting the user to "choose an advisor above" — from a control CSS had
-        hidden. One condition now, written once, passed to the JS.
-
-        The program filter and the loaded label moved OUT. They were children of
-        the hidden bar, so every adviser — including one whose own portfolio
-        loads perfectly — lost the program filter and the freshness label as
-        collateral. They belong to the roster, not to the picker.
-      {% endcomment %}
-      {% comment %} Picker and roster tools share ONE row: two stacked bars pushed the table
-         a full row further below the fold. {% endcomment %}
-      <div class="ap-topbar">
-      <div class="ap-advisor-bar{% if hide_advisor_picker %} d-none{% endif %}" id="apAdvisorBar">
-        <label class="visually-hidden" for="apAdvisorSelect">{% if LANGUAGE_CODE == 'ar' %}المرشد{% else %}Advisor{% endif %}</label>
-        <select id="apAdvisorSelect" class="form-select" autofocus>
-          <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر مرشدًا…{% else %}Select advisor…{% endif %}</option>
-        </select>
-      </div>
-      <div class="ap-advisor-bar" id="apRosterTools">
-        <label class="visually-hidden" for="apProgramFilter">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب البرنامج{% else %}Filter by program{% endif %}</label>
-        <select id="apProgramFilter" class="form-select ap-program-filter" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب البرنامج{% else %}Filter by program{% endif %}">
-          <option value="">{% if LANGUAGE_CODE == 'ar' %}كل البرامج{% else %}All programs{% endif %}</option>
-        </select>
-        <span class="ap-loaded-label d-none" id="apLoadedLabel">
-          {% if LANGUAGE_CODE == 'ar' %}تم التحميل{% else %}Loaded{% endif %} <span class="ap-loaded-time" id="apLoadedTime"></span>
-        </span>
-      </div>
-      </div>
-
-      <!-- ═══ Metrics (hidden until loaded) ═══ -->
+      <!-- ═══ Overview band (hidden until loaded) ═══ -->
       <div id="apMetricsWrap" class="d-none">
-
-        {% comment %} The three alert tiles are buttons: each opens the list it counts, so a
-           tile and its filter cannot disagree about what the number means. {% endcomment %}
         <div class="ap-metrics" id="apMetrics">
-          <button type="button" class="mc mc-warn mc-drill" data-focus="attention" aria-controls="apTable" aria-pressed="false">
-            <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}تنبيه{% else %}Attention{% endif %}</span></span>
-            <span class="mc-val" id="mAttention">0</span>
-          </button>
-          <button type="button" class="mc mc-err mc-drill" data-focus="highrisk" aria-controls="apTable" aria-pressed="false">
-            <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مخاطر عالية{% else %}High Risk{% endif %}</span></span>
-            <span class="mc-val" id="mHighRisk">0</span>
-          </button>
-          <div class="mc mc-teal">
-            <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</span></span>
-            <span class="mc-val" id="mStudents">0</span>
-          </div>
-          <div class="mc mc-royal">
-            <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}معدل GPA{% else %}Avg GPA{% endif %}</span></span>
-            <span class="mc-val" id="mAvgGpa">—</span>
-          </div>
-          <div class="mc mc-sky">
-            <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}ساعات الفصل{% else %}Term Hrs{% endif %}</span></span>
-            <span class="mc-val" id="mTermHours">0</span>
-          </div>
-          <button type="button" class="mc mc-warn mc-drill" data-focus="missing" aria-controls="apTable" aria-pressed="false">
-            <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مقررات أولوية مفقودة{% else %}HP Missing{% endif %}</span></span>
-            <span class="mc-val" id="mHpMissing">0</span>
-          </button>
+          {% comment %} The three alert tiles are buttons: each opens the list it counts, so a
+             tile and its filter cannot disagree about what the number means. {% endcomment %}
+          <section class="ap-ov-group ap-ov-alerts" aria-labelledby="apNeedsTitle">
+            <div class="ap-ov-head">
+              <h2 class="ap-zone-title" id="apNeedsTitle">{% if LANGUAGE_CODE == 'ar' %}بحاجة إلى إجراء{% else %}Needs action{% endif %}</h2>
+              <div class="ap-insights" id="apInsights" role="status" aria-live="polite"></div>
+            </div>
+            <div class="ap-ov-cells">
+              <button type="button" class="mc mc-warn mc-drill ap-cell" data-focus="attention" aria-controls="apTable" aria-pressed="false">
+                <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}تنبيه{% else %}Attention{% endif %}</span></span>
+                <span class="mc-val" id="mAttention">0</span>
+              </button>
+              <button type="button" class="mc mc-err mc-drill ap-cell" data-focus="highrisk" aria-controls="apTable" aria-pressed="false">
+                <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مخاطر عالية{% else %}High Risk{% endif %}</span></span>
+                <span class="mc-val" id="mHighRisk">0</span>
+              </button>
+              {# The tile says what its filter chip says, so the two read as one list. #}
+              <button type="button" class="mc mc-warn mc-drill ap-cell" data-focus="missing" aria-controls="apTable" aria-pressed="false">
+                <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}أولوية مفقودة{% else %}HP Missing{% endif %}</span></span>
+                <span class="mc-val" id="mHpMissing">0</span>
+              </button>
+            </div>
+          </section>
+          <section class="ap-ov-group ap-ov-profile" aria-labelledby="apProfileTitle">
+            <div class="ap-ov-head">
+              <h2 class="ap-zone-title" id="apProfileTitle">{% if LANGUAGE_CODE == 'ar' %}نظرة عامة على الطلاب{% else %}Cohort profile{% endif %}</h2>
+            </div>
+            <div class="ap-ov-cells">
+              <div class="mc mc-teal ap-cell ap-cell-students">
+                <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</span></span>
+                <span class="mc-val" id="mStudents">0</span>
+              </div>
+              <div class="mc mc-royal ap-cell ap-cell-gpa">
+                <span class="mc-head"><span class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span></span><span class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}معدل GPA{% else %}Avg GPA{% endif %}</span></span>
+                <div class="ap-gpa-row">
+                  <span class="mc-val" id="mAvgGpa">—</span>
+                  <div class="ap-gpa">
+                    <div class="ap-gpa-chart" id="apGpaChart" role="img"></div>
+                    <div class="ap-gpa-labels" id="apGpaLabels"><span>&lt;2</span><span>2–3</span><span>3–3.5</span><span>3.5+</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="ap-cell ap-cell-programs">
+                <div class="ap-cell-head"><span class="ap-cell-lbl" id="apProgramsLbl">{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %}</span></div>
+                <div class="ap-programs" id="apPrograms" role="group" aria-labelledby="apProgramsLbl"></div>
+              </div>
+            </div>
+          </section>
         </div>
+      </div>
 
-        <!-- Program breakdown, GPA chart and the one insight no tile already states -->
-        <div class="ap-breakdown-row" id="apBreakdownRow">
-          <div class="ap-breakdown-programs">
-            <div class="ap-breakdown-title">{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %}</div>
-            <div class="ap-programs" id="apPrograms"></div>
-          </div>
-          <div class="ap-breakdown-gpa">
-            <div class="ap-breakdown-title">{% if LANGUAGE_CODE == 'ar' %}توزيع المعدل{% else %}GPA Distribution{% endif %}</div>
-            <div class="ap-gpa-chart" id="apGpaChart" role="img"></div>
-            <div class="ap-gpa-labels" id="apGpaLabels"><span>&lt;2</span><span>2–3</span><span>3–3.5</span><span>3.5+</span></div>
-          </div>
-          <div class="ap-insights" id="apInsights" role="status" aria-live="polite"></div>
+      <!-- ═══ Roster: its heading carries the exports ═══ -->
+      <div class="ap-roster-head fb-fit">
+        <h2 class="ap-zone-title ap-roster-title" id="apRosterTitle">{% if LANGUAGE_CODE == 'ar' %}قائمة الطلاب{% else %}Student roster{% endif %}</h2>
+        <div class="fb-actions">
+          <a id="apCsvLink" class="btn btn-sm btn-export" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+          <button class="btn btn-sm btn-export" type="button" onclick="copyFilteredIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب المصفّين إلى الحافظة{% else %}Copy filtered student IDs to clipboard{% endif %}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy IDs{% endif %}</button>
+          <button class="btn btn-sm btn-export" type="button" onclick="copyHighRiskIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب ذوي الخطورة العالية إلى الحافظة{% else %}Copy high-risk student IDs to clipboard{% endif %}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات المخاطر{% else %}Copy High-Risk IDs{% endif %}</button>
         </div>
       </div>
 
@@ -118,11 +137,6 @@
           <button class="fb-dd text-warning" data-focus="zerohours" aria-pressed="false" onclick="setFocus(this)">{% if LANGUAGE_CODE == 'ar' %}بدون ساعات{% else %}Zero Hours{% endif %}</button>
         </div>
         <span id="apTruncatedNote" class="small text-warning d-none"></span>
-        <div class="fb-actions">
-          <a id="apCsvLink" class="btn btn-sm btn-export" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
-          <button class="btn btn-sm btn-export" type="button" onclick="copyFilteredIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب المصفّين إلى الحافظة{% else %}Copy filtered student IDs to clipboard{% endif %}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy IDs{% endif %}</button>
-          <button class="btn btn-sm btn-export" type="button" onclick="copyHighRiskIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب ذوي الخطورة العالية إلى الحافظة{% else %}Copy high-risk student IDs to clipboard{% endif %}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات المخاطر{% else %}Copy High-Risk IDs{% endif %}</button>
-        </div>
       </div>
 
       <!-- Batch bar -->
@@ -135,7 +149,7 @@
 
       <!-- ═══ Table ═══ -->
       <div style="margin-bottom:6px;">
-        <table class="tbl-card" id="apTable">
+        <table class="tbl-card" id="apTable" aria-labelledby="apRosterTitle">
           <thead>
             <tr>
               <th scope="col" style="width:28px;padding-inline-start:14px;"><input type="checkbox" class="ap-check" id="apCheckAll" onclick="toggleAllChecks(this)" style="accent-color:var(--teal);" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحديد كل الطلاب في هذه الصفحة{% else %}Select all students on this page{% endif %}"></th>
@@ -179,5 +193,5 @@
   /* Computed once, server-side, so the template and the JS cannot disagree. */
   const hideAdvisorPicker = {{ hide_advisor_picker|yesno:"true,false" }};
 </script>
-<script src="{% static 'js/page-advisor-portfolio.js' %}?v=11"></script>
+<script src="{% static 'js/page-advisor-portfolio.js' %}?v=12"></script>
 {% endblock %}

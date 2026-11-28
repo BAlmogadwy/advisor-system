@@ -7,7 +7,11 @@ Each test is one defect the live screen showed:
 * the picker printed "40 — null (CS2,IS2)", and wrote advisor names into
   ``innerHTML`` unescaped;
 * "View (3)" and "3:13:55 AM" inside the Arabic page;
-* a GPA chart of four stub bars titled "0 students" for a roster with no GPA.
+* a GPA chart of four stub bars titled "0 students" for a roster with no GPA;
+* (the top-section redesign the owner approved as a mock-up, 2026-11-28) the
+  advisor and the count said three times, a "Loaded" time and a Term Hrs tile
+  nobody used, and no visible line between choosing, the overview and the
+  roster.
 
 The roster and advisor list are served by ``page.route``, so each test controls
 exactly the numbers it asserts on.
@@ -28,6 +32,7 @@ from django.test import Client
 from django.urls import reverse
 
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups, set_user_scope
+from tests.test_exam_rosters_browser import WIDE_FONT
 
 playwright = pytest.importorskip("playwright.sync_api")
 sync_playwright = playwright.sync_playwright
@@ -85,6 +90,28 @@ def _roster(students, distribution):
     }
 
 
+ADVISERS = [{"advisor_id": ADVISER_ID, "full_name": "Dr Seventy Seven", "department": "AI"}]
+
+# Where each piece of the top section sits: its box, and the zone it is in.
+TOP = r"""() => {
+  const box = sel => { const el = document.querySelector(sel); if (!el) return null;
+    const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+  const ZONES = ['ap-ov-alerts', 'ap-ov-profile', 'ap-roster-head', 'page-header'];
+  const zoneOf = sel => { const el = document.querySelector(sel);
+    const z = el && el.closest(ZONES.map(c => '.' + c).join(', '));
+    return z ? ZONES.find(c => z.classList.contains(c)) : null; };
+  return {
+    titles: [...document.querySelectorAll('.ap-zone-title')].map(e => e.textContent.trim()),
+    alerts: [...document.querySelectorAll('.ap-ov-alerts .mc-drill')].map(e => e.dataset.focus),
+    zones: Object.fromEntries(['#apScope', '#apAdvisorSelect', '#apProgramFilter', '#mStudents', '#mAvgGpa',
+      '#apGpaChart', '#apPrograms', '#apInsights', '#apCsvLink'].map(s => [s, zoneOf(s)])),
+    h1: box('.page-header h1'), scope: box('#apScope'), alertsBox: box('.ap-ov-alerts'),
+    profileBox: box('.ap-ov-profile'), band: box('#apMetricsWrap'), rosterHead: box('.ap-roster-head'),
+    table: box('#apTable'),
+  };
+}"""
+
+
 class PortfolioPremiumBrowserTests(StaticLiveServerTestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -98,18 +125,32 @@ class PortfolioPremiumBrowserTests(StaticLiveServerTestCase):
         cls._pw.stop()
         super().tearDownClass()
 
-    def _page(self, *, super_admin=False, lang="en", roster=None, advisors=None):
+    def _page(
+        self,
+        *,
+        super_admin=False,
+        lang="en",
+        roster=None,
+        advisors=None,
+        width=1440,
+        wide_font=False,
+    ):
         ensure_role_groups()
-        user = User.objects.create_user(
-            username="boss" if super_admin else "adv", password="x", is_staff=True
+        username = "boss" if super_admin else "adv"
+        # a test may open the page more than once (one per language)
+        user = User.objects.filter(username=username).first() or User.objects.create_user(
+            username=username, password="x", is_staff=True
         )
         if super_admin:
             user.groups.add(Group.objects.get(name=ROLE_SUPER_ADMIN))
         set_user_scope(user.id, advisor_id="" if super_admin else ADVISER_ID)
         client = Client()
         client.force_login(user)
-        context = self.browser.new_context(viewport={"width": 1440, "height": 900})
+        context = self.browser.new_context(viewport={"width": width, "height": 900})
         self.addCleanup(context.close)
+        if wide_font:
+            # A CI machine without the design's fonts renders wider ones.
+            context.add_init_script(WIDE_FONT)
         context.add_cookies(
             [
                 {
@@ -196,10 +237,10 @@ class PortfolioPremiumBrowserTests(StaticLiveServerTestCase):
         page = self._page(lang="ar", roster=_roster(STUDENTS, [1, 0, 1, 0]))
         self._loaded(page)
         hp_button = page.inner_text(".ap-hp-btn").strip()
-        loaded_at = page.inner_text("#apLoadedTime").strip()
         assert hp_button == "عرض (1)", hp_button
-        assert not re.search(r"[A-Za-z]", loaded_at), loaded_at
-        assert page.inner_text("#apAdvisorChip").strip() == f"Dr Seventy Seven · {ADVISER_ID}"
+        # The "Loaded 3:13:55 AM" label that printed English inside the Arabic
+        # page is gone with the redesign (the owner: "loaded time can be deleted").
+        assert page.locator("#apLoadedTime, #apLoadedLabel").count() == 0
 
     def test_a_roster_without_gpas_says_so_instead_of_drawing_stub_bars(self):
         no_gpa = [{**s, "gpa": None} for s in STUDENTS]
@@ -241,3 +282,107 @@ class PortfolioPremiumBrowserTests(StaticLiveServerTestCase):
         assert sorted(self._row_ids(page)) == [990001, 990002, 990003]
         assert page.get_attribute(tile, "aria-pressed") == "false"
         assert page.get_attribute('#apFilters [data-focus="all"]', "aria-pressed") == "true"
+
+    # ── The top section as the owner approved it (2026-11-28 mock-up) ──────
+
+    def _chosen(self, *, lang="en", width=1440, wide_font=False):
+        """A super admin's page with the adviser chosen in the picker."""
+        page = self._page(
+            super_admin=True,
+            lang=lang,
+            width=width,
+            wide_font=wide_font,
+            advisors=ADVISERS,
+            roster=_roster(STUDENTS, [1, 0, 1, 0]),
+        )
+        page.wait_for_function(
+            "() => document.querySelectorAll('#apAdvisorSelect option').length === 2",
+            timeout=15_000,
+        )
+        page.select_option("#apAdvisorSelect", ADVISER_ID)
+        self._loaded(page)
+        return page
+
+    def test_the_top_says_each_thing_once(self):
+        """The advisor is said by the picker, the count by the Students tile:
+        the header chips that repeated both, the "Loaded" time and the Term Hrs
+        tile are gone, not hidden."""
+        page = self._chosen()
+        gone = (
+            "#apAdvisorChip, #apCountChip, #apLoadedLabel, #apLoadedTime, #mTermHours, .ap-topbar"
+        )
+        assert page.locator(gone).count() == 0
+        assert "Term Hrs" not in page.inner_text("main")
+        assert page.inner_text("#mStudents").strip() == "3"
+        selected = page.eval_on_selector("#apAdvisorSelect", "s => s.selectedOptions[0].text")
+        assert "Dr Seventy Seven" in selected, selected
+        assert "Dr Seventy Seven" not in page.inner_text(".page-header-left")
+
+    def test_the_top_is_three_named_zones(self):
+        page = self._chosen()
+        top = page.evaluate(TOP)
+        assert top["titles"] == ["Needs action", "Cohort profile", "Student roster"], top["titles"]
+        assert top["alerts"] == ["attention", "highrisk", "missing"], top["alerts"]
+        assert top["zones"] == {
+            "#apScope": "page-header",
+            "#apAdvisorSelect": "page-header",
+            "#apProgramFilter": "page-header",
+            "#mStudents": "ap-ov-profile",
+            "#mAvgGpa": "ap-ov-profile",
+            "#apGpaChart": "ap-ov-profile",
+            "#apPrograms": "ap-ov-profile",
+            "#apInsights": "ap-ov-alerts",
+            "#apCsvLink": "ap-roster-head",
+        }, top["zones"]
+        assert page.get_attribute("#apTable", "aria-labelledby") == "apRosterTitle"
+        # The scope sits on the title's line, not on a row of its own.
+        h1, scope = top["h1"], top["scope"]
+        assert min(h1["bottom"], scope["bottom"]) - max(h1["top"], scope["top"]) > 0, (h1, scope)
+        # The overview's two halves sit side by side, and the roster opens below them.
+        alerts, profile = top["alertsBox"], top["profileBox"]
+        assert abs(alerts["top"] - profile["top"]) < 1, (alerts, profile)
+        assert alerts["right"] <= profile["left"] + 1, (alerts, profile)
+        assert top["rosterHead"]["top"] >= top["band"]["bottom"] - 1, top
+        assert top["table"]["top"] > top["rosterHead"]["bottom"], top
+
+    def test_on_a_phone_the_halves_stack_and_the_scope_takes_the_line(self):
+        page = self._chosen(width=390)
+        top = page.evaluate(TOP)
+        assert top["profileBox"]["top"] >= top["alertsBox"]["bottom"] - 1, top
+        scope_width = top["scope"]["right"] - top["scope"]["left"]
+        widths = page.eval_on_selector_all(
+            "#apScope .fb-search", "els => els.map(e => e.getBoundingClientRect().width)"
+        )
+        assert all(abs(w - scope_width) < 1 for w in widths), (widths, scope_width)
+        assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
+
+    def test_the_arabic_hp_tile_says_what_its_chip_says(self):
+        page = self._chosen(lang="ar")
+        tile = page.inner_text('#apMetrics .mc-drill[data-focus="missing"] .mc-lbl').strip()
+        chip = page.evaluate(
+            """() => { const c = document.querySelector('#apFilters [data-focus="missing"]').cloneNode(true);
+              c.querySelectorAll('.fb-dd-count').forEach(n => n.remove()); return c.textContent.trim(); }"""
+        )
+        assert tile == chip == "أولوية مفقودة", (tile, chip)
+        titles = page.eval_on_selector_all(
+            ".ap-zone-title", "els => els.map(e => e.textContent.trim())"
+        )
+        assert titles == ["بحاجة إلى إجراء", "نظرة عامة على الطلاب", "قائمة الطلاب"], titles
+
+    def test_on_a_phone_the_exports_share_one_line_at_touch_size(self):
+        """They left the toolbar for the roster heading; on a phone they are
+        still one row of 44px targets, in Arabic and in a wide font too."""
+        for lang in ("ar", "en"):
+            page = self._chosen(lang=lang, width=390, wide_font=True)
+            boxes = page.eval_on_selector_all(
+                ".ap-roster-head .fb-actions > *",
+                """els => els.map(e => { const r = e.getBoundingClientRect();
+                  return { text: e.textContent.trim(), top: r.top, height: r.height, left: r.left,
+                           right: r.right, cut: e.scrollWidth > e.clientWidth + 1 }; })""",
+            )
+            assert len(boxes) == 3, boxes
+            assert max(b["top"] for b in boxes) - min(b["top"] for b in boxes) < 2, (lang, boxes)
+            assert all(b["height"] >= 44 for b in boxes), (lang, boxes)
+            assert not any(b["cut"] for b in boxes), (lang, boxes)
+            assert all(b["left"] >= 0 and b["right"] <= 390 for b in boxes), (lang, boxes)
+            page.context.close()

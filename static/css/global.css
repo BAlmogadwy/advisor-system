@@ -11263,143 +11263,404 @@ html[data-theme="dark"] .btn-export {
    ADVISOR PORTFOLIO — Page-specific styles
    ═══════════════════════════════════════════════════════════ */
 
-/* ── Advisor selector (inline in header) ─── */
-.ap-advisor-bar {
-  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
-.ap-advisor-bar select { max-width: 360px; }
-.ap-advisor-bar .ap-program-filter {
-  width: auto;
-  min-width: 170px;
-  max-width: 210px !important;
-}
-.ap-advisor-bar .ap-loaded-label {
-  font-size: var(--text-sm); color: var(--muted); font-weight: 500;
-  display: flex; align-items: center; gap: 0.3rem;
-}
-.ap-advisor-bar .ap-loaded-label .ap-loaded-time {
-  font-family: var(--font-mono); font-size: var(--text-micro); color: var(--muted-light);
-}
-
-/* ── Insight chips (compact alert banner) ─── */
-.ap-insights { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+/* ── Component basics: what the top section below styles in place ─── */
+.ap-insights { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .ap-insight {
   display: inline-flex; align-items: center; gap: 0.3rem;
   padding: 0.3rem 0.65rem; border-radius: var(--radius-pill);
   font-size: var(--text-xs); font-weight: 700;
 }
-.ap-insight-danger { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
-.ap-insight-warn { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
-.ap-insight-info { background: #ecf9f4; color: var(--text-brand); border: 1px solid #a8e6d4; }
-
-/* ── Program breakdown + GPA chart row ─── */
-.ap-breakdown-row {
-  display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;
-  margin-bottom: 0.75rem;
-}
-.ap-programs {
-  display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center;
-  flex: 1; min-width: 200px;
-}
+.ap-programs { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
+/* no program on record */
+.ap-programs-none { font-size: var(--text-xs); color: var(--t3); }
 .ap-prog-pill {
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  padding: 0.2rem 0.55rem; border-radius: var(--radius-pill);
-  font-size: var(--text-xs); font-weight: 700;
-  background: #eef2ff; color: #3b3fa0; border: 1px solid #c7d2fe;
+  display: inline-flex; align-items: center;
   cursor: pointer;
-  font-family: inherit;
-  line-height: inherit;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
 }
-.ap-prog-pill:hover {
-  background: #e0e7ff;
-  border-color: #818cf8;
-}
-.ap-prog-pill[aria-pressed="true"] {
-  background: #3b3fa0;
-  border-color: #3b3fa0;
-  color: #fff;
-}
-.ap-prog-pill:focus-visible {
-  outline: 3px solid rgba(59,63,160,0.28);
-  outline-offset: 2px;
-}
-.ap-prog-pill .ap-prog-n {
-  font-family: var(--font-mono); font-size: var(--text-micro);
-  background: rgba(59,63,160,0.1); padding: 0.05rem 0.3rem;
-  border-radius: var(--radius-pill);
-}
-
-/* GPA mini-chart */
-.ap-gpa-chart {
-  display: flex; align-items: flex-end; gap: 2px; height: 36px;
-  min-width: 160px;
-}
-.ap-gpa-bar {
-  flex: 1; min-width: 8px; border-radius: 3px 3px 0 0;
-  transition: height 0.3s var(--ease);
-}
-.ap-gpa-bar-danger { background: #f87171; }
-.ap-gpa-bar-warn { background: #fbbf24; }
-.ap-gpa-bar-ok { background: #34d399; }
-.ap-gpa-bar-great { background: #22c55e; }
-.ap-gpa-labels {
-  display: flex; justify-content: space-between;
-  font-size: var(--text-micro); color: var(--muted); font-weight: 600;
-  margin-top: 0.1rem;
-}
-
-/* ── Above the fold (2026-11 premium pass) ───────────────────
-   The roster is the job, and it started 555px down an 840px window: two
-   stacked picker bars, a tall tile row, an insights row and a chart row
-   came first. One top row, a compact tile strip and one breakdown row
-   bring it up 152px in Arabic and 108px in English at 1440x900
-   (3 -> 6 and 5 -> 7 students above the fold; measured against master). */
-.ap-topbar {
-  display: flex; gap: 0.5rem 0.75rem; align-items: center; flex-wrap: wrap;
-  margin-bottom: 0.5rem;
-}
-.ap-topbar > .ap-advisor-bar { margin-bottom: 0; }
-.ap-topbar > #apAdvisorBar { flex: 1 1 320px; }
-.ap-topbar > #apAdvisorBar select { max-width: 460px; }
-
-.ap-metrics {
-  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0 1rem; margin-bottom: 0.5rem;
-}
-@media (max-width: 1100px) { .ap-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 575.98px) { .ap-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.ap-metrics .mc { padding: 10px 0 8px; }
-.ap-metrics .mc-head { margin-bottom: 6px; gap: 8px; }
-.ap-metrics .mc-icon { width: 28px; height: 28px; }
-.ap-metrics .mc-icon .i { width: 15px; height: 15px; }
-.ap-metrics .mc-val { display: block; font-size: var(--text-xl); }
+.ap-gpa-chart { display: flex; align-items: flex-end; }
+.ap-gpa-chart.is-empty { align-items: center; justify-content: center; }
+.ap-gpa-bar { flex: 1; transition: height 0.3s var(--ease); }
+/* The alert tiles are buttons that open the list they count. */
+.mc-drill { text-align: start; font: inherit; color: inherit; cursor: pointer; }
 /* An alert tile at zero is not an alert. */
 .ap-metrics .mc.is-zero .mc-val { color: var(--t3); }
-.ap-metrics .mc.is-zero .mc-icon { background: var(--pl-overlay-2); color: var(--t3); }
-.ap-metrics .mc.is-zero::before { opacity: 0.25; }
-/* The alert tiles are buttons that open the list they count. */
-.mc-drill {
-  display: block; width: 100%; text-align: start;
-  font: inherit; color: inherit; cursor: pointer;
-}
-.mc-drill:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius); }
-.mc-drill.active { background: color-mix(in srgb, var(--mc-c, var(--teal)) 8%, transparent); }
-.mc-drill.active::before { opacity: 1; height: 2px; }
+.ap-metrics .mc.is-zero .mc-icon { color: var(--t3); }
 
-.ap-breakdown-title {
-  font-size: var(--text-micro); font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.07em; color: var(--muted); margin-bottom: 0.25rem;
+/* ═══ Advisor Portfolio — top section ═══════════════════════════════════
+   Three zones, each opened once and each named:
+   (a) scope    — the advisor and program pickers sit level with the title,
+                  the page's one sentence under both (no picker row);
+   (b) overview — one band under a rule, in two named halves:
+                  "Needs action" (the three alert tiles that filter the roster)
+                  | "Cohort profile" (students, average GPA with its spread,
+                  programs);
+   (c) roster   — a stronger rule with more air above it, the "Student roster"
+                  heading with the exports, the toolbar, then the table.
+   Every selector is scoped to the portfolio (#ap*, .ap-*). Approved by the
+   owner as a rendered mock-up (2026-11-28) and ported rule for rule. */
+
+/* ── (a) Masthead ────────────────────────────────────────────────────── */
+#main-content > .content-wrap:has(#apScope) { container: ap-page / inline-size; }
+
+/* Title and scope on one line, the sentence under both: a grid, with the
+   left column's box dissolved so the title and the sentence are its cells. */
+#main-content > .content-wrap > .page-header:has(#apScope) {
+  display: grid;
+  /* the title keeps its width; the scope takes the rest and sits at its end */
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-areas: "title scope" "intro intro";
+  align-items: center;
+  gap: var(--space-2) var(--space-12);
 }
-.ap-breakdown-programs { flex: 1 1 240px; }
-.ap-breakdown-gpa { flex: 0 0 180px; }
-.ap-breakdown-row .ap-insights { flex: 0 1 auto; margin-bottom: 0; align-self: center; }
-.ap-gpa-chart { border-bottom: 1px solid var(--rule); }
-.ap-gpa-chart.is-empty {
-  align-items: center; justify-content: center;
-  border: 1px dashed var(--rule); border-radius: var(--radius);
-  font-size: var(--text-xs); color: var(--muted);
+.page-header:has(#apScope) > .page-header-left { display: contents; }
+.page-header:has(#apScope) .page-header-module { grid-area: title; min-width: 0; }
+.page-header:has(#apScope) .page-header-chips { grid-area: intro; }
+.page-header:has(#apScope) > .page-header-right {
+  grid-area: scope; min-width: 0; padding-top: 0;
+  justify-content: flex-end;
+}
+.ap-intro { margin: 0; }
+@media (min-width: 769px) {
+  /* the sentence now closes the masthead; the band's rule follows it */
+  #main-content > .content-wrap > .page-header:has(#apScope) { margin-bottom: var(--space-7) !important; }
+}
+
+#apScope {
+  display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; gap: var(--space-4);
+  min-width: 0;
+}
+/* Each field names itself inside its capsule, set off by a hairline. */
+#apScope .fb-lbl {
+  display: inline-flex; align-items: center;
+  padding-inline-end: var(--space-5);
+  border-inline-end: 1px solid var(--rule);
+  line-height: 1.2;
+  font-size: var(--text-micro); font-weight: 700;
+  letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--t3);
+  cursor: pointer;
+}
+html[dir="rtl"] #apScope .fb-lbl { letter-spacing: 0; }
+#apScope select { color: var(--t1); font-weight: 600; cursor: pointer; }
+/* The advisor field is as wide as the advisor shown. A browser without
+   field-sizing keeps the longest option's width, so the cap holds it to a
+   header's worth and a long name ends in an ellipsis. */
+#apScope #apAdvisorSelect {
+  field-sizing: content;
+  min-width: 12ch;
+  max-width: min(100%, 26rem);
+  text-overflow: ellipsis;
+}
+
+/* A narrow sheet: title, sentence, then the scope fields, in reading order. */
+@container ap-page (max-width: 820px) {
+  #main-content > .content-wrap > .page-header:has(#apScope) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "title" "intro" "scope";
+  }
+  .page-header:has(#apScope) > .page-header-right { justify-content: flex-start; margin-top: var(--space-4); }
+  #apScope { justify-content: flex-start; }
+}
+
+/* ── (b) Overview band ───────────────────────────────────────────────── */
+#apMetricsWrap {
+  --ap-cell-px: var(--space-6);
+  container: ap-ov / inline-size;
+  border-top: 1px solid var(--rule);
+  padding-block: var(--space-6) var(--space-12);
+}
+#apMetricsWrap .ap-metrics {
+  display: flex; align-items: stretch; flex-wrap: nowrap;
+  gap: 0; margin: 0;
+  /* the cells' padding hangs outside the sheet's edges, so the titles and the
+     first label line up with the page title above and the toolbar below */
+  margin-inline: calc(-1 * var(--ap-cell-px));
+}
+#apMetricsWrap .ap-ov-group {
+  position: relative;
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+#apMetricsWrap .ap-ov-alerts { flex: 3 0 auto; }
+#apMetricsWrap .ap-ov-profile { flex: 3 1 auto; }
+/* The halves are told apart by their names and one hairline, not by boxes. */
+#apMetricsWrap .ap-ov-group + .ap-ov-group {
+  border-inline-start: 1px solid var(--rule);
+  margin-inline-start: var(--ap-cell-px);
+  padding-inline-start: var(--ap-cell-px);
+}
+
+/* One title style for the three zones' names: the body face, a step up. */
+.ap-zone-title {
+  margin: 0;
+  font-family: var(--font-body); font-size: var(--text-md); font-weight: 700;
+  line-height: 1.3; letter-spacing: -0.005em; color: var(--t0);
+}
+html[dir="rtl"] .ap-zone-title { letter-spacing: 0; }
+#apMetricsWrap .ap-ov-head {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-3) var(--space-8);
+  min-height: 22px;
+  padding-inline: var(--ap-cell-px);
+  margin-bottom: var(--space-2);
+}
+
+#apMetricsWrap .ap-ov-cells { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; }
+/* Programs gives way first: an adviser with many programs has the pills wrap
+   inside the cell (down to two pills' width) and the band keeps one row. */
+#apMetricsWrap .ap-cell.ap-cell-programs { flex: 1 1 auto; min-width: 10rem; }
+/* A sheet narrower than the band's one-row width (measured: 845px English,
+   879px Arabic, with Programs at its 10rem floor): Programs takes a second
+   line of its own half. */
+@container ap-ov (max-width: 880px) {
+  #apMetricsWrap .ap-ov-profile .ap-ov-cells { flex-wrap: wrap; }
+  #apMetricsWrap .ap-cell.ap-cell-programs { flex: 1 0 100%; }
+}
+
+/* Every cell: a label, then its value, on one shared rhythm. */
+#apMetricsWrap .ap-cell {
+  flex: 1 1 auto; min-width: 0;
+  padding: var(--space-4) var(--ap-cell-px) var(--space-3);
+}
+#apMetricsWrap .mc.ap-cell {
+  min-width: 6.5rem; width: auto;
+  border: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: none; box-shadow: none;
+}
+#apMetricsWrap .ap-cell-gpa { flex: 1 0 auto; }
+#apMetricsWrap .mc::before { content: none; }
+#apMetricsWrap .mc:not(.mc-drill):hover { background: none; }
+
+/* The alert tiles are buttons: a wash on hover, a tint and a status underline
+   while the list below shows only their students. */
+/* a button centres its content in the row's height; a tile reads top-down */
+#apMetricsWrap .mc-drill {
+  display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch;
+  transition: background-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+#apMetricsWrap .mc-drill:hover { background: color-mix(in srgb, var(--mc-c) 7%, transparent); }
+#apMetricsWrap .mc-drill.is-zero:hover { background: var(--pl-overlay-2); }
+#apMetricsWrap .mc-drill.active {
+  background: color-mix(in srgb, var(--mc-c) 10%, transparent);
+  box-shadow: inset 0 -2px 0 var(--mc-c);
+}
+/* Keyboard focus is the system's own (global.css "*:focus-visible": a teal
+   outline and a glow, both !important). A pressed tile that has focus keeps
+   its status underline under that glow. */
+#apMetricsWrap .mc-drill.active:focus-visible { box-shadow: 0 0 0 4px var(--brand-glow), inset 0 -2px 0 var(--mc-c) !important; }
+
+/* Dark draws every .mc as a ruled tile and removes every .mc box-shadow, all
+   with !important (global.css, "html[data-theme=dark] .mc"). The band's rule
+   and hairline replace the per-tile rules; the drill tiles' wash, pressed
+   underline and focus glow are restated here (that rule also takes the
+   system focus glow off every dark .mc today, leaving the outline alone). */
+html[data-theme="dark"] #apMetricsWrap .mc { border: 0 !important; background: none !important; box-shadow: none !important; }
+html[data-theme="dark"] #apMetricsWrap .mc-drill:hover { background: color-mix(in srgb, var(--mc-c) 10%, transparent) !important; }
+html[data-theme="dark"] #apMetricsWrap .mc-drill.is-zero:hover { background: var(--pl-overlay-2) !important; }
+html[data-theme="dark"] #apMetricsWrap .mc-drill.active {
+  background: color-mix(in srgb, var(--mc-c) 14%, transparent) !important;
+  box-shadow: inset 0 -2px 0 var(--mc-c) !important;
+}
+html[data-theme="dark"] #apMetricsWrap .mc-drill:focus-visible { box-shadow: 0 0 0 4px var(--brand-glow) !important; }
+html[data-theme="dark"] #apMetricsWrap .mc-drill.active:focus-visible { box-shadow: 0 0 0 4px var(--brand-glow), inset 0 -2px 0 var(--mc-c) !important; }
+html[data-theme="dark"] #apMetricsWrap .mc-icon { box-shadow: none !important; }
+
+#apMetricsWrap .mc-head,
+#apMetricsWrap .ap-cell-head {
+  display: flex; align-items: center;
+  gap: var(--space-3); margin: 0 0 var(--space-3);
+  min-height: 1.25rem;
+}
+#apMetricsWrap .mc-icon { width: auto; height: auto; border-radius: 0; background: none; }
+#apMetricsWrap .mc-icon .i { width: 14px; height: 14px; }
+#apMetricsWrap .ap-ov-profile .mc-icon { display: none; }
+#apMetricsWrap .mc-lbl,
+#apMetricsWrap .ap-cell-lbl {
+  font-size: var(--text-micro); font-weight: 700;
+  letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--t3); white-space: nowrap; line-height: 1.25;
+}
+html[dir="rtl"] #apMetricsWrap :is(.mc-lbl, .ap-cell-lbl) { letter-spacing: 0; }
+#apMetricsWrap .mc-val {
+  display: block;
+  font-size: var(--text-display);
+  line-height: 1;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+/* The one insight no tile states (often none): beside "Needs action". */
+#apMetricsWrap .ap-insights {
+  margin: 0; margin-inline-start: auto;
+  margin-block: calc(-1 * var(--space-1));   /* it shares the title's line, never heightens it */
+  min-width: 0; gap: var(--space-3);
+}
+#apMetricsWrap .ap-insights:empty { display: none; }
+#apMetricsWrap .ap-insight {
+  border: 0; border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-5);
+  font-size: var(--text-xs); font-weight: 600;
+  line-height: 1.4;   /* the chip fits the title's line: the band never grows by it */
+}
+#apMetricsWrap .ap-insight-warn { background: var(--sev-warning-bg); color: var(--sev-warning-ink); }
+#apMetricsWrap .ap-insight-danger { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
+#apMetricsWrap .ap-insight-info { background: var(--brand-soft); color: var(--text-brand); }
+
+/* Average GPA: the spread sits beside the numeral, its bars as tall as the
+   numeral, its ranges under the bars. */
+#apMetricsWrap .ap-gpa-row { display: flex; align-items: flex-start; gap: var(--space-8); }
+#apMetricsWrap .ap-gpa-row > .mc-val { flex: none; }
+#apMetricsWrap .ap-gpa { --ap-chart-w: 10rem; flex: 0 1 var(--ap-chart-w); min-width: 8rem; }
+#apMetricsWrap .ap-gpa-chart {
+  width: 100%; min-width: 0; height: 28px; gap: 3px;
+  border-bottom: 1px solid var(--rule-strong);
+}
+#apMetricsWrap .ap-gpa-bar { min-width: 0; border-radius: 2px 2px 0 0; }
+#apMetricsWrap .ap-gpa-bar-danger { background: var(--danger); }
+/* amber, not --warning's dark gold (olive beside the teal); the 20% of
+   --warning keeps its edge at 3:1 on the sheet */
+#apMetricsWrap .ap-gpa-bar-warn { background: color-mix(in srgb, var(--amber) 80%, var(--warning)); }
+/* a half-strength teal fill reads as the step below 3.5+; its teal edge
+   carries the 3:1 the pale fill alone cannot */
+#apMetricsWrap .ap-gpa-bar-ok {
+  background: color-mix(in srgb, var(--teal) 38%, transparent);
+  box-shadow: inset 0 0 0 1px var(--teal);
+}
+#apMetricsWrap .ap-gpa-bar-ok.is-zero { box-shadow: none; }
+#apMetricsWrap .ap-gpa-bar-great { background: var(--teal); }
+html[data-theme="dark"] #apMetricsWrap .ap-gpa-bar-ok {
+  background: color-mix(in srgb, var(--teal) 60%, var(--t0));
+  box-shadow: none;
+}
+#apMetricsWrap .ap-gpa-labels {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px;
+  width: 100%; margin-top: var(--space-2);
+  font-size: var(--text-micro); font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--t4); text-align: center; line-height: 1.2; white-space: nowrap;
+}
+#apMetricsWrap .ap-gpa-labels.d-none { display: none; }
+/* No GPA yet: the same footprint as the chart and its ranges. */
+#apMetricsWrap .ap-gpa-chart.is-empty {
+  height: calc(28px + var(--space-2) + 1.2 * var(--text-micro));
+  border: 1px dashed var(--rule-strong); border-radius: var(--radius-sm);
+  padding-inline: var(--space-4);
+  font-size: var(--text-xs); color: var(--t3); white-space: nowrap;
+}
+
+/* Programs: filters, in the capsules' language (a ring, no fill). */
+#apMetricsWrap .ap-programs { flex: none; min-width: 0; flex-wrap: wrap; gap: var(--space-3); }
+#apMetricsWrap .ap-prog-pill {
+  min-height: var(--control-h-sm); padding: 0 var(--space-5); gap: var(--space-3);
+  border: 0; border-radius: var(--control-radius);
+  background: transparent; color: var(--t1);
+  box-shadow: inset 0 0 0 1px var(--control-edge);
+  font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 700;
+  line-height: 1;
+}
+#apMetricsWrap .ap-prog-pill:hover { background: var(--pl-overlay-3); color: var(--t0); }
+#apMetricsWrap .ap-prog-pill[aria-pressed="true"] {
+  background: var(--brand-soft); color: var(--text-brand);
+  box-shadow: inset 0 0 0 1px var(--teal);
+}
+#apMetricsWrap .ap-prog-pill .ap-prog-n {
+  font-size: var(--text-micro); font-weight: 500; color: var(--t3);
+}
+#apMetricsWrap .ap-prog-pill[aria-pressed="true"] .ap-prog-n { color: var(--text-brand); }
+
+/* Phones: the halves stack under their names, the cells on a three-column grid. */
+@container ap-ov (max-width: 640px) {
+  #apMetricsWrap .ap-metrics { flex-direction: column; }
+  #apMetricsWrap .ap-ov-group + .ap-ov-group {
+    border-inline-start: 0;
+    margin-inline-start: 0;
+    padding-inline-start: 0;
+    margin-top: var(--space-6);
+    padding-top: var(--space-8);
+  }
+  #apMetricsWrap .ap-ov-group + .ap-ov-group::before {
+    content: ""; position: absolute; top: 0;
+    inset-inline: var(--ap-cell-px);
+    border-top: 1px solid var(--rule);
+  }
+  #apMetricsWrap .ap-ov-cells {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+  }
+  #apMetricsWrap .ap-cell-gpa { grid-column: span 2; }
+  #apMetricsWrap .ap-cell-programs { grid-column: 1 / -1; }
+  #apMetricsWrap .mc.ap-cell { min-width: 0; display: flex; flex-direction: column; justify-content: flex-start; }
+  /* an alert label may take two lines in a third of a phone: the numerals
+     still share one line */
+  #apMetricsWrap .ap-ov-alerts .mc.ap-cell { justify-content: space-between; }
+  /* a third of a phone is a word's width: the label keeps it, the icon goes */
+  #apMetricsWrap .mc-icon { display: none; }
+  #apMetricsWrap .mc-lbl { white-space: normal; }
+  #apMetricsWrap .ap-gpa-row { gap: var(--space-6); }
+  #apMetricsWrap .ap-gpa { flex: 1 1 auto; max-width: 10rem; }
+}
+@media (max-width: 576px) {
+  #apMetricsWrap { --ap-cell-px: var(--space-4); }
+}
+/* A phone's bar already ends in a rule: the band opens under it, not under a second one. */
+@media (max-width: 768px) {
+  #apMetricsWrap { border-top: 0; padding-top: 0; }
+}
+@media (max-width: 768px), (pointer: coarse) {
+  #apMetricsWrap .ap-prog-pill { min-height: var(--control-h); }
+}
+
+/* ── (c) Roster: a stronger rule with more air above it, its heading, its actions ── */
+.ap-roster-head {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-4) var(--space-8);
+  border-top: 1px solid var(--rule-strong);
+  padding-top: var(--space-10);
+}
+.ap-roster-head .fb-actions { margin-inline-start: auto; }
+.ap-roster-head + .filter-bar {
+  container: ap-tb / inline-size;
+  padding-block: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-4);
+}
+@media (max-width: 768px), (pointer: coarse) {
+  /* the exports were 44px touch targets in the toolbar; beside the heading they
+     stay so (out-ranking "html body .btn.btn-sm", the compact tier's 40px) */
+  .ap-roster-head .fb-actions > .btn { min-height: var(--control-h); }
+}
+@media (max-width: 480px) {
+  /* as in the toolbar: the label carries the meaning, the icon gives up its room */
+  html body .ap-roster-head .btn-export > .i { display: none; }
+}
+/* A phone's toolbar: the search takes the line, the six filters a 2-column grid. */
+@container ap-tb (max-width: 640px) {
+  .ap-roster-head + .filter-bar .fb-search.fb-grow { flex: 1 1 100%; max-width: none; }
+  .ap-roster-head + .filter-bar .fb-spacer { display: none; }
+  .ap-roster-head + .filter-bar #apFilters {
+    flex: 1 1 100%;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+  .ap-roster-head + .filter-bar #apFilters .fb-dd { justify-content: space-between; }
+}
+
+/* ── Phones: the bar holds the menu and the title, then the scope fields,
+   each on its own full-width line ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  #main-content > .content-wrap > .page-header:has(#apScope) {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "menu title" "scope scope";
+    gap: var(--space-4) var(--space-4) !important;
+  }
+  .page-header:has(#apScope) > .sidebar-toggle { grid-area: menu; }
+  .page-header:has(#apScope) > .page-header-right { margin-top: 0; }
+  /* the bar carries the page's actions (the system's phone pattern); the
+     page's sentence would land between them and the title, so a phone,
+     where the roster is a long list of cards, goes without it */
+  .page-header:has(#apScope) .page-header-chips { display: none; }
+  #apScope { flex: 1 1 100%; }
+  #apScope .fb-search { flex: 1 1 100%; }
+  #apScope .fb-search > select { flex: 1 1 auto; max-width: none; }
 }
 
 /* 72px rows showed three students above the fold. */
@@ -12659,7 +12920,6 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
     padding: 1.25rem;
   }
   .ap-drawer.ap-drawer--graduation { width: auto; max-width: none; }
-  .ap-metrics { grid-template-columns: repeat(2, 1fr); }
   .ap-grad-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ap-grad-metric-emphasis { grid-column: 1 / -1; }
   .ap-grad-provenance { grid-template-columns: 1fr; }
@@ -12695,42 +12955,6 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
    DARK MODE — Deep Navy overrides
    Selector: html[data-theme="dark"]
    ═══════════════════════════════════════════════════════════ */
-html[data-theme="dark"] .ap-insight-danger {
-  background: rgba(220,38,38,0.1);
-  color: #f8a0a8;
-  border-color: rgba(220,38,38,0.25);
-}
-html[data-theme="dark"] .ap-insight-warn {
-  background: rgba(245,158,11,0.1);
-  color: #f5a060;
-  border-color: rgba(245,158,11,0.25);
-}
-html[data-theme="dark"] .ap-insight-info {
-  background: rgba(10,142,110,0.12);
-  color: #5ee8b7;
-  border-color: rgba(10,142,110,0.25);
-}
-
-/* Program pills */
-html[data-theme="dark"] .ap-prog-pill {
-  background: rgba(64,86,227,0.12);
-  color: #8b8fff;
-  border-color: rgba(139,143,255,0.25);
-}
-html[data-theme="dark"] .ap-prog-pill:hover {
-  background: rgba(139,143,255,0.2);
-  border-color: rgba(139,143,255,0.55);
-}
-html[data-theme="dark"] .ap-prog-pill[aria-pressed="true"] {
-  background: #8b8fff;
-  color: #151826;
-  border-color: #8b8fff;
-}
-html[data-theme="dark"] .ap-prog-pill .ap-prog-n {
-  /* a second 12% wash over the pill's own took the count to 3.4-4.5:1 */
-  background: rgba(139,143,255,0.06);
-}
-
 /* Detail row */
 html[data-theme="dark"] .ap-detail-row td {
   background: rgba(255,255,255,0.04) !important;
