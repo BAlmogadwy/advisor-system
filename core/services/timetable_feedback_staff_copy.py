@@ -304,12 +304,18 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "subnav_cases": ("Cases", "الحالات"),
     "subnav_report": ("Report", "التقرير"),
     "subnav_guide": ("Guide", "الدليل"),
-    # The queue, narrowed to one section from the report
-    "filter_section_active": (
-        "Only the cases about {course}, section {section}.",
-        "تُعرض الحالات الخاصة بالمقرر {course}، الشعبة {section} فقط.",
+    # The queue, narrowed by a link from the report
+    "filter_from_report": (
+        "Only the cases the report counted: {parts}.",
+        "تُعرض الحالات التي احتسبها التقرير فقط: {parts}.",
     ),
-    "filter_section_clear": ("Show every section", "عرض جميع الشعب"),
+    "filter_from_report_clear": ("Show every case", "عرض جميع الحالات"),
+    "report_part_term": ("Term {term}", "الفصل الدراسي {term}"),
+    "report_part_programme": (
+        "Programme when sent: {programme}",
+        "البرنامج عند الإرسال: {programme}",
+    ),
+    "report_part_section": ("{course}, section {section}", "{course}، الشعبة {section}"),
     # The report
     "report_title": ("Timetable feedback report", "تقرير ملاحظات الطلاب على الجداول"),
     "report_intro": (
@@ -405,10 +411,13 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "report_programmes_title": ("By programme", "حسب البرنامج"),
     "report_timeline_title": ("New cases each day", "الحالات الجديدة يوميًا"),
     "report_timeline_summary": (
-        "Cases sent: {total} · Busiest day: {day} ({count})",
-        "الحالات المرسلة: {total} · أكثر الأيام نشاطًا: {day} ({count})",
+        "Over the last {period}: cases sent {total} · busiest day {day} ({count})",
+        "خلال آخر {period}: الحالات المرسلة {total} · أكثر الأيام نشاطًا {day} ({count})",
     ),
-    "report_timeline_quiet": ("No case was sent in this period.", "لم تُرسل أي حالة في هذه الفترة."),
+    "report_timeline_quiet": (
+        "No case was sent over the last {period}.",
+        "لم تُرسل أي حالة خلال آخر {period}.",
+    ),
     "report_col_course": ("Course", "المقرر"),
     "report_col_section": ("Section", "الشعبة"),
     "report_col_students": ("Students", "الطلاب"),
@@ -423,7 +432,8 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "report_col_cases": ("Cases", "الحالات"),
     "report_col_open": ("Open", "المفتوحة"),
     "report_col_waiting": ("Waiting on staff", "بانتظار الموظفين"),
-    "report_col_answered": ("Answered", "تم الرد عليها"),
+    # Ever given an answer, closed since or not: not the status "Answered".
+    "report_col_answered": ("Given an answer", "تلقّت ردًا"),
     "report_col_top_issue": ("Top issue", "أبرز مشكلة"),
     "report_col_day": ("Day", "اليوم"),
     "report_col_share": ("Share of the students", "النسبة من الطلاب"),

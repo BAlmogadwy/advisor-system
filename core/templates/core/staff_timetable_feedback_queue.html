@@ -25,8 +25,8 @@
 <div class="ttf-notice ttfs-scope-empty" id="ttfsScopeEmpty" role="status"><span dir="auto">{{ empty }}</span></div>
 {% endif %}
 
-{% if section_filter %}
-<div class="ttf-notice ttfs-section-filter" id="ttfsSectionFilter" role="status"><span dir="auto">{{ section_filter }}</span> <a href="?{{ section_clear_query }}">{{ t.filter_section_clear }}</a></div>
+{% if report_filter %}
+<div class="ttf-notice ttfs-report-filter" id="ttfsReportFilter" role="status"><span dir="auto">{{ report_filter }}</span> <a href="?{{ report_clear_query }}">{{ t.filter_from_report_clear }}</a></div>
 {% endif %}
 
 <nav class="ttfs-tabs" aria-label="{{ t.tabs_label }}">
@@ -41,6 +41,9 @@
   <h2 class="ttfs-section-title" id="ttfsFiltersTitle">{{ t.filters_title }}</h2>
   <input type="hidden" name="tab" value="{{ filters.tab }}">
   {% if filters.course %}<input type="hidden" name="course" value="{{ filters.course }}"><input type="hidden" name="section" value="{{ filters.section }}">{% endif %}
+  {% if filters.term %}<input type="hidden" name="term" value="{{ filters.term }}">{% endif %}
+  {% if filters.window %}<input type="hidden" name="window" value="{{ filters.window }}">{% endif %}
+  {% if filters.sent_programme %}<input type="hidden" name="sent_programme" value="{{ filters.sent_programme }}">{% endif %}
   <div class="ttfs-filter-grid">
     <div class="ttfs-filter">
       <label class="ttf-label" for="ttfsSearch">{{ t.filter_search }}</label>

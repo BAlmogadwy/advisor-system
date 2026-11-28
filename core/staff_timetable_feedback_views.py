@@ -36,6 +36,7 @@ from django.http import HttpRequest, HttpResponse, QueryDict
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.html import format_html_join
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -254,10 +255,20 @@ class _Filters:
     graduating: bool
     unrouted: bool
     page: str
-    #: One physical section, as the report names it: its course as CODE::NAME and
-    #: its label. Both or neither: a label alone names a section of any course.
+    # What a link from the report narrows to, read with the report's own
+    # conditions (`timetable_feedback_report`), so the queue lists exactly the
+    # cases the report counted. None of them has a field in the filter form; the
+    # page says which are on and offers to take them all off.
+    #: One physical section: its course as CODE::NAME and its label. Both or
+    #: neither: a label alone names a section of any course.
     course: str = ""
     section: str = ""
+    #: '1448/1', or ''.
+    term: str = ""
+    #: A period in days, one of the report's, or ''.
+    window: str = ""
+    #: The programme the student wrote in, as a code, or ''.
+    sent_programme: str = ""
 
     @classmethod
     def read(cls, query: QueryDict, staff: service.Staff) -> _Filters:
@@ -266,6 +277,7 @@ class _Filters:
         registered = str(query.get("registered") or "")
         course = str(query.get("course") or "").strip()[:_SECTION_FILTER_MAX]
         section = str(query.get("section") or "").strip()[:_SECTION_FILTER_MAX]
+        window = str(query.get("window") or "").strip()
         return cls(
             tab=tab if tab in service.TABS else service.TABS[0],
             search=str(query.get("q") or "").strip(),
@@ -279,7 +291,16 @@ class _Filters:
             page=str(query.get("page") or "1"),
             course=course if course and section else "",
             section=section if course and section else "",
+            term=report.parse_term(query.get("term")),
+            window=window if window in report.WINDOWS else "",
+            sent_programme=str(query.get("sent_programme") or "")
+            .strip()
+            .upper()[:_SECTION_FILTER_MAX],
         )
+
+    @property
+    def from_report(self) -> bool:
+        return bool(self.course or self.term or self.window or self.sent_programme)
 
     def q(self) -> Q:
         """Everything but the tab."""
@@ -317,16 +338,23 @@ class _Filters:
         if self.unrouted:
             q &= service.unrouted_q()
         if self.course:
-            q &= Q(
-                Exists(
-                    TimetableFeedbackPoint.objects.filter(
-                        case=OuterRef("pk"),
-                        withdrawn_at__isnull=True,
-                        section_course_identity=self.course,
-                        section_label=self.section,
-                    )
-                )
-            )
+            # One point must be about this section AND, when an issue is chosen,
+            # raise it: a case clashing on another section is not this section's.
+            about: dict[str, object] = {
+                "case": OuterRef("pk"),
+                "withdrawn_at__isnull": True,
+                "section_course_identity": self.course,
+                "section_label": self.section,
+            }
+            if self.reason:
+                about["reason_code"] = self.reason
+            q &= Q(Exists(TimetableFeedbackPoint.objects.filter(**about)))
+        if self.term:
+            q &= report.term_q(self.term)
+        if self.window:
+            q &= report.sent_since_q(self.window, timezone.now())
+        if self.sent_programme:
+            q &= report.sent_from_programme_q(self.sent_programme)
         return q
 
     def query_for(self, **changes: object) -> str:
@@ -342,6 +370,9 @@ class _Filters:
             "unrouted": "1" if self.unrouted else "",
             "course": self.course,
             "section": self.section,
+            "term": self.term,
+            "window": self.window,
+            "sent_programme": self.sent_programme,
         }
         values.update({key: str(value) for key, value in changes.items()})
         query = QueryDict(mutable=True)
@@ -349,6 +380,37 @@ class _Filters:
             if value:
                 query[key] = value
         return query.urlencode()
+
+
+def _report_filter_line(filters: _Filters, language: str) -> object:
+    """What a link from the report narrowed the queue to, in words, or ''."""
+    if not filters.from_report:
+        return ""
+    parts: list[object] = []
+    if filters.term:
+        parts.append(scopy.text("report_part_term", language, term=copy.bdi(filters.term)))
+    if filters.window:
+        parts.append(scopy.strings(language)[f"report_window_{filters.window}"])
+    if filters.sent_programme:
+        parts.append(
+            scopy.text(
+                "report_part_programme", language, programme=copy.bdi(filters.sent_programme)
+            )
+        )
+    if filters.course:
+        parts.append(
+            scopy.text(
+                "report_part_section",
+                language,
+                course=copy.bdi(_identity_label(filters.course)),
+                section=copy.bdi(filters.section),
+            )
+        )
+    return scopy.text(
+        "filter_from_report",
+        language,
+        parts=format_html_join(" · ", "{}", ((part,) for part in parts)),
+    )
 
 
 #: Oldest first while a case waits on someone; newest first in the record.
@@ -492,17 +554,10 @@ def queue_view(request: HttpRequest) -> HttpResponse:
             ),
             next_query=(filters.query_for(page=page.next_page_number()) if page.has_next() else ""),
             empty=t[f"empty_{empty}"] if empty in ("NO_ADVISOR_ID", "NO_DEPARTMENTS") else "",
-            section_filter=(
-                scopy.text(
-                    "filter_section_active",
-                    language,
-                    course=copy.bdi(_identity_label(filters.course)),
-                    section=copy.bdi(filters.section),
-                )
-                if filters.course
-                else ""
+            report_filter=_report_filter_line(filters, language),
+            report_clear_query=filters.query_for(
+                course="", section="", term="", window="", sent_programme=""
             ),
-            section_clear_query=filters.query_for(course="", section=""),
             reasons=[(code, scopy.reason_label(code, language)) for code in scopy.REASON],
             programmes=_programmes(staff),
             templates=[(key, scopy.template_name(key, language)) for key in copy.REPLY_TEMPLATES],
@@ -1298,7 +1353,13 @@ def report_view(request: HttpRequest) -> HttpResponse:
     t = scopy.strings(language)
     data = report.build(staff, request.GET)
     narrowed = data.filters
-    common = {"programme": narrowed.programme}
+    # Every link carries what the report is narrowed to; the queue reads it with the
+    # report's own conditions, so it lists exactly the cases a row counted.
+    common = {
+        "term": narrowed.term,
+        "window": narrowed.window,
+        "sent_programme": narrowed.programme,
+    }
 
     top_reason = max((row.students for row in data.reasons), default=0)
     reasons = [
@@ -1335,6 +1396,11 @@ def report_view(request: HttpRequest) -> HttpResponse:
             "issues": [(scopy.reason_label(code, language), n) for code, n in row.reasons],
             "moves": row.moves,
             "registered": row.registered_students,
+            "link_label": scopy.text(
+                "report_see_cases_about",
+                language,
+                what=copy.bdi(f"{row.course_code} {row.section}"),
+            ),
             "url": _queue_link(
                 course=row.course_identity,
                 section=row.section,
@@ -1351,6 +1417,7 @@ def report_view(request: HttpRequest) -> HttpResponse:
         height = _bar(n, top_day)
         timeline.append({"day": day.isoformat(), "count": n, "height": height, "gap": 100 - height})
     sent = sum(n for _day, n in data.timeline)
+    period = copy.count_text(len(data.timeline), "day", language)
     return render(
         request,
         "core/staff_timetable_feedback_report.html",
@@ -1405,7 +1472,10 @@ def report_view(request: HttpRequest) -> HttpResponse:
                     "top_issue": scopy.reason_label(row.top_reason, language)
                     if row.top_reason
                     else "",
-                    "url": _queue_link(programme=row.programme, reason=narrowed.reason),
+                    "url": _queue_link(
+                        **{**common, "sent_programme": row.programme},
+                        reason=narrowed.reason,
+                    ),
                 }
                 for row in data.by_programme
             ],
@@ -1414,12 +1484,13 @@ def report_view(request: HttpRequest) -> HttpResponse:
                 scopy.text(
                     "report_timeline_summary",
                     language,
+                    period=period,
                     total=copy.bdi(sent),
                     day=copy.bdi(busiest[0].isoformat()),
                     count=copy.bdi(busiest[1]),
                 )
                 if busiest and busiest[1]
-                else t["report_timeline_quiet"]
+                else scopy.text("report_timeline_quiet", language, period=period)
             ),
         ),
     )

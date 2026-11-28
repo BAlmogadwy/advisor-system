@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -19,6 +19,7 @@ from django.utils.html import escape
 
 from core.models import ProgrammeRequirement, Student, TimetableFeedback, TimetableFeedbackPoint
 from core.services import timetable_feedback as feedback
+from core.services import timetable_feedback_copy as copy
 from core.services import timetable_feedback_report as report
 from core.services import timetable_feedback_staff as staff_service
 from core.services import timetable_feedback_staff_copy as scopy
@@ -223,6 +224,56 @@ def test_sections_group_the_physical_section_and_rank_what_was_asked_for(people)
     assert rows[("CS113::Something Else", "M33")].students == 1
     first = _build(people["admin"]).sections[0]
     assert (first.course_identity, first.section) == (programming, "M33")
+
+
+def test_a_withdrawn_case_says_nothing_of_what_students_ask_but_counts_as_work(people):
+    withdrawn = _case(S_MINE, "WITHDRAWN")
+    _point(withdrawn, "PREFER_OTHER_SECTION", section="M1", asked="M2")
+    _point(withdrawn, "MISSING_COURSE", missing="MA101")
+    _point(_case(S_MESSY), "TIME_CLASH", section="M1")
+
+    data = _build(people["admin"])
+    assert _reasons(data) == {"TIME_CLASH": (1, 1)}
+    assert (data.totals.students, data.totals.points) == (1, 1)
+    assert [(row.section, row.students, row.moves) for row in data.sections] == [("M1", 1, [])]
+    assert data.moves == [] and data.missing == []
+    assert [(row.programme, row.students, row.cases) for row in data.by_programme] == [(PROG, 1, 1)]
+    # Still a case sent, and counted where it is.
+    assert (data.totals.cases, data.totals.withdrawn) == (2, 1)
+    assert data.by_status["WITHDRAWN"] == 1
+    assert sum(n for _day, n in data.timeline) == 2
+
+
+def test_a_move_is_only_a_section_the_form_offered(people):
+    case = _case(S_MINE)
+    point = _point(case, "PREFER_OTHER_SECTION", section="M1")
+    # A label with no offered section behind it is no move.
+    TimetableFeedbackPoint.objects.filter(pk=point.pk).update(requested_section_label="M9")
+    data = _build(people["admin"])
+    assert data.sections[0].moves == [] and data.moves == []
+
+
+def test_the_period_is_whole_local_days_as_the_timeline_draws_them(people):
+    today = timezone.localdate()
+    early_in_the_first_day = timezone.make_aware(
+        datetime.combine(today - timedelta(days=6), time(0, 30))
+    )
+    late_the_day_before = timezone.make_aware(
+        datetime.combine(today - timedelta(days=7), time(23, 30))
+    )
+    for sid, sent in ((S_MINE, early_in_the_first_day), (S_MESSY, late_the_day_before)):
+        case = _case(sid)
+        TimetableFeedback.objects.filter(pk=case.pk).update(created_at=sent)
+    data = _build(people["admin"], window="7")
+    assert data.totals.cases == 1
+    assert data.timeline[0] == (today - timedelta(days=6), 1)
+    assert sum(n for _day, n in data.timeline) == data.totals.cases
+
+
+def test_the_timeline_says_which_days_it_draws(people):
+    _point(_case(S_MINE))
+    assert "Over the last 30 days" in _page(people["admin"])
+    assert "Over the last 7 days" in _page(people["admin"], window="7")
 
 
 def test_a_section_row_counts_students_already_registered(people):
@@ -520,7 +571,7 @@ def test_a_section_row_opens_the_queue_on_exactly_its_cases(people):
     html = response.content.decode()
     listed = set(re.findall(r'href="/ops/timetable-feedback/(TTF-\d{4}-\d{5})/"', html))
     assert listed == {raised.reference}
-    assert 'id="ttfsSectionFilter"' in html
+    assert 'id="ttfsReportFilter"' in html
 
 
 def test_a_reason_row_opens_the_queue_on_that_issue(people):
@@ -537,7 +588,81 @@ def test_the_queue_reads_a_section_only_with_its_course(people):
     client = _as(people["department"])
     alone = client.get(QUEUE, {"tab": "all", "section": "M33"}).content.decode()
     # A label alone names a section of any course: it narrows nothing.
-    assert 'id="ttfsSectionFilter"' not in alone
+    assert 'id="ttfsReportFilter"' not in alone
     assert {case.reference, other.reference} <= set(
         re.findall(r'href="/ops/timetable-feedback/(TTF-\d{4}-\d{5})/"', alone)
     )
+
+
+def _listed(client, link):
+    html = client.get(link).content.decode()
+    return html, set(re.findall(r'href="/ops/timetable-feedback/(TTF-\d{4}-\d{5})/"', html))
+
+
+def _link_with(html, **wanted):
+    for link in _links(html):
+        query = parse_qs(urlsplit(link).query)
+        if all(query.get(key) == [value] for key, value in wanted.items()):
+            return link
+    raise AssertionError(f"no link with {wanted}")
+
+
+def test_a_row_link_carries_every_narrowing_and_lands_on_exactly_the_counted_cases(people):
+    counted = _case(S_MINE, programme=PROG)
+    _point(counted, "TIME_CLASH", course="CS113::Programming", section="M33")
+    # Each of these differs from the narrowing in exactly one way.
+    other_term = _case(S_MESSY, term="2", programme=PROG)
+    _point(other_term, "TIME_CLASH", course="CS113::Programming", section="M33")
+    too_old = _case(S_TABBED, programme=PROG, ago=timedelta(days=10))
+    _point(too_old, "TIME_CLASH", course="CS113::Programming", section="M33")
+    other_programme = _case(S_OTHER_ADVISOR, programme=ELSEWHERE)
+    _point(other_programme, "TIME_CLASH", course="CS113::Programming", section="M33")
+    other_issue = _case(S_RAW_NAME, programme=PROG)
+    _point(other_issue, "TIME_UNSUITABLE", course="CS113::Programming", section="M33")
+
+    narrowing = {"term": "1448/1", "window": "7", "programme": PROG, "reason": "TIME_CLASH"}
+    html = _page(people["admin"], **narrowing)
+    (row,) = _build(people["admin"], **narrowing).sections
+    assert row.students == 1
+    link = _link_with(html, course="CS113::Programming", section="M33", term="1448/1", window="7")
+    assert parse_qs(urlsplit(link).query)["sent_programme"] == [PROG]
+    page, listed = _listed(_as(people["admin"]), link)
+    assert listed == {counted.reference}
+    notice = page.split('id="ttfsReportFilter"')[1].split("</div>")[0]
+    for part in ("1448/1", PROG, "CS113", "M33"):
+        assert part in notice, part
+    # And the notice's own link takes every narrowing off again.
+    clear = re.search(r'<a href="\?([^"]*)">', notice).group(1).replace("&amp;", "&")
+    assert not {"term", "window", "sent_programme", "course", "section"} & set(parse_qs(clear))
+
+
+def test_a_section_link_with_an_issue_needs_one_point_raising_both(people):
+    elsewhere = _case(S_MINE)
+    _point(elsewhere, "PREFER_OTHER_SECTION", course="CS113::Programming", section="M33")
+    _point(elsewhere, "TIME_CLASH", course="CS113::Programming", section="M34")
+    here = _case(S_MESSY)
+    _point(here, "TIME_CLASH", course="CS113::Programming", section="M33")
+
+    html = _page(people["admin"], reason="TIME_CLASH")
+    link = _link_with(html, course="CS113::Programming", section="M33", reason="TIME_CLASH")
+    # The first case raises the issue and names the section, but on two points.
+    assert _listed(_as(people["admin"]), link)[1] == {here.reference}
+
+
+def test_a_programme_row_opens_the_cases_sent_from_it_wherever_the_student_is_now(people):
+    moved_since = _case(S_OTHER_PROG, programme=PROG)  # in FBX now, wrote from FBS
+    _point(moved_since)
+    stayed = _case(S_MINE, programme=PROG)
+    _point(stayed)
+    html = _page(people["admin"])
+    link = _link_with(html, sent_programme=PROG)
+    assert _listed(_as(people["admin"]), link)[1] == {moved_since.reference, stayed.reference}
+
+
+def test_each_section_link_says_which_section_it_opens(people):
+    _point(_case(S_MINE), "TIME_CLASH", course="CS113::Programming", section="M33")
+    _point(_case(S_MESSY), "TIME_CLASH", course="MA101::Calculus", section="F2")
+    html = _page(people["admin"])
+    for what in ("CS113 M33", "MA101 F2"):
+        label = str(scopy.text("report_see_cases_about", "en", what=copy.bdi(what)))
+        assert label in html, what

@@ -8,8 +8,15 @@ administrator's about everyone.
 
 WHAT IS COUNTED. Students, where the question is how many asked: one student who
 raised the same section three times is one student. Live points, where the
-question is what was asked: a withdrawn point says nothing any more. Cases, for
-the work: how many wait on whom, and how soon staff first acted.
+question is what was asked: a withdrawn point says nothing any more, and nor
+does any point of a case the student withdrew. Cases, for the work: how many
+wait on whom, and how soon staff first acted; a withdrawn case still counts
+there, by status and by day.
+
+THE QUEUE AGREES. Each narrowing is a condition on cases defined here once
+(`term_q`, `sent_since_q`, `sent_from_programme_q`), and the queue applies the
+same conditions to the links the report gives it, so a row's count and the cases
+the queue then lists are the same cases.
 
 WHAT A ROW IS ABOUT. A section is the PHYSICAL section the student was shown (its
 course as CODE::NAME and its label), which is what the department can change. A
@@ -23,6 +30,7 @@ and a student who moves programme does not take their feedback along.
 
 from __future__ import annotations
 
+import re
 import statistics
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -67,10 +75,52 @@ def term_key(academic_year: object, term: object) -> str:
     return f"{academic_year}/{term}"
 
 
-def _programme_code() -> Upper:
+def programme_code() -> Upper:
     """The programme the student wrote in, as the code the filters offer: an
     import can leave spaces around it, and the lists strip them too."""
     return Upper(Trim("program_at_submission"))
+
+
+# The report's narrowings as conditions on cases. The queue applies the very same
+# conditions to the links the report gives it, so a row's count and the cases
+# the queue then lists can never disagree.
+
+_TERM = re.compile(r"^[0-9]{3,4}/[0-9]{1,2}$")
+
+
+def parse_term(value: object) -> str:
+    """'1448/1' as given, or '' for anything that is not a term."""
+    text = str(value or "").strip()
+    return text if _TERM.match(text) else ""
+
+
+def term_q(term: str) -> Q:
+    year, _, number = term.partition("/")
+    return Q(academic_year=year, term=number)
+
+
+def window_start(window: str, now: datetime) -> date:
+    """The first day of a period of ``window`` days ending today, in whole local
+    days: the period the timeline draws."""
+    return timezone.localdate(now) - timedelta(days=int(window) - 1)
+
+
+def sent_since_q(window: str, now: datetime) -> Q:
+    """Cases sent on or after the first day of the period."""
+    return Q(
+        pk__in=TimetableFeedback.objects.annotate(_day=TruncDate("created_at"))
+        .filter(_day__gte=window_start(window, now))
+        .values("pk")
+    )
+
+
+def sent_from_programme_q(code: str) -> Q:
+    """Cases sent while the student was in the programme ``code``."""
+    return Q(
+        pk__in=TimetableFeedback.objects.annotate(_programme=programme_code())
+        .filter(_programme=code)
+        .values("pk")
+    )
 
 
 def _split_identity(identity: str) -> tuple[str, str]:
@@ -268,28 +318,38 @@ class Report:
 
 def _narrowed(
     staff: staff_service.Staff, filters: Filters, now: datetime
-) -> tuple[QuerySet[TimetableFeedback], QuerySet[TimetableFeedbackPoint]]:
-    """The cases and live points the report counts: visible to ``staff`` and
-    within ``filters``. With an issue chosen, the cases that raise it and only the
-    points about it."""
+) -> tuple[
+    QuerySet[TimetableFeedback], QuerySet[TimetableFeedback], QuerySet[TimetableFeedbackPoint]
+]:
+    """(cases, live cases, live points) the report counts: visible to ``staff``
+    and within ``filters``. With an issue chosen, the cases that raise it and only
+    the points about it.
+
+    A case the student withdrew says nothing any more about what students ask:
+    its points are left as they were (the workflow marks only a single point
+    withdrawn), so it is set aside here. It still counts where the work is
+    counted, by status and by day."""
     cases = staff_service.visible_to(staff)
     if filters.term:
-        year, _, term = filters.term.partition("/")
-        cases = cases.filter(academic_year=year, term=term)
+        cases = cases.filter(term_q(filters.term))
     if filters.programme:
-        cases = cases.annotate(_programme=_programme_code()).filter(_programme=filters.programme)
+        cases = cases.filter(sent_from_programme_q(filters.programme))
     if filters.window:
-        cases = cases.filter(created_at__gte=now - timedelta(days=int(filters.window)))
+        cases = cases.filter(sent_since_q(filters.window, now))
     points = TimetableFeedbackPoint.objects.filter(withdrawn_at__isnull=True)
     if filters.reason:
         points = points.filter(reason_code=filters.reason)
         cases = cases.filter(Exists(points.filter(case=OuterRef("pk"))))
-    points = points.filter(case__in=cases.values("pk"))
-    return cases, points
+    live = cases.exclude(status=S.WITHDRAWN)
+    points = points.filter(case__in=live.values("pk"))
+    return cases, live, points
 
 
 def _totals(
-    cases: QuerySet[TimetableFeedback], points: QuerySet[TimetableFeedbackPoint], now: datetime
+    cases: QuerySet[TimetableFeedback],
+    live: QuerySet[TimetableFeedback],
+    points: QuerySet[TimetableFeedbackPoint],
+    now: datetime,
 ) -> Totals:
     counted = cases.aggregate(
         cases=Count("pk"),
@@ -308,6 +368,9 @@ def _totals(
                 created_at__lt=now - PROMPT,
             ),
         ),
+    )
+    # Who asked: students with feedback they have not withdrawn.
+    people = live.aggregate(
         students=Count("student_id", distinct=True),
         registered_students=Count(
             "student_id", distinct=True, filter=Q(has_registration_at_submission=True)
@@ -315,13 +378,13 @@ def _totals(
     )
     graduating = (
         Student.objects.filter(
-            student_id__in=cases.values("student_id"), status=EXPECTED_GRADUATE_STATUS
+            student_id__in=live.values("student_id"), status=EXPECTED_GRADUATE_STATUS
         )
         .values("student_id")
         .distinct()
         .count()
     )
-    return Totals(points=points.count(), graduating_students=graduating, **counted)
+    return Totals(points=points.count(), graduating_students=graduating, **counted, **people)
 
 
 def _response(cases: QuerySet[TimetableFeedback]) -> Response:
@@ -386,19 +449,21 @@ def _sections(points: QuerySet[TimetableFeedbackPoint]) -> tuple[list[SectionRow
     reasons: dict[tuple[str, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
     moves: dict[tuple[str, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
     registered: dict[tuple[str, str], set[int]] = defaultdict(set)
-    for identity, label, reason, asked, student, has_registration in on_sections.filter(
+    for identity, label, reason, asked, asked_id, student, has_registration in on_sections.filter(
         wanted
     ).values_list(
         "section_course_identity",
         "section_label",
         "reason_code",
         "requested_section_label",
+        "requested_term_section_id",
         "case__student_id",
         "case__has_registration_at_submission",
     ):
         key = (identity, label)
         reasons[key][reason].add(student)
-        if reason == R.PREFER_OTHER_SECTION and asked:
+        # A move names a section the form offered, as the moves table counts it.
+        if reason == R.PREFER_OTHER_SECTION and asked and asked_id is not None:
             moves[key][asked].add(student)
         if has_registration:
             registered[key].add(student)
@@ -497,11 +562,13 @@ def _plan_course_names(codes: set[str]) -> dict[str, str]:
 
 
 def _by_programme(
-    cases: QuerySet[TimetableFeedback], points: QuerySet[TimetableFeedbackPoint]
+    live: QuerySet[TimetableFeedback], points: QuerySet[TimetableFeedbackPoint]
 ) -> list[ProgrammeRow]:
+    """Each programme's feedback, withdrawn cases aside. ``answered`` counts the
+    cases that were given an answer at any time, closed since or not."""
     rows = (
-        cases.order_by()
-        .annotate(_programme=_programme_code())
+        live.order_by()
+        .annotate(_programme=programme_code())
         .values("_programme")
         .annotate(
             students=Count("student_id", distinct=True),
@@ -535,12 +602,18 @@ def _by_programme(
     return out
 
 
+def timeline_days(filters: Filters) -> int:
+    """The days the timeline draws: the chosen period, else TIMELINE_DAYS."""
+    return int(filters.window) if filters.window else TIMELINE_DAYS
+
+
 def _timeline(
     cases: QuerySet[TimetableFeedback], filters: Filters, now: datetime
 ) -> list[tuple[date, int]]:
-    days = int(filters.window) if filters.window else TIMELINE_DAYS
-    today = timezone.localdate(now)
-    first = today - timedelta(days=days - 1)
+    days = timeline_days(filters)
+    # The same first day as the period filter, so with a period chosen the
+    # timeline holds exactly the cases counted.
+    first = window_start(str(days), now)
     counts = {
         row["day"]: row["n"]
         for row in cases.order_by()
@@ -563,7 +636,7 @@ def build(
     terms = terms_of(visible)
     programmes = programmes_of(visible)
     filters = Filters.read(query, terms=terms, programmes=programmes)
-    cases, points = _narrowed(staff, filters, now)
+    cases, live, points = _narrowed(staff, filters, now)
     sections, sections_more = _sections(points)
     anchors = {
         row["anchor_kind"]: row["n"]
@@ -573,14 +646,14 @@ def build(
         filters=filters,
         terms=terms,
         programmes=programmes,
-        totals=_totals(cases, points, now),
+        totals=_totals(cases, live, points, now),
         response=_response(cases),
         reasons=_reasons(points),
         sections=sections,
         sections_more=sections_more,
         moves=_moves(points),
         missing=_missing(points),
-        by_programme=_by_programme(cases, points),
+        by_programme=_by_programme(live, points),
         timeline=_timeline(cases, filters, now),
         anchors=anchors,
         by_status={

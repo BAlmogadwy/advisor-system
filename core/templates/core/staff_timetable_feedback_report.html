@@ -145,7 +145,7 @@
           <td role="cell" class="ttfr-wide" data-label="{{ t.report_col_issues }}"><ul class="ttfr-chips">{% for label, n in row.issues %}<li class="ttfr-chip"><span dir="auto">{{ label }}</span> <bdi dir="ltr" class="ttfr-chip-count">{{ n }}</bdi></li>{% endfor %}</ul></td>
           <td role="cell" data-label="{{ t.report_col_asked_for }}">{% if row.moves %}<ul class="ttfr-chips">{% for label, n in row.moves %}<li class="ttfr-chip ttfr-chip-move"><bdi dir="ltr">{{ label }}</bdi> <bdi dir="ltr" class="ttfr-chip-count">{{ n }}</bdi></li>{% endfor %}</ul>{% else %}<span class="ttfr-muted">—</span>{% endif %}</td>
           <td role="cell" class="ttfr-num" data-label="{{ t.report_col_registered }}"><bdi dir="ltr">{{ row.registered }}</bdi></td>
-          <td role="cell" class="ttfr-link-cell"><a href="{{ row.url }}">{{ t.report_see_cases }}</a></td>
+          <td role="cell" class="ttfr-link-cell"><a href="{{ row.url }}">{{ row.link_label }}</a></td>
         </tr>
         {% endfor %}
       </tbody>
