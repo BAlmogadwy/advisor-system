@@ -244,6 +244,22 @@ def upsert_academic_advisor(advisor_id: str, full_name: str, email: str, departm
     }
 
 
+# A risk score at or above this is "high risk": the portfolio card, its filter
+# chip, its CSV focus and the summary count all read this one number.
+HIGH_RISK_SCORE = 8.0
+
+# Spreadsheet imports have stored a missing name as the literal text "null"
+# (advisor 40 in the 2026-11 data), which the picker then printed. These are
+# placeholders, never a name.
+_PLACEHOLDER_NAMES = frozenset({"", "null", "none", "nan", "n/a"})
+
+
+def advisor_display_name(raw: object) -> str:
+    """The advisor's name, or "" when the stored value is a placeholder."""
+    text = str(raw if raw is not None else "").strip()
+    return "" if text.lower() in _PLACEHOLDER_NAMES else text
+
+
 def list_academic_advisors() -> dict:
     rows = AcademicAdvisor.objects.order_by("full_name", "advisor_id").values_list(
         "advisor_id",
@@ -257,7 +273,7 @@ def list_academic_advisors() -> dict:
         items.append(
             {
                 "advisor_id": str(r[0]),
-                "full_name": str(r[1]),
+                "full_name": advisor_display_name(r[1]),
                 "email": str(r[2]),
                 "department": dep_text,
                 "departments": deps,
@@ -366,8 +382,13 @@ def _apply_advisor_filters(
         rows = [r for r in rows if str(r.get("program", "")).upper() == p]
 
     f = (focus or "all").strip().lower()
+    # "risk" is the LOW-GPA focus (GPA below 2.0) — a published contract: the
+    # virtual advisor's portfolio_triage documents it. "highrisk" is the risk
+    # score, the same rule as the summary's very_high_risk_count.
     if f == "risk":
         rows = [r for r in rows if r.get("gpa") is not None and _to_float(r.get("gpa")) < 2.0]
+    elif f == "highrisk":
+        rows = [r for r in rows if _to_float(r.get("risk_score", 0.0)) >= HIGH_RISK_SCORE]
     elif f == "missing":
         rows = [r for r in rows if bool(r.get("has_high_priority_missing"))]
     elif f == "zerohours":
@@ -402,7 +423,7 @@ def _summarize_advisor_items(items: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "needs_attention_count": sum(1 for item in items if bool(item.get("needs_attention"))),
         "very_high_risk_count": sum(
-            1 for item in items if _to_float(item.get("risk_score", 0.0)) >= 8.0
+            1 for item in items if _to_float(item.get("risk_score", 0.0)) >= HIGH_RISK_SCORE
         ),
         "zero_current_term_hours_count": sum(
             1 for item in items if _to_int(item.get("current_term_registered_hours", 0)) == 0
@@ -499,7 +520,7 @@ def list_students_by_advisor(
         dep_text, deps = _normalize_departments(str(advisor_obj[3]))
         advisor = {
             "advisor_id": str(advisor_obj[0]),
-            "full_name": str(advisor_obj[1]),
+            "full_name": advisor_display_name(advisor_obj[1]),
             "email": str(advisor_obj[2]),
             "department": dep_text,
             "departments": deps,
