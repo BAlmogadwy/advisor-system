@@ -527,6 +527,11 @@ def queue_view(request: HttpRequest) -> HttpResponse:
                 and case.assigned_advisor_id not in routed,
                 "registered": case.has_registration_at_submission,
                 "graduating": (student or {}).get("status") == EXPECTED_GRADUATE_STATUS,
+                # The report's own rule: waiting on staff, nobody has acted, sent
+                # more than two days ago.
+                "untouched": case.status in service.WAITING_ON_STAFF
+                and case.first_staff_action_at is None
+                and case.created_at < now - report.PROMPT,
             }
         )
 

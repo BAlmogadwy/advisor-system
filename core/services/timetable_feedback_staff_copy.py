@@ -111,6 +111,7 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         " وتُذكر في النتيجة. الحد الأقصى في المرة الواحدة: {max}.",
     ),
     "bulk_template": ("Ready-made answer", "الرد الجاهز"),
+    "bulk_selected_label": ("Selected:", "المحددة:"),
     "bulk_answer": ("Answer the selected cases", "الرد على الحالات المحددة"),
     "bulk_close_note": ("Comment for colleagues", "تعليق للزملاء"),
     "bulk_close": ("Close the selected cases as duplicates", "إغلاق الحالات المحددة لتكرارها"),
@@ -213,6 +214,11 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "history_system": ("The system", "النظام"),
     "history_empty": ("Nothing yet.", "لا شيء بعد."),
     "actions_title": ("What can be done", "الإجراءات المتاحة"),
+    "composer_label": (
+        "Write to the student or to colleagues",
+        "الكتابة إلى الطالب أو إلى الزملاء",
+    ),
+    "more_actions": ("Other actions", "إجراءات أخرى"),
     "actions_none": (
         "Nothing more can be done on this case.",
         "لا يوجد إجراء آخر متاح على هذه الحالة.",

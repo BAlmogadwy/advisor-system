@@ -241,6 +241,7 @@ def feedback_list_view(request: HttpRequest) -> HttpResponse:
             "reference": case.reference,
             "url": reverse("student_timetable_feedback_detail", args=[case.reference]),
             "term": copy.term_html(case.academic_year, case.term),
+            "status_code": case.status,
             "status": copy.status_label(case.status, language),
             "sent": _date(case.created_at),
             "points": copy.text("list_points", language, count=copy.bdi(case.live_points)),
@@ -780,6 +781,44 @@ def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
     return case_page(request, case, student_id=student_id, language=language, notice=notice)
 
 
+#: The steps a case goes through, as the student's progress line shows them.
+_STEPS = (
+    TimetableFeedback.Status.SUBMITTED,
+    TimetableFeedback.Status.IN_REVIEW,
+    TimetableFeedback.Status.ANSWERED,
+    TimetableFeedback.Status.CLOSED,
+)
+#: Which step each status is at. A withdrawn case has no progress line.
+_STEP_OF = {
+    TimetableFeedback.Status.SUBMITTED: 0,
+    TimetableFeedback.Status.IN_REVIEW: 1,
+    TimetableFeedback.Status.NEEDS_INFORMATION: 1,
+    TimetableFeedback.Status.FORWARDED: 1,
+    TimetableFeedback.Status.ANSWERED: 2,
+    TimetableFeedback.Status.CLOSED: 3,
+}
+
+
+def _progress(status: str, language: str) -> list[dict[str, Any]]:
+    """The progress line: each step done, the one the case is at, the rest to come.
+    The middle step reads as the status itself when it is more than "being
+    reviewed" (waiting for the student's reply, with the department). A closed
+    case has every step done."""
+    at = _STEP_OF.get(status)
+    if at is None:
+        return []
+    closed = status == TimetableFeedback.Status.CLOSED
+    return [
+        {
+            "label": copy.status_label(status if index == at else step, language),
+            "done": index < at or closed,
+            "current": index == at and not closed,
+            "waiting": index == at and status == TimetableFeedback.Status.NEEDS_INFORMATION,
+        }
+        for index, step in enumerate(_STEPS)
+    ]
+
+
 #: The student's actions a case page may offer, by the service's own names.
 STUDENT_ACTIONS = (
     "reply",
@@ -905,6 +944,7 @@ def case_page(
                 ),
                 "sent": _date(case.created_at),
             },
+            progress=_progress(case.status, language),
             notice=notice,
             points=points,
             thread=thread,

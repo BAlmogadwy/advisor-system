@@ -221,6 +221,7 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "detail_title": ("Feedback {reference}", "الملاحظة {reference}"),
     "detail_term": ("Term", "الفصل الدراسي"),
     "detail_status": ("Status", "الحالة"),
+    "detail_progress": ("Progress", "مراحل الملاحظة"),
     "detail_sent": ("Sent", "تاريخ الإرسال"),
     "detail_points_title": ("What you sent", "ما أرسلته"),
     "detail_whole_timetable": ("Your expected timetable as a whole", "الجدول المتوقع كاملًا"),

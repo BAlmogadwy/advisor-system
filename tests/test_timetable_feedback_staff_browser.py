@@ -213,6 +213,8 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         advisor.wait_for_url(f"**/ops/timetable-feedback/{case.reference}/")
         expect(advisor.locator(".ttf-point")).to_contain_text("Sunday mornings clash with my work.")
         self._check(advisor, "1-case")
+        # The composer opens on the answer; the question is its own tab.
+        advisor.get_by_role("tab", name="Ask the student").click()
         advisor.get_by_label("Your question to the student").fill("Would section M2 suit you?")
         advisor.get_by_role("button", name="Send the question").click()
         notice = advisor.locator("#ttfsNotice")
@@ -275,6 +277,71 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         self.assertEqual(usernames, ["e2e-advisor", "e2e-advisor"])
         for shown in (*usernames, "Ada Lovel"):
             self.assertNotIn(shown, student.content())
+
+    def _waiting_case(self, **fields):
+        case = TimetableFeedback.objects.create(
+            student_id=SID,
+            academic_year="1448",
+            term="1",
+            status="SUBMITTED",
+            submitted_language="en",
+            last_student_activity_at=timezone.now(),
+            **fields,
+        )
+        TimetableFeedbackPoint.objects.create(
+            case=case,
+            anchor_kind="SECTION",
+            term_section_id=self.mine.pk,
+            course_key="SA101",
+            section_label="M1",
+            anchor_key=f"SECTION|{self.mine.pk}",
+            reason_code="TIME_UNSUITABLE",
+            seen_fingerprint="0" * 64,
+        )
+        return case
+
+    def test_the_composer_is_tabs_that_open_where_the_page_needs_the_person(self):
+        case = self._waiting_case()
+        page = self._page(self.advisor, "en", DESK)
+        page.goto(f"{self.live_server_url}/ops/timetable-feedback/{case.reference}/")
+
+        tabs = page.get_by_role("tablist").get_by_role("tab")
+        answer = page.get_by_role("tab", name="Answer the student")
+        ask = page.get_by_role("tab", name="Ask the student")
+        self.assertGreaterEqual(tabs.count(), 2)
+        # The answer is open; the other forms wait behind their tabs.
+        expect(answer).to_have_attribute("aria-selected", "true")
+        expect(page.locator("#ttfsAnswerForm")).to_be_visible()
+        expect(page.locator("#ttfsAskForm")).to_be_hidden()
+        # Arrows move between tabs, and the tab moved to opens its form.
+        answer.focus()
+        page.keyboard.press("ArrowRight")
+        expect(ask).to_be_focused()
+        expect(ask).to_have_attribute("aria-selected", "true")
+        expect(page.locator("#ttfsAskForm")).to_be_visible()
+        expect(page.locator("#ttfsAnswerForm")).to_be_hidden()
+
+        # An empty question is refused: the page comes back open on the question,
+        # its field marked, and the summary takes focus.
+        page.get_by_role("button", name="Send the question").click()
+        expect(page.locator("#ttfsErrors")).to_be_focused()
+        expect(page.get_by_role("tab", name="Ask the student")).to_have_attribute(
+            "aria-selected", "true"
+        )
+        expect(page.locator("#ttfsAsk")).to_have_attribute("aria-invalid", "true")
+        self._check(page, "7-composer")
+
+    def test_the_bulk_actions_wait_for_a_ticked_case_and_count_them(self):
+        case = self._waiting_case()
+        page = self._page(self.advisor, "en", DESK)
+        page.goto(f"{self.live_server_url}/ops/timetable-feedback/?tab=all")
+        bulk = page.locator("#ttfsBulk")
+        expect(bulk).to_be_hidden()
+        page.get_by_label(f"Select {case.reference}").check()
+        expect(bulk).to_be_visible()
+        expect(page.locator("#ttfsBulkCount")).to_contain_text("1")
+        page.get_by_label(f"Select {case.reference}").uncheck()
+        expect(bulk).to_be_hidden()
 
     def test_the_staff_pages_fit_a_phone_and_read_right_to_left_in_arabic(self):
         case = TimetableFeedback.objects.create(
