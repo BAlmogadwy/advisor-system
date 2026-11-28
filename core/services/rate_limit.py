@@ -251,7 +251,8 @@ def _retention() -> timedelta:
     Hard-coding a day was safe only for as long as no window exceeded one — which
     is exactly the assumption the previous sweep made and lost.
     """
-    windows = [window for _calls, window in LIMITS.values()]
+    # Brevo keeps individual submission reservations for one full day.
+    windows = [86_400, *(window for _calls, window in LIMITS.values())]
     try:
         windows.append(int(getattr(settings, "SENDGRID_SUBMISSION_WINDOW_SECONDS", 86_400)))
     except (TypeError, ValueError):

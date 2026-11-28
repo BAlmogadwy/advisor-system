@@ -247,10 +247,12 @@ def test_vendor_email_loggers_cannot_propagate_debug_payloads_or_headers() -> No
     logging_config = project_settings.LOGGING
 
     assert logging_config["handlers"]["discard_vendor_email"]["class"] == ("logging.NullHandler")
-    for logger_name in ("python_http_client.client", "sendgrid"):
+    for logger_name in ("python_http_client.client", "sendgrid", "boto3", "botocore"):
         logger_config = logging_config["loggers"][logger_name]
         assert logger_config == {
             "handlers": ["discard_vendor_email"],
             "level": "WARNING",
             "propagate": False,
         }
+    # urllib3 serves requests across the whole app; silencing it would hide unrelated warnings.
+    assert "urllib3" not in logging_config["loggers"]
