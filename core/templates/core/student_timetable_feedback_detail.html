@@ -3,7 +3,7 @@
 
 {% block title %}{{ case.page_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=4">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=5">{% endblock %}
 
 {% block page_heading %}{{ case.title }}{% endblock %}
 
@@ -148,7 +148,7 @@ student, or an answer to read, is what the page is for once a case is under way.
     <li class="ttf-point{% if point.withdrawn %} is-withdrawn{% endif %}">
       <p class="ttf-point-about" id="ttfPoint-{{ point.id }}" dir="auto">{{ point.about }}{% if point.withdrawn %} <span class="ttf-tag">{{ t.detail_withdrawn }}</span>{% endif %}</p>
       {% if point.name or point.meetings %}
-      <p class="ttf-small" dir="auto">{{ t.detail_seen }} {% if point.name %}<span dir="auto">{{ point.name }}</span>{% if point.meetings %} — {% endif %}{% endif %}{% for m in point.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</p>
+      <p class="ttf-small" dir="auto">{{ t.detail_seen }} {% if point.name %}<span dir="auto">{{ point.name }}</span>{% if point.meetings %} — {% endif %}{% endif %}{% for m in point.meetings %}<span class="ttf-when">{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi></span>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</p>
       {% endif %}
       <dl class="ttf-meta">
         <div><dt>{{ t.detail_reason }}</dt><dd dir="auto">{{ point.reason }}</dd></div>

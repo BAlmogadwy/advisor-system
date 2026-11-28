@@ -244,7 +244,7 @@ def feedback_list_view(request: HttpRequest) -> HttpResponse:
             "status_code": case.status,
             "status": copy.status_label(case.status, language),
             "sent": _date(case.created_at),
-            "points": copy.text("list_points", language, count=copy.bdi(case.live_points)),
+            "points": case.live_points,
             "unread": workflow.has_unread(case),
         }
         for case in cases

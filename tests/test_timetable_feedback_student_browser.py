@@ -350,3 +350,60 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         expect(page.get_by_role("button", name="إغلاق هذه الملاحظة")).to_be_visible()
         expect(page.get_by_role("button", name="إعادة فتح هذه الملاحظة")).to_be_visible()
         self._check(page, "13-answered-ar")
+
+    def test_the_list_fits_a_small_phone_and_a_whole_row_opens_its_feedback(self):
+        # The longest status there is, in English.
+        case = self._case("NEEDS_INFORMATION", points=2)
+        for language in ("en", "ar"):
+            page = self._page(language)
+            page.set_viewport_size({"width": 360, "height": 800})
+            page.goto(f"{self.live_server_url}/student/timetable-feedback/")
+            row = page.locator(".ttf-case-list .ttf-case").first
+            # The status stays inside its row, on the reference's line or the next.
+            inside = row.evaluate(
+                "(row) => { const r = row.getBoundingClientRect();"
+                " const s = row.querySelector('.ttf-status').getBoundingClientRect();"
+                " return s.left >= r.left - 0.5 && s.right <= r.right + 0.5; }"
+            )
+            self.assertTrue(inside, language)
+            # The one waiting on the student has its edge in the status's colour.
+            self.assertEqual(
+                row.evaluate("(row) => getComputedStyle(row).borderInlineStartWidth"), "3px"
+            )
+            # The stretched link covers its own row and nothing else: the button
+            # under the list is still the button.
+            send = page.locator(".ttf-actions .btn-primary")
+            self.assertTrue(
+                send.evaluate(
+                    "(button) => { const b = button.getBoundingClientRect();"
+                    " return button.contains(document.elementFromPoint("
+                    "b.left + b.width / 2, b.top + b.height / 2)); }"
+                ),
+                language,
+            )
+            self._check(page, f"14-list-{language}")
+            # Anywhere on the row opens the feedback, not only its reference: a
+            # tap on the line of dates lands on the link stretched over the row.
+            box = row.locator(".ttf-case-meta").bounding_box()
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.wait_for_url(f"**/student/timetable-feedback/{case.reference}/", timeout=5000)
+
+    def test_a_meeting_never_breaks_across_lines(self):
+        page = self._page("ar")
+        page.set_viewport_size({"width": 320, "height": 800})
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/new/")
+        self._check(page, "15-meetings-ar")
+        # A meeting is two pieces in Arabic (the day right to left, its times
+        # left to right): on one line when every piece overlaps every other.
+        one_line = (
+            "() => Array.from(document.querySelectorAll('.ttf-choice-meta .ttf-when'), (when) => {"
+            " const rects = Array.from(when.getClientRects());"
+            " return Math.max(...rects.map((r) => r.top)) < Math.min(...rects.map((r) => r.bottom));"
+            " })"
+        )
+        # Section M1 meets on Sunday and on Tuesday: two meetings, each on one
+        # line however narrow the line, so a break falls between them or nowhere.
+        meta = page.locator(".ttf-choice-meta").first
+        for rem in range(6, 17):
+            meta.evaluate(f"(meta) => {{ meta.style.inlineSize = '{rem}rem'; }}")
+            self.assertEqual(page.evaluate(one_line), [True, True], rem)

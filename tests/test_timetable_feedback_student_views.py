@@ -795,13 +795,59 @@ def test_the_list_shows_each_case_with_its_status_and_live_points(world):
     case = TimetableFeedback.objects.get(student_id=SID)
     html = _html(_get(client, LIST))
     assert f'href="{_detail_url(case.reference)}"' in html
-    assert "Points: " in html and '<bdi dir="ltr">2</bdi>' in html
+    points = copy.strings("en")["list_points"]
+    assert f'<dt>{points}</dt><dd><bdi dir="ltr">2</bdi></dd>' in html
     assert copy.status_label("SUBMITTED", "en") in html
     # A withdrawn point no longer counts.
     TimetableFeedbackPoint.objects.filter(reason_code="TIME_UNSUITABLE").update(
         withdrawn_at=timezone.now()
     )
-    assert '<bdi dir="ltr">1</bdi>' in _html(_get(client, LIST))
+    assert f'<dt>{points}</dt><dd><bdi dir="ltr">1</bdi></dd>' in _html(_get(client, LIST))
+
+
+def test_the_list_names_itself_once_and_puts_each_status_beside_its_reference(world):
+    client = _client()
+    _send(client, world)
+    case = TimetableFeedback.objects.get(student_id=SID)
+    html = _html(_get(client, LIST, language="ar"))
+    words = copy.strings("ar")
+    # The page's heading says it on the screen; the section's own is for a
+    # screen reader only.
+    assert f'<h2 class="visually-hidden" id="ttfListTitle">{words["list_title"]}</h2>' in html
+    assert '<ul class="ttf-case-list" role="list">' in html
+    row = html.split('<li class="ttf-case" data-status="SUBMITTED">')[1].split("</li>")[0]
+    head = row.split('<div class="ttf-case-head">')[1].split("</div>")[0]
+    assert f'href="{_detail_url(case.reference)}"' in head
+    assert (
+        f'<span class="ttf-status" data-status="SUBMITTED">{copy.status_label("SUBMITTED", "ar")}'
+        in head
+    )
+    meta = row.split('<dl class="ttf-case-meta">')[1].split("</dl>")[0]
+    for key in ("list_term", "list_sent", "list_points"):
+        assert f"<dt>{words[key]}</dt>" in meta, key
+
+
+_TIMES = re.compile("[0-9]{2}:[0-9]{2}" + chr(0x2013) + "[0-9]{2}:[0-9]{2}")
+_KEPT = re.compile(
+    '<span class="ttf-when">[^<]+ <bdi dir="ltr">' + _TIMES.pattern + "</bdi></span>"
+)
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_a_meeting_keeps_its_day_and_its_times_together(world, language):
+    client = _client()
+    # The choices, then the section described, with the other sections offered.
+    pages = [
+        _html(_get(client, NEW, language)),
+        _html(_describe(client, world, language=language)[0]),
+    ]
+    assert "SA101" in pages[1] and "M2" in pages[1]
+    _send(client, world)
+    case = TimetableFeedback.objects.get(student_id=SID)
+    pages.append(_html(_get(client, _detail_url(case.reference), language)))
+    for html in pages:
+        times = _TIMES.findall(html)
+        assert times and len(_KEPT.findall(html)) == len(times)
 
 
 def test_an_empty_list_says_so_and_offers_the_form(world):

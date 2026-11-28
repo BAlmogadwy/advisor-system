@@ -401,3 +401,17 @@ def test_the_case_page_lays_the_side_out_before_the_work(world, advisor):
     assert html.index('class="ttfs-case-side"') < html.index('class="ttfs-case-main"')
     assert html.index('id="ttfsFactsTitle"') < html.index('id="ttfsPointsTitle"')
     assert html.index('id="ttfsThreadTitle"') < html.index('id="ttfsActionsTitle"')
+
+
+def test_on_the_case_page_a_meeting_keeps_its_day_and_its_times_together(world, advisor):
+    _student, case = _sent(world)
+    html = _case_page(_as(advisor), case)
+    times = re.findall("[0-9]{2}:[0-9]{2}" + chr(0x2013) + "[0-9]{2}:[0-9]{2}", html)
+    kept = re.findall(
+        '<span class="ttf-when">[^<]+ <bdi dir="ltr">[0-9:]{5}'
+        + chr(0x2013)
+        + "[0-9:]{5}</bdi></span>",
+        html,
+    )
+    # Both places: the student's sections now and what the point was about.
+    assert len(times) >= 2 and len(kept) == len(times)

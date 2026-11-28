@@ -5,7 +5,7 @@
 
 {% block content_width %}wide{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=4"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=6">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=5"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=6">{% endblock %}
 
 {% block page_heading %}{{ case.title }}{% endblock %}
 
@@ -75,7 +75,7 @@
   {% if current.sections %}
   <ul class="ttfs-current">
     {% for section in current.sections %}
-    <li><span class="ttfs-current-code"><bdi dir="ltr">{{ section.course }} {{ section.section }}</bdi></span>{% if section.name %} <span class="ttfs-current-name" dir="auto">{{ section.name }}</span>{% endif %}{% if section.meetings %}<span class="ttfs-current-times">{% for m in section.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</span>{% endif %}</li>
+    <li><span class="ttfs-current-code"><bdi dir="ltr">{{ section.course }} {{ section.section }}</bdi></span>{% if section.name %} <span class="ttfs-current-name" dir="auto">{{ section.name }}</span>{% endif %}{% if section.meetings %}<span class="ttfs-current-times">{% for m in section.meetings %}<span class="ttf-when">{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi></span>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</span>{% endif %}</li>
     {% endfor %}
   </ul>
   {% else %}
@@ -106,7 +106,7 @@
     <li class="ttf-point{% if point.withdrawn %} is-withdrawn{% endif %}">
       <p class="ttf-point-about" id="ttfsPoint-{{ point.id }}" dir="auto">{{ point.about }}{% if point.withdrawn %} <span class="ttf-tag">{{ t.point_withdrawn }}</span>{% endif %}</p>
       {% if point.name or point.meetings %}
-      <p class="ttf-small" dir="auto">{{ t.point_seen }} {% if point.name %}<span dir="auto">{{ point.name }}</span>{% if point.meetings %} — {% endif %}{% endif %}{% for m in point.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</p>
+      <p class="ttf-small" dir="auto">{{ t.point_seen }} {% if point.name %}<span dir="auto">{{ point.name }}</span>{% if point.meetings %} — {% endif %}{% endif %}{% for m in point.meetings %}<span class="ttf-when">{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi></span>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</p>
       {% endif %}
       {% if point.changed %}<p class="ttfs-changed" dir="auto">{{ t.point_changed }}</p>{% endif %}
       <dl class="ttf-meta">

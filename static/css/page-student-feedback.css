@@ -147,6 +147,12 @@
   overflow-wrap: anywhere;
 }
 
+/* A meeting, its day and its times, never breaks across lines ("13:00–" on one,
+   "14:15" on the next reads as two times); a list of them breaks between. */
+.ttf-when {
+  white-space: nowrap;
+}
+
 .ttf-choice-flag {
   color: var(--sev-warning);
   font-size: var(--text-sm);
@@ -364,14 +370,70 @@
 .ttf-case-link {
   display: inline-block;
   font-size: var(--text-md);
-  margin-block-end: 6px;
 }
 
+/* A row of the list (the template says what is in it). Positioned, so the
+   reference's link can stretch over it. */
 .ttf-case-list .ttf-case {
   background: transparent;
   border-width: 0 0 1px;
   border-radius: 0;
   padding: 14px 2px;
+  position: relative;
+}
+
+.ttf-case-list .ttf-case:hover {
+  background: color-mix(in srgb, var(--teal) 5%, transparent);
+}
+
+/* The one that waits on the student draws the eye: an edge in its status's
+   colour, which the status's own words also say. */
+.ttf-case-list .ttf-case[data-status="NEEDS_INFORMATION"] {
+  border-inline-start: 3px solid var(--sev-warning);
+  padding-inline-start: 12px;
+}
+
+/* The reference and its status share a line, the status at its end, and take
+   two lines rather than run past the row on a small phone. */
+.ttf-case-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  justify-content: space-between;
+}
+
+/* The whole row opens the feedback: the link's box, stretched over the row. */
+.ttf-case-list .ttf-case-link::after {
+  content: "";
+  inset: 0;
+  position: absolute;
+}
+
+/* The term, the date and the number of points: one quiet line, each value
+   after its name, wrapping between them, never inside one. */
+.ttf-case-meta {
+  color: var(--t2);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  gap: 2px 16px;
+  margin: 6px 0 0;
+}
+
+.ttf-case-meta > div {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ttf-case-meta dt {
+  font-weight: 600;
+}
+
+.ttf-case-meta dd {
+  color: var(--t0);
+  margin: 0;
 }
 
 .ttf-case-list .ttf-case:last-child {

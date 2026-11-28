@@ -56,9 +56,8 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "list_new": ("Send new feedback", "إرسال ملاحظة جديدة"),
     "list_reference": ("Reference", "الرقم المرجعي"),
     "list_term": ("Term", "الفصل الدراسي"),
-    "list_status": ("Status", "الحالة"),
     "list_sent": ("Sent", "تاريخ الإرسال"),
-    "list_points": ("Points: {count}", "عدد النقاط: {count}"),
+    "list_points": ("Points", "عدد النقاط"),
     "list_open": ("View", "عرض"),
     # The home page
     "home_send": (
