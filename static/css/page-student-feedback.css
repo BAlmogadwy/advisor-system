@@ -186,6 +186,14 @@
   white-space: nowrap;
 }
 
+/* A case's reference and its status share a line, and take two rather than run
+   past the card where the status is long and the phone narrow (a wider font,
+   as on some systems, was enough to push "Waiting for your reply" out). */
+.ttf-case-title-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
 /* A status: its words, after a dot in the status's colour. The words say it;
    the dot and, where the student must act, the tint only repeat them. */
 .ttf-status {

@@ -5,7 +5,7 @@
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}بوابة الطالب{% else %}Student Portal{% endif %}{% endblock %}
 
-{% block extra_css %}{% if feedback_entry %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=4">{% endif %}{% endblock %}
+{% block extra_css %}{% if feedback_entry %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=5">{% endif %}{% endblock %}
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: <bdi dir="ltr">{{ student_id }}</bdi></span>
