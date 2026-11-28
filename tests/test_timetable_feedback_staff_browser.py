@@ -42,6 +42,7 @@ from core.models import (
     TimetableFeedbackPoint,
 )
 from core.services import student_otp
+from core.services import timetable_feedback_staff_copy as scopy
 from core.services.rbac import ROLE_ADVISOR, ensure_role_groups, set_user_scope
 
 playwright = pytest.importorskip("playwright.sync_api")
@@ -375,6 +376,13 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
             " getComputedStyle(row).display,"
             " Math.abs(top('.ttfs-days-cell bdi') - top('.ttfs-ref-cell a'))]; }"
         )
+        # Whether the long status, and each column's name, may take two lines.
+        wraps = (
+            "() => [getComputedStyle(document.querySelector("
+            "'#ttfsQueue [data-status=\"NEEDS_INFORMATION\"]')).whiteSpace,"
+            " Array.from(document.querySelectorAll('#ttfsQueue thead th'),"
+            " (th) => getComputedStyle(th).whiteSpace)]"
+        )
         narrowest = (
             "() => { const table = document.querySelector('#ttfsQueue');"
             " table.style.width = 'min-content';"
@@ -397,19 +405,31 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
                 page.goto(f"{self.live_server_url}/ops/timetable-feedback/?tab=all")
                 expect(page.locator('#ttfsQueue [data-status="NEEDS_INFORMATION"]')).to_be_visible()
                 expect(page.locator("#ttfsQueue .ttfs-untouched")).to_be_visible()
+                # Select-all shows, whatever the shape.
+                expect(page.locator("#ttfsSelectAll")).to_be_visible()
                 overflow, shown, cells, below = page.evaluate(shape)
                 self.assertLessEqual(overflow, 1, (language, width))
                 self.assertEqual((shown, cells), (table, row), (language, width))
                 if shown == "table":
                     # Every cell starts at the row's top, so a row reads along a line.
                     self.assertLessEqual(below, 4, (language, width))
+                status, headings = page.evaluate(wraps)
+                if width == 1440:
+                    # With the room, a status keeps to one line.
+                    self.assertEqual(status, "nowrap", language)
                 if width == 1280:
-                    # Short of the full width, a long status, tag, user name or
-                    # column name takes two lines: the table narrows to well inside
-                    # the 960 pixels from which it is drawn at all, with room left
-                    # for a wider font (Verdana measures 811 here).
-                    self.assertLessEqual(page.evaluate(narrowest), 850, language)
+                    # Short of it, a long status or tag and a column's name may take
+                    # two lines, a long user name breaks, and so the table narrows
+                    # to inside the 960 pixels from which it is drawn at all.
+                    self.assertEqual(status, "normal", language)
+                    self.assertEqual(set(headings), {"normal"}, language)
+                    self.assertLessEqual(page.evaluate(narrowest), 960, language)
                 self._check(page, f"10-queue-{language}-{width}")
+            # As cards, select-all still ticks every case on the page.
+            page.set_viewport_size({"width": 700, "height": 900})
+            page.goto(f"{self.live_server_url}/ops/timetable-feedback/?tab=all")
+            page.locator("#ttfsSelectAll").check()
+            expect(page.locator("#ttfsBulkCount [data-selected-count]")).to_have_text("2")
 
     def test_on_a_phone_the_queue_is_cards_and_its_filters_fold_away(self):
         case = self._waiting_case()
@@ -422,11 +442,25 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         )
         self.assertLessEqual(overflow, 1)
         expect(page.get_by_role("link", name=case.reference)).to_be_visible()
-        # With no filter on, the filters fold into their heading.
+        # A value's name shows on the card but is not read out a second time: the
+        # table's roles already give a screen reader the column's name.
+        days = page.locator("#ttfsQueue tbody tr").first.locator(".ttfs-days-cell")
+        self.assertNotEqual(days.evaluate("el => getComputedStyle(el, '::before').content"), "none")
+        self.assertNotIn(scopy.strings("ar")["col_days"], days.aria_snapshot())
+        # A focused card is tinted as one, not cell by cell.
+        page.locator('#ttfsQueue input[name="pick"]').first.focus()
+        tint = page.evaluate(
+            "() => { const row = document.querySelector('#ttfsQueue tbody tr');"
+            " return [getComputedStyle(row).backgroundColor,"
+            " getComputedStyle(row.querySelector('.ttfs-days-cell')).backgroundColor]; }"
+        )
+        self.assertEqual(tint[1], "rgba(0, 0, 0, 0)")
+        self.assertNotEqual(tint[0], "rgba(0, 0, 0, 0)")
+        # With no filter on, the filters fold into their title.
         box = page.locator("#ttfsFiltersBox")
         self.assertFalse(box.evaluate("el => el.open"))
         expect(page.locator("#ttfsSearch")).to_be_hidden()
-        page.locator("#ttfsFiltersTitle").click()
+        page.locator("#ttfsFiltersBox > summary").click()
         expect(page.locator("#ttfsSearch")).to_be_visible()
         self._check(page, "9-queue-cards-ar")
         # With one on, they stay open, so the person sees what narrows the list.

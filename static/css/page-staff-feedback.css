@@ -104,7 +104,7 @@
   min-height: 44px;
 }
 
-/* The filters' heading is their disclosure: a chevron says which way it is. */
+/* The filters' title is their disclosure: a chevron says which way it is. */
 .ttfs-filters-summary {
   align-items: center;
   border-radius: var(--radius-sm);
@@ -147,6 +147,12 @@
 }
 
 /* ── The queue ─────────────────────────────────────────────────── */
+
+/* Select-all, above the list whichever shape it takes. */
+.ttfs-queue-tools {
+  border-block-end: 1px solid var(--line);
+  padding: 4px 14px;
+}
 
 /* Every cell starts at the row's top, so a row reads along one line. Named
    through its wrap to outrank global.css's `.table-wrap tbody td`. */
@@ -274,6 +280,21 @@
     text-align: start;
   }
 
+  /* One tint for the whole card, not a patch per value: global.css tints each
+     cell of a hovered or focused row. */
+  .table-wrap.ttfs-queue-wrap .ttfs-queue tbody tr:focus-within > *,
+  .table-wrap.ttfs-queue-wrap .ttfs-queue tbody tr:hover > * {
+    background: transparent;
+  }
+
+  .ttfs-queue tbody tr:focus-within {
+    background: color-mix(in srgb, var(--teal) 4%, transparent);
+  }
+
+  .ttfs-queue tbody tr:hover {
+    background: color-mix(in srgb, var(--teal) 7%, transparent);
+  }
+
   .ttfs-queue .ttfs-select {
     flex: 0 0 auto;
     width: auto;
@@ -304,12 +325,14 @@
     min-width: 0;
   }
 
+  /* The name is for the eye only (the empty text after the slash): a screen
+     reader already says the column's name from the table's roles. */
   .ttfs-queue .ttfs-points-cell::before,
   .ttfs-queue .ttfs-days-cell::before,
   .ttfs-queue .ttfs-handler-cell::before,
   .ttfs-queue .ttfs-activity-cell::before {
     color: var(--t2);
-    content: attr(data-label);
+    content: attr(data-label) / "";
     display: block;
     font-size: var(--text-xs);
     font-weight: 600;

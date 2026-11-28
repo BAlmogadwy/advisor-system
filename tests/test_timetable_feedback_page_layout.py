@@ -248,23 +248,29 @@ def test_the_queue_scrolls_with_the_page_and_offers_the_bulk_count(world, adviso
     assert 'id="ttfsBulkCount" hidden' in html
 
 
-def test_every_queue_cell_is_labelled_for_the_phones_cards(world, advisor):
+def test_a_cards_values_are_named_and_the_table_keeps_its_roles(world, advisor):
     _student, case = _sent(world)
     html = _html(_as(advisor).get(QUEUE, {"tab": "all"}))
     row = _row(html, case.reference)
     words = scopy.strings("en")
-    for key in (
-        "col_days",
-        "col_student",
-        "col_points",
-        "col_status",
-        "col_handler",
-        "col_activity",
-    ):
+    # A card names a value under it; the student and the status say what they are.
+    for key in ("col_days", "col_points", "col_handler", "col_activity"):
         assert f'data-label="{escape(words[key])}"' in row, key
+    assert row.count("data-label=") == 4
     # Still a table to a screen reader once the cells are laid out as a card.
     assert 'id="ttfsQueue" role="table"' in html
     assert row.count('role="cell"') == 7 and 'role="rowheader"' in row
+
+
+def test_select_all_sits_above_the_list_and_waits_for_the_page_script(world, advisor):
+    _sent(world)
+    html = _html(_as(advisor).get(QUEUE, {"tab": "all"}))
+    tools = html.split('id="ttfsQueueTools"')[1].split("</div>")[0]
+    assert tools.startswith(" hidden>")
+    assert '<input type="checkbox" id="ttfsSelectAll">' in tools
+    assert escape(scopy.strings("en")["select_all"]) in tools
+    # Nothing to reach inside the heading row, which a card layout hides.
+    assert "<input" not in html.split('<thead role="rowgroup">')[1].split("</thead>")[0]
 
 
 def _filters_box(html):
@@ -278,8 +284,11 @@ def test_the_filters_are_drawn_open_and_say_how_many_are_on(world, advisor):
     assert " open" in _filters_box(plain) and "data-active" not in _filters_box(plain)
     narrowed = _html(client.get(QUEUE, {"reason": "TIME_CLASH", "new": "1"}))
     assert 'data-active="2"' in _filters_box(narrowed)
-    title = narrowed.split('id="ttfsFiltersTitle"')[1].split("</h2>")[0]
-    assert '(<bdi dir="ltr">2</bdi>)' in title
+    summary = narrowed.split('class="ttfs-filters-summary"')[1].split("</summary>")[0]
+    assert '(<bdi dir="ltr">2</bdi>)' in summary
+    # The heading stays a heading: outside the summary, before the disclosure.
+    heading = f'<h2 class="visually-hidden" id="ttfsFiltersTitle">{scopy.strings("en")["filters_title"]}</h2>'
+    assert narrowed.index(heading) < narrowed.index('id="ttfsFiltersBox"')
 
 
 def _case_page(client, case, **data):

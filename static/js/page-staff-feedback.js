@@ -3,15 +3,15 @@
    Enhancements only; every page works without them.
    1. Focus the error summary (or the one-time notice) once it is drawn, so a
       screen reader announces it and a keyboard user starts from it.
-   2. On the queue, a "select every case on this page" box, and the bulk actions
-      kept out of the way until a case is ticked, then in view at the foot of the
-      page with the number ticked. Without JavaScript the box stays hidden and the
-      bulk actions always show under the list.
+   2. On the queue, a "select every case on this page" box above the list, and
+      the bulk actions kept out of the way until a case is ticked, then in view at
+      the foot of the page with the number ticked. Without JavaScript the box
+      stays hidden and the bulk actions always show under the list.
    3. On a case, the composer: the answer, the question and the comment become
       tabs (the ARIA tabs pattern, arrows following the page's direction),
       opening on a form that was refused or holds typed text. Without JavaScript
       the three forms stand one under another.
-   4. On a phone, the queue's filters fold into their heading unless one is on.
+   4. On a phone, the queue's filters fold into their title unless one is on.
 
    Nothing here writes HTML: elements are made with createElement and filled
    with textContent. */
@@ -38,7 +38,10 @@
     var bulk = document.getElementById('ttfsBulk');
     var count = document.getElementById('ttfsBulkCount');
     var number = count ? count.querySelector('[data-selected-count]') : null;
-    all.hidden = false;
+    var tools = document.getElementById('ttfsQueueTools');
+    if (tools) {
+      tools.hidden = false;
+    }
     if (count) {
       count.hidden = false;
     }
@@ -153,9 +156,10 @@
     });
   };
 
-  // 4. On a phone the queue's filters fold into their heading, so the cases come
+  // 4. On a phone the queue's filters fold into their title, so the cases come
   //    first, unless one of them is on. Drawn open, so nothing hides without
-  //    JavaScript or at a desk.
+  //    JavaScript or at a desk. Decided once, on load: turning the phone never
+  //    undoes what the person opened or closed.
   var foldFilters = function () {
     var box = document.getElementById('ttfsFiltersBox');
     if (!box || box.hasAttribute('data-active') || !window.matchMedia) {
