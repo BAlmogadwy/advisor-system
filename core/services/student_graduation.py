@@ -21,7 +21,7 @@ import math
 import re
 
 from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
-from core.services.elective_row_filling import elective_rows_filled
+from core.services.elective_row_filling import RowFilling, elective_rows_filled
 from core.services.eligibility import (
     evaluate_prerequisites,
     scenario_effective_credits,
@@ -473,6 +473,139 @@ def _simulate_future_terms(
     }
 
 
+def _programme_plan_rows(program: str, query_cache: dict[object, object] | None) -> dict[str, dict]:
+    """The programme's plan, one row per course code: name, credits, term and type.
+
+    Empty when the programme has no requirements.
+    """
+    from core.models import Course, ProgrammeRequirement
+
+    requirements_key = ("graduation_requirements", str(program).strip().upper())
+    cached_requirements = query_cache.get(requirements_key) if query_cache is not None else None
+    if isinstance(cached_requirements, list):
+        requirements = cached_requirements
+    else:
+        requirements = list(
+            ProgrammeRequirement.objects.filter(program=program)
+            .order_by("programme_term", "course_code")
+            .values("course_code", "course_name", "programme_term", "credit_hours", "type")
+        )
+        if query_cache is not None:
+            query_cache[requirements_key] = requirements
+    if not requirements:
+        return {}
+
+    codes = {normalize_code(row["course_code"]) for row in requirements}
+    names_key = ("course_names", str(program).strip().upper())
+    cached_names = query_cache.get(names_key) if query_cache is not None else None
+    if isinstance(cached_names, dict) and codes <= set(cached_names):
+        names = cached_names
+    else:
+        names = {
+            normalize_code(code): (description or "")
+            for code, description in Course.objects.filter(course_code__in=codes).values_list(
+                "course_code", "description"
+            )
+        }
+        if query_cache is not None:
+            query_cache[names_key] = names
+    plan_rows: dict[str, dict] = {}
+    for requirement in requirements:
+        code = normalize_code(requirement["course_code"])
+        plan_rows[code] = {
+            "code": code,
+            # A display code is not a globally unique course identity.  The same
+            # code can name different courses in different programmes (AI492 is
+            # Graduation Project II in AI but Cooperative Training in AI2), so
+            # the selected programme plan is authoritative for this scenario.
+            "name": str(requirement.get("course_name") or "").strip() or names.get(code, ""),
+            "credits": int(requirement.get("credit_hours") or 0),
+            "term": int(requirement.get("programme_term") or 0),
+            "type": str(requirement.get("type") or ""),
+            "elective_slot": is_elective_slot(requirement.get("type")),
+        }
+    return plan_rows
+
+
+def _passed_and_studying(
+    student_id: int, query_cache: dict[object, object] | None
+) -> tuple[set[str], set[str]]:
+    """The student's passed and studying course codes, normalised."""
+    passed_key = ("passed_and_studying", int(student_id))
+    cached_status = query_cache.get(passed_key) if query_cache is not None else None
+    if isinstance(cached_status, tuple):
+        raw_passed, raw_studying = cached_status
+    else:
+        raw_passed, raw_studying = get_student_passed_and_studying(student_id)
+        if query_cache is not None:
+            query_cache[passed_key] = (raw_passed, raw_studying)
+    passed = {normalize_code(code) for code in raw_passed if normalize_code(code)}
+    studying = {normalize_code(code) for code in raw_studying if normalize_code(code)}
+    return passed, studying
+
+
+def _hours_by_code(courses: list[dict]) -> dict[str, int]:
+    """Each course of a term at its own hours, the first row of a code winning."""
+    hours: dict[str, int] = {}
+    for course in courses:
+        code = normalize_code(course.get("code") or "")
+        if code:
+            hours.setdefault(code, int(course.get("credits") or 0))
+    return hours
+
+
+def registered_elective_rows_filled(
+    student_id: int,
+    year: int | str,
+    term: int | str,
+    *,
+    baseline_rows: list[dict] | None = None,
+    query_cache: dict[object, object] | None = None,
+) -> RowFilling:
+    """The open elective rows this term's registered courses outside the plan count for.
+
+    The planner's question, answered with the forecast's own policy
+    (``elective_row_filling``) and the very arguments ``build_graduation_report``
+    hands it for a registered timetable: the programme's plan rows, the term's
+    courses at their own hours (``_current_course_state``) and the passed
+    courses, built by the same helpers. So the planner can never name another
+    row for a course than the forecast counts it for.
+
+    ``baseline_rows`` are the term's timetable rows as the caller shows them (the
+    REGISTERED snapshot is read when none are given). An assumption, never a
+    record: nothing is written.
+    """
+    from core.models import Student
+
+    program = (
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+    )
+    if not program:
+        return RowFilling()
+    plan_rows = _programme_plan_rows(program, query_cache)
+    if not plan_rows:
+        return RowFilling()
+    credit_by_code = {code: row["credits"] for code, row in plan_rows.items()}
+    current_courses, _credits = _current_course_state(
+        student_id,
+        int(year),
+        int(term),
+        credit_by_code,
+        baseline_rows=baseline_rows,
+        query_cache=query_cache,
+    )
+    passed, _studying = _passed_and_studying(student_id, query_cache)
+    return elective_rows_filled(
+        str(program),
+        year,
+        term,
+        current=_hours_by_code(current_courses),
+        plan_rows=plan_rows,
+        passed=passed,
+        query_cache=query_cache,
+    )
+
+
 def build_graduation_report(
     student_id: int,
     year: int,
@@ -488,7 +621,7 @@ def build_graduation_report(
     """Build progress plus a non-persistent scenario after a planning baseline."""
     term = _validate_academic_term(term)
 
-    from core.models import Course, ProgrammeRequirement, Student
+    from core.models import Student
 
     baseline_kind = _validate_planning_baseline_kind(planning_baseline_kind)
     cap = max(1, int(max_credits_per_term))
@@ -512,50 +645,9 @@ def build_graduation_report(
         return {}
     program, earned_registrar, registered_registrar, gpa = student_row
 
-    requirements_key = ("graduation_requirements", str(program).strip().upper())
-    cached_requirements = _query_cache.get(requirements_key) if _query_cache is not None else None
-    if isinstance(cached_requirements, list):
-        requirements = cached_requirements
-    else:
-        requirements = list(
-            ProgrammeRequirement.objects.filter(program=program)
-            .order_by("programme_term", "course_code")
-            .values("course_code", "course_name", "programme_term", "credit_hours", "type")
-        )
-        if _query_cache is not None:
-            _query_cache[requirements_key] = requirements
-    if not requirements:
+    plan_rows = _programme_plan_rows(program, _query_cache)
+    if not plan_rows:
         return {}
-
-    codes = {normalize_code(row["course_code"]) for row in requirements}
-    names_key = ("course_names", str(program).strip().upper())
-    cached_names = _query_cache.get(names_key) if _query_cache is not None else None
-    if isinstance(cached_names, dict) and codes <= set(cached_names):
-        names = cached_names
-    else:
-        names = {
-            normalize_code(code): (description or "")
-            for code, description in Course.objects.filter(course_code__in=codes).values_list(
-                "course_code", "description"
-            )
-        }
-        if _query_cache is not None:
-            _query_cache[names_key] = names
-    plan_rows: dict[str, dict] = {}
-    for requirement in requirements:
-        code = normalize_code(requirement["course_code"])
-        plan_rows[code] = {
-            "code": code,
-            # A display code is not a globally unique course identity.  The same
-            # code can name different courses in different programmes (AI492 is
-            # Graduation Project II in AI but Cooperative Training in AI2), so
-            # the selected programme plan is authoritative for this scenario.
-            "name": str(requirement.get("course_name") or "").strip() or names.get(code, ""),
-            "credits": int(requirement.get("credit_hours") or 0),
-            "term": int(requirement.get("programme_term") or 0),
-            "type": str(requirement.get("type") or ""),
-            "elective_slot": is_elective_slot(requirement.get("type")),
-        }
 
     prerequisite_key = ("program_prerequisites", str(program).strip().upper())
     cached_prerequisites = _query_cache.get(prerequisite_key) if _query_cache is not None else None
@@ -577,16 +669,7 @@ def build_graduation_report(
     ]
 
     credit_by_code = {code: row["credits"] for code, row in plan_rows.items()}
-    passed_key = ("passed_and_studying", int(student_id))
-    cached_status = _query_cache.get(passed_key) if _query_cache is not None else None
-    if isinstance(cached_status, tuple):
-        raw_passed, raw_studying = cached_status
-    else:
-        raw_passed, raw_studying = get_student_passed_and_studying(student_id)
-        if _query_cache is not None:
-            _query_cache[passed_key] = (raw_passed, raw_studying)
-    actual_passed = {normalize_code(code) for code in raw_passed if normalize_code(code)}
-    actual_studying = {normalize_code(code) for code in raw_studying if normalize_code(code)}
+    actual_passed, actual_studying = _passed_and_studying(student_id, _query_cache)
 
     # The baseline cache is explicitly provenance-aware.  In particular, a
     # recommended report built earlier in a request must never become the factual
@@ -685,11 +768,7 @@ def build_graduation_report(
     # credits when evaluating cumulative-hour gates and future progression.
     # When only an aggregate registrar value exists, there are no course codes
     # with which to identify repeats, so retain that aggregate as the fallback.
-    current_hours: dict[str, int] = {}
-    for course in current_courses:
-        code = normalize_code(course.get("code") or "")
-        if code:
-            current_hours.setdefault(code, int(course.get("credits") or 0))
+    current_hours = _hours_by_code(current_courses)
     filling = elective_rows_filled(
         str(program),
         year,

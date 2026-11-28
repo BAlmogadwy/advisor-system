@@ -70,7 +70,8 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self._same_as_dialog(lambda p: p.click("#plbRegIgnore"), {"mode": "ignore"})
 
     def test_relaxed_eligibility_in_place_sends_the_dialogs_request(self) -> None:
-        self._same_as_dialog(lambda p: p.click("#plbEligRelaxed"), {"elig": "relaxed"})
+        # Nothing added yet, so the switch applies at once (over added courses it asks first).
+        self._same_as_dialog(lambda p: p.click("#plbEligRelaxed"), {"elig": "relaxed"}, plan=False)
 
     def test_max_credits_in_place_sends_the_dialogs_request(self) -> None:
         def typed(page) -> None:
@@ -82,7 +83,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def test_the_same_requests_in_arabic(self) -> None:
         self._same_as_dialog(lambda p: p.click("#plbRegIgnore"), {"mode": "ignore"}, language="ar")
         self._same_as_dialog(
-            lambda p: p.click("#plbEligRelaxed"), {"elig": "relaxed"}, language="ar"
+            lambda p: p.click("#plbEligRelaxed"), {"elig": "relaxed"}, language="ar", plan=False
         )
 
     # ── a build on screen is marked out of date, as by the dialog ───────────
@@ -101,7 +102,8 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
 
         for in_place, dialog in (
             (lambda p: p.click("#plbRegIgnore"), {"mode": "ignore"}),
-            (lambda p: p.click("#plbEligRelaxed"), {"elig": "relaxed"}),
+            # Over the courses the adviser added, eligibility asks first: "Change and clear".
+            (lambda p: (p.click("#plbEligRelaxed"), p.click("#plbEligGo")), {"elig": "relaxed"}),
             (lambda p: (p.fill("#plbMaxIn", "15"), p.press("#plbMaxIn", "Enter")), {"max": 15}),
         ):
             with self.subTest(dialog=dialog):
@@ -120,7 +122,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self,
     ) -> None:
         fake = BuildFake()
-        page = self._open(fake)
+        page = self._open(fake, plan=False)  # nothing added: nothing to clear, nothing to ask
         self.assertEqual(len(fake.context_bodies), 1)
         page.click("#plbEligRelaxed")
         expect(page.locator("#plbEligConfirm")).to_be_hidden()
@@ -147,8 +149,12 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page.click("#plbEligRelaxed")
         expect(page.locator("#plbEligConfirm")).to_be_visible()
         self.assertEqual(page.get_attribute("#plbEligConfirm", "role"), "group")
-        self.assertIn("reloads the suggested courses", self._text(page, "#plbEligConfirm"))
-        self.assertEqual(self._text(page, "#plbEligGo"), "Change and reset")
+        self.assertEqual(
+            self._text(page, "#plbEligConfirmText"),
+            "Changing the prerequisite rule reloads the recommended courses and clears the"
+            " courses you added to Your plan.",
+        )
+        self.assertEqual(self._text(page, "#plbEligGo"), "Change and clear")
         self.assertEqual(self._text(page, "#plbEligKeep"), "Keep current")
         expect(page.locator("#plbEligGo")).to_be_focused()
         # Nothing has happened yet: the switch shows the rule in force, nothing was reloaded.
@@ -156,16 +162,21 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self.assertEqual(len(fake.context_bodies), 1)
         self.assertEqual(self._rows(page, "new"), ["AI331"])
 
-    def test_change_and_reset_confirms_an_eligibility_change_over_a_changed_list(self) -> None:
+    def test_change_and_clear_confirms_an_eligibility_change_over_a_changed_list(self) -> None:
         page, fake = self._changed_list()
         page.click("#plbEligRelaxed")
         page.click("#plbEligGo")
         expect(page.locator("#plbEligConfirm")).to_be_hidden()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
-        expect(page.locator("#plbPlanList .plb-prow[data-code='AI342']")).to_be_visible()
-        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])  # the suggestions came back
+        # The reload clears Your plan back to the registered courses; the recommendations wait in
+        # Available (AI331 was in Your plan until the reload landed).
+        expect(page.locator("#plbAvailList .plb-arow[data-code='AI331']")).to_be_visible()
+        self.assertEqual(self._rows(page, "new"), [])
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "relaxed")
-        expect(page.locator("#plbReset")).to_be_disabled()
+        # With nothing added any more, switching back asks nothing.
+        page.click("#plbEligStrict")
+        expect(page.locator("#plbEligConfirm")).to_be_hidden()
+        expect(page.locator("#plbEligStrict")).to_be_checked()
 
     def test_keep_current_and_escape_leave_everything_as_it_was_the_switch_included(self) -> None:
         page, fake = self._changed_list()
@@ -189,7 +200,9 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def test_every_rule_changes_in_place_and_the_other_rules_ride_along(self) -> None:
         fake = BuildFake()
         page = self._open(fake)
-        self._rules(page, mode="ignore", elig="relaxed", max=15, prog=False, full=True)
+        # A prerequisite reload starts in Keep (S7), so Ignore is set after it.
+        self._rules(page, elig="relaxed")
+        self._rules(page, mode="ignore", max=15, prog=False, full=True)
         expect(page.locator("#plbRegIgnore")).to_be_checked()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
         self.assertEqual(page.input_value("#plbMaxIn"), "15")
@@ -270,7 +283,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     # ── the switches by keyboard ────────────────────────────────────────────
     def test_the_switches_are_radio_groups_and_the_arrow_keys_move_between_the_two(self) -> None:
         fake = BuildFake()
-        page = self._open(fake)
+        page = self._open(fake, plan=False)  # nothing added: the arrow applies at once
         groups = page.eval_on_selector_all(
             ".plb-seg",
             "g => g.map(x => [x.getAttribute('role'), x.querySelectorAll('input[type=radio]').length])",
@@ -332,18 +345,18 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self._fetch(page, STUDENT_ID)
         self._eligible(page)
         self.assertEqual(fake.context_bodies[0]["eligibility_mode"], "relaxed")
-        expect(page.locator("#plbRegIgnore")).to_be_checked()
+        # A load starts in Keep (S7: the registered courses as registered); the others ride along.
+        expect(page.locator("#plbRegKeep")).to_be_checked()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
 
     # ── touch and size ──────────────────────────────────────────────────────
     def test_every_control_has_the_boards_touch_size_on_a_phone(self) -> None:
         page = self._open(BuildFake(), width=390, height=844)
-        self._remove(page, "AI342")  # shows Reset to suggestions
         heights = page.evaluate(
-            """() => ['#plbRulesReset', '#plbMaxIn', '.plb-seg-o', '#plbReset']
+            """() => ['#plbRulesReset', '#plbMaxIn', '.plb-seg-o']
               .flatMap(s => [...document.querySelectorAll(s)].map(n => [s, n.getBoundingClientRect().height]))"""
         )
-        self.assertEqual(len(heights), 1 + 1 + 6 + 1)
+        self.assertEqual(len(heights), 1 + 1 + 6)
         self.assertEqual([h for h in heights if h[1] < 43.5], [])
         # the radios under the labels are as big as their labels
         radios = page.evaluate(
@@ -451,37 +464,33 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         )  # as quiet as the other disabled one
 
     # ── the layout ──────────────────────────────────────────────────────────
-    def test_reset_to_suggestions_sits_in_the_plan_header_and_only_when_the_list_differs(
-        self,
-    ) -> None:
-        for language in ("en", "ar"):
+    def test_the_plan_header_has_no_reset_to_suggestions_any_more(self) -> None:
+        # Fetch adds no course, so there are no suggestions to go back to: « is the way back.
+        for language, title in (
+            ("en", "Your plan · 3 registered + 0 added"),
+            ("ar", "خطتك · 3 مسجّلة + 0 مضافة"),
+        ):
             with self.subTest(language=language):
-                page = self._open(BuildFake(), language=language)
-                self.assertTrue(
-                    page.evaluate("!!document.querySelector('#plbPlan .plb-ph #plbReset')")
-                )
-                # nothing to reset while the list is the suggested one
-                expect(page.locator("#plbReset")).to_be_hidden()
+                page = self._open(BuildFake(), language=language, plan=False)
+                self.assertEqual(page.locator("#plbReset, [data-act='reset']").count(), 0)
+                self.assertEqual(self._text(page, "#plbPlanCount"), title)
+                self._plan_recommended(page)
                 self._remove(page, "AI342")
-                expect(page.locator("#plbReset")).to_be_visible()
-                head = page.evaluate(BOX, "#plbPlanCount")
-                reset = page.evaluate(BOX, "#plbReset")
-                # on the heading's line, not under it
-                self.assertLess(reset["t"], head["b"])
-                self.assertGreater(reset["b"], head["t"])
-                if language == "en":
-                    self.assertEqual(self._text(page, "#plbPlanCount"), "Your plan · 1 course")
+                self.assertEqual(page.locator("#plbReset, [data-act='reset']").count(), 0)
                 page.context.close()
 
-    def test_reset_in_its_new_place_still_resets(self) -> None:
+    def test_remove_all_clears_the_plan_back_to_the_registered_courses(self) -> None:
         page = self._open(BuildFake())
-        expect(page.locator("#plbReset")).to_be_hidden()
-        self._remove(page, "AI342")
-        expect(page.locator("#plbReset")).to_be_enabled()
-        page.click("#plbReset")
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
-        expect(page.locator("#plbReset")).to_be_hidden()
+        # « in Keep starts from scratch (S7); Back to Keep gives back the registered courses.
+        page.click("#plbXRemAll")
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), [])
         expect(page.locator("#plbFind")).to_be_focused()
+        page.click("#plbBackKeep")
+        page.click("#plbConvGo")
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
 
     def test_the_source_and_the_search_share_one_line_at_1440_and_1152(self) -> None:
         for font in ("app", "wide"):
@@ -624,7 +633,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page.keyboard.press("Escape")
         expect(page.locator("#plbEligStrict")).to_be_focused()
         self.assertEqual(self._rows(page, "new"), ["AI331"])
-        # Change and reset lands on the switch as well, now showing the new rule.
+        # Change and clear lands on the switch as well, now showing the new rule.
         page.keyboard.press("ArrowDown")
         page.click("#plbEligGo")
         expect(page.locator("#plbEligRelaxed")).to_be_checked()

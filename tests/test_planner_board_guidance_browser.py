@@ -1030,6 +1030,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         self._fetch(page, support.STUDENT_ID)
         expect(page.locator("#plbPlanList")).to_be_attached()
         self._wait_for(page, lambda: len(fake.catalog_bodies) >= 1)
+        self._plan_recommended(page, codes)
         page.click("#plbBuild")
         expect(page.locator("#plbGuide")).to_be_visible()
         return page

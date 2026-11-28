@@ -47,10 +47,15 @@ COURSE_TYPE_MAP: dict[str, str] = {
 # Groups: 1=type, 2=ar_dept, 3=course_num, 4-6=nums, 7=credits,
 #         8=dept_code, 9=seq, 10=ar_name, 11=num, 12=en_name,
 #         13=delivery, 14=prereq_indicator, 15=completed_hours, 16=prereq_codes
+# The number between the two names (11) is the course's own number again, so it is matched as
+# exactly that (``\3``). Matched as any number, the lazy Arabic name stopped at the first number
+# inside it ("تطوير تطبيقات الويب 2", "تفاضل وتكامل ( 1 )") and the English name began with the
+# rest: ")\t203\t CALCULUS I", "345\t WEB APPLICATION DEVELOPMENT II", which the import stored
+# as the course's name (six courses, 2026-11-28).
 COURSE_PATTERN = re.compile(
     r"(مقرر من الخطة|إختياري جامعة|إختياري تخصص|مقرر حر|إختياري\s*جامعة|إختياري\s*تخصص)\s+"
     r"([أ-ي]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([A-Z]+)\s+(\d+)\s+"
-    r"([أ-ي\s\:\(\)\-\w]+?)\s+(\d+)\s+([A-Z0-9\s\:\(\)\&,\-]+?)\s+"
+    r"([أ-ي\s\:\(\)\-\w]+?)\s+(\3)\s+([A-Z0-9\s\:\(\)\&,\-]+?)\s+"
     r"(تعليم\s*حضوري|تعليم\s*إلكتروني)\s+"
     r"(لايوجد|الساعات و المواد)\s+"
     r"(\d+)\s+"

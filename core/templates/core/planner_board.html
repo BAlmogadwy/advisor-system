@@ -96,8 +96,8 @@
             </div>
           </div>
           <div class="plb-confirm" id="plbEligConfirm" role="group" aria-labelledby="plbEligConfirmText" hidden>
-            <p class="plb-confirm-t" id="plbEligConfirmText">{% if LANGUAGE_CODE == 'ar' %}تغيير الأهلية يعيد تحميل المقررات المقترحة ويُعيد ضبط المقررات التي أضفتها أو أزلتها.{% else %}Changing eligibility reloads the suggested courses and resets the courses you added or removed.{% endif %}</p>
-            <button type="button" class="btn btn-sm btn-neutral" id="plbEligGo">{% if LANGUAGE_CODE == 'ar' %}غيّر وأعد الضبط{% else %}Change and reset{% endif %}</button>
+            <p class="plb-confirm-t" id="plbEligConfirmText">{% if LANGUAGE_CODE == 'ar' %}تغيير قاعدة المتطلبات السابقة يعيد تحميل المقررات المقترحة ويُزيل من خطتك المقررات التي أضفتها.{% else %}Changing the prerequisite rule reloads the recommended courses and clears the courses you added to Your plan.{% endif %}</p>
+            <button type="button" class="btn btn-sm btn-neutral" id="plbEligGo">{% if LANGUAGE_CODE == 'ar' %}غيّر وامسح{% else %}Change and clear{% endif %}</button>
             <button type="button" class="plb-lk" id="plbEligKeep">{% if LANGUAGE_CODE == 'ar' %}إبقاء الحالي{% else %}Keep current{% endif %}</button>
           </div>
         </section>
@@ -118,6 +118,17 @@
             <button type="button" class="plb-ptab" id="plbPickTabAvail" role="tab" aria-selected="true" aria-controls="plbAvail"></button>
             <button type="button" class="plb-ptab" id="plbPickTabPlan" role="tab" aria-selected="false" aria-controls="plbPlan" tabindex="-1"></button>
           </div>
+          {% comment %}While the registered courses are rows of the plan (Ignore): a notice and the way back.
+             The words are a live region of their own, always in the page (empty in Keep).{% endcomment %}
+          <div class="plb-convbar" id="plbConvBar" data-on="false">
+            <p class="plb-convbar-t" id="plbConvText" role="status" aria-live="polite"></p>
+            <button type="button" class="plb-lk" id="plbBackKeep" hidden></button>
+            <div class="plb-confirm plb-convbar-ask" id="plbConvAsk" role="group" aria-labelledby="plbConvAskText" hidden>
+              <p class="plb-confirm-t" id="plbConvAskText"></p>
+              <button type="button" class="btn btn-sm btn-neutral" id="plbConvGo"></button>
+              <button type="button" class="plb-lk" id="plbConvKeep"></button>
+            </div>
+          </div>
           <div class="plb-pick" id="plbPick">
             <section class="plb-pane" id="plbAvail" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المتاحة{% else %}Available courses{% endif %}">
               <div class="plb-ph">
@@ -136,7 +147,6 @@
             <section class="plb-pane plb-pane--plan" id="plbPlan" aria-label="{% if LANGUAGE_CODE == 'ar' %}خطتك{% else %}Your plan{% endif %}">
               <div class="plb-ph">
                 <h3 class="plb-h3" id="plbPlanCount"></h3>
-                <button type="button" class="plb-lk" id="plbReset" data-act="reset" hidden disabled>{% if LANGUAGE_CODE == 'ar' %}العودة إلى المقترح{% else %}Reset to suggestions{% endif %}</button>
                 <span class="plb-pload" id="plbPlanLoad"></span>
               </div>
               <div class="plb-meter" id="plbMeter" hidden><i class="plb-meter-p"></i><i class="plb-meter-r"></i></div>
@@ -148,7 +158,7 @@
           <p class="plb-phsum" id="plbPhoneSum"></p>
           <div class="plb-buildrow">
             <div class="plb-buildnotes">
-              <p class="plb-bstate" id="plbBuildState" aria-live="polite" hidden></p>
+              <p class="plb-bstate" id="plbBuildState" aria-live="polite" aria-atomic="true"></p>
               <p class="plb-acts-note" id="plbBuildLine" role="status" aria-live="polite"></p>
               <p class="plb-acts-note" id="plbLastBuild" hidden></p>
             </div>
@@ -258,5 +268,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=19"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=21"></script>
 {% endblock %}

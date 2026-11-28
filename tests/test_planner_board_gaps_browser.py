@@ -1,6 +1,7 @@
 """The planner board before it becomes the default: what the old page said and the board did not.
 
-Section times by day, each section's programme, "Reset to suggestions", the registered-data notes
+Section times by day, each section's programme, the way back to an empty plan (Fetch adds no
+course, so "Reset to suggestions" went), the registered-data notes
 (untimed codes, partial mapping), the student's advisor and Fetch while a load is held. Answered
 from the same fakes as the other board tests; the real endpoints are in
 tests/test_planner_board_end_to_end_browser.py.
@@ -173,109 +174,90 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self._open_panel(page, "STAT305")
         self.assertEqual(self._second(page, 13), "For AI · 37 of 40 taken")
 
-    # ── 3. Reset to suggestions ──────────────────────────────────────────────
-    def test_reset_puts_back_exactly_the_suggested_courses(self) -> None:
+    # ── 3. No suggestions to reset to: « is the way back ───────────────────
+    # FETCH ADDS NO COURSE (owner, 2026-11-28). "Reset to suggestions" put back the list the page had
+    # filled itself; with nothing filled there is nothing to put back, and « clears what was added.
+    def test_remove_all_clears_every_kind_of_change_back_to_the_registered_courses(self) -> None:
         fake = _fake()
         page = self._open(fake)
-        reset = page.locator("#plbReset")
-        expect(reset).to_have_text("Reset to suggestions")
-        expect(reset).to_be_hidden()  # the list is the suggested one
+        self.assertEqual(page.locator("#plbReset").count(), 0)
         # Change the list in every way a build reads: remove, add, must-take, a ticked section.
         page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
-        expect(reset).to_be_enabled()
         self._add(page, "STAT305")
         page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
         self._open_panel(page, "AI331")
         page.locator("#plbPop [data-tsid='21'] input").check()
         self.assertEqual(self._rows(page, "new"), ["AI331", "STAT305"])
-        reset.click()
-        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
-        expect(page.locator("#plbStatus")).to_have_text("Courses reset to the 2 suggested.")
-        expect(reset).to_be_hidden()
-        expect(page.locator("#plbFind")).to_be_focused()
-        self.assertEqual(
-            page.get_attribute(
-                "#plbPlanList button[data-act='must'][data-code='AI331']", "aria-pressed"
-            ),
-            "false",
+        # « in Keep starts from scratch (S7): the registered rows go too, and Back to Keep brings
+        # them back as registered, with no course of the adviser's.
+        page.click("#plbXRemAll")
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), [])
+        expect(page.locator("#plbStatus")).to_have_text(
+            "Registered courses are now editable (Ignore). Your plan is empty: start from scratch."
         )
-        # The suggested list itself is never the one being edited: a tick now is a change again.
-        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
-        expect(reset).to_be_enabled()
-        reset.click()
-        expect(reset).to_be_hidden()
-        # What a build would send is the suggested list, field for field.
+        expect(page.locator("#plbFind")).to_be_focused()
+        page.click("#plbBackKeep")
+        page.click("#plbConvGo")
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
+        # What a build would send is the registered courses' room and no course of the adviser's.
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
+        self.assertEqual(fake.build_bodies[-1]["shortlist"], [])
+        # The recommended courses moved back keep the recommender's priority and score.
+        self._plan_recommended(page)
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        self.assertEqual(fake.build_bodies[-1]["shortlist"], EXPECTED_BUILD_BODY["shortlist"])
+
+    def test_a_course_moved_from_any_source_keeps_its_recommendation(self) -> None:
+        fake = _fake()
+        page = self._open(fake, plan=False)
+        # AI331 from the plan's own list, AI342 from "Everything they can register": both are
+        # recommended, so both carry the recommender's priority and score, as Fetch used to give.
+        self._add(page, "AI331", source="plan")
+        self._add(page, "AI342", source="eligible")
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertEqual(fake.build_bodies[-1]["shortlist"], EXPECTED_BUILD_BODY["shortlist"])
 
-    def test_reset_is_enabled_again_after_each_kind_of_change(self) -> None:
-        page = self._open(_fake())
-        reset = page.locator("#plbReset")
-        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
-        expect(reset).to_be_enabled()  # no build on screen: the tick alone must reach the button
-        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
-        expect(reset).to_be_hidden()
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
-        expect(reset).to_be_enabled()
-        self._add(page, "AI342")
-        # The same course added back from the plan is not the suggested item (its priority and score
-        # are the plan's), so the list is still not the suggested one.
-        expect(reset).to_be_enabled()
-        page.click("#plbReset")
-        expect(reset).to_be_hidden()
-
-    def test_reset_marks_a_build_out_of_date(self) -> None:
+    def test_remove_all_marks_a_build_out_of_date(self) -> None:
         page, fake = self._built()
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
-        page.click("#plbBuild")  # a fresh build of the shorter list
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
-        expect(page.locator("#plbBuild")).to_be_enabled()
         expect(page.locator("#plbActs")).to_have_attribute("data-stale", "")
         expect(page.locator("#plbReview")).to_be_enabled()
-        page.click("#plbReset")
+        page.click("#plbXRemAll")
         expect(page.locator("#plbActs")).to_have_attribute("data-stale", "changed")
         expect(page.locator("#plbReview")).to_be_disabled()
         expect(page.locator("#plbBuildLine")).to_have_text(
             "The plan changed since this build. Rebuild to apply."
         )
-        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
+        self.assertEqual(self._rows(page, "new"), [])
         # The options stay on screen, out of date.
         self.assertGreater(page.locator("#plbTabs [role='tab']").count(), 1)
 
-    def test_reset_during_a_build_makes_that_build_unwelcome(self) -> None:
+    def test_remove_all_during_a_build_makes_that_build_unwelcome(self) -> None:
         fake = _fake()
         fake.hold_build = 1
         page = self._open(fake)
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         page.click("#plbBuild")
         expect(page.locator("#plbBuildLine")).to_contain_text("Building options")
-        page.click("#plbReset")
+        page.click("#plbXRemAll")
         fake.pending_build.pop().fulfill(json=FIVE)
         expect(page.locator("#plbBuildLine")).to_have_text(
             "The plan changed. Build again to see options."
         )
         self.assertEqual(page.locator("#plbTabs [role='tab']").count(), 1)
 
-    def test_reset_is_disabled_without_a_student_and_in_arabic_it_is_said_in_arabic(self) -> None:
-        page = self._open(_fake(), load=False)
-        expect(page.locator("#plbReset")).to_be_hidden()  # no student: no link
-        page.context.close()
-        page = self._open(_fake(), language="ar")
-        expect(page.locator("#plbReset")).to_be_disabled()  # loaded, the list is the suggested one
-        expect(page.locator("#plbReset")).to_have_text("العودة إلى المقترح")
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
-        page.click("#plbReset")
-        expect(page.locator("#plbStatus")).to_have_text("أُعيدت المقررات إلى المقترح (2).")
-
-    def test_a_new_student_has_their_own_suggestions(self) -> None:
+    def test_a_new_student_starts_with_only_their_registered_courses(self) -> None:
         fake = _fake()
         page = self._open(fake)
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
-        expect(page.locator("#plbReset")).to_be_enabled()
+        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbContext")).to_have_text(f"{OTHER_ID} · 1448/1")
-        expect(page.locator("#plbReset")).to_be_disabled()
+        expect(page.locator("#plbPlanList .plb-prow[data-code='AI331']")).to_have_count(0)
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
 
     # ── 4. Notes about the registered data ───────────────────────────────────
     def _broken_baseline(self, *extra):
@@ -573,8 +555,8 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                     page.click("#plbReview")
                     expect(page.locator("#plbApplyDialog")).to_be_visible()
                     page.click("#plbApplyCancel")
-                    page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
-                    page.click("#plbReset")
+                    self._remove(page, "AI342")
+                    self._remove(page, "AI331")
                     found += page.evaluate(OVERFLOWS)
                     if found:
                         problems[f"{language} {width}px {font} fonts"] = found

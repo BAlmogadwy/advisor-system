@@ -8,8 +8,9 @@ page's tests did (2026-11-25). Nothing leaves the machine
 (tests/browser_isolation.py).
 
 The student: three registered courses (nine credits) on four days with a Thursday
-off and one 45-minute wait, two suggested courses already in the plan, two more that
-could be added, and one that is blocked until a course in the plan is passed.
+off and one 45-minute wait, two recommended courses (which `_open` moves into the plan through the
+picker, as an adviser does: Fetch adds none), two more that could be added, and one that is blocked
+until a course in the plan is passed.
 """
 
 from __future__ import annotations
@@ -61,7 +62,9 @@ def _row(code: str, name: str, section: str, credits: int | None, day, start, en
         "room": "",
         "instructor": "",
         "term_section_id": tsid,
-        "source": "registration_plan_1448_t1",
+        # The registrar's own source: these are registrations (the board calls a row held only as a
+        # forecast, a `registration_plan_*` one, "Expected"; S7 decision 4).
+        "source": "scraper_timetable",
     }
 
 
@@ -617,6 +620,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         load=True,
         clock=False,
         source="eligible",
+        plan=True,
     ):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
@@ -670,7 +674,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
         if load:
             self._fetch(page, STUDENT_ID)
-            # The suggestions, the blocked fold and the plan's own list (the "eligible" source
+            # The recommendations, the blocked fold and the plan's own list (the "eligible" source
             # lists the courses the student could add) have all arrived.
             expect(page.locator("#plbSource option[value='recommended']")).to_have_text(
                 re.compile(r"\([1-9]\d*\)")
@@ -678,10 +682,32 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             expect(page.locator("#plbSource option[value='eligible']")).to_have_text(
                 re.compile(r"\([1-9]\d*\)")
             )
-            expect(page.locator("#plbPlanList .plb-prow[data-code='AI331']")).to_be_attached()
+            if plan:
+                self._plan_recommended(page)
             # Most tests read the courses the student could add: that is the "eligible" source.
             page.select_option("#plbSource", source)
         return page
+
+    @staticmethod
+    def _plan_recommended(page, codes=("AI331", "AI342")) -> None:
+        """Move the eligible recommended courses (AI331, AI342) into Your plan, as an adviser does.
+
+        FETCH ADDS NO COURSE (owner, 2026-11-28): Your plan starts as the registered courses only.
+        Until then the page filled it with every eligible recommendation, and most of these tests
+        read a plan of exactly those two. They now get it the way an adviser would: the
+        "Recommended" source and » (on a phone, where the transfer column is hidden, each row's +).
+        """
+        was = page.input_value("#plbSource")
+        page.select_option("#plbSource", "recommended")
+        expect(page.locator(f"#plbAvailList .plb-arow[data-code='{codes[0]}']")).to_be_attached()
+        if page.locator("#plbXAddAll").is_visible():
+            page.click("#plbXAddAll")
+        else:
+            for code in codes:
+                page.click(f"#plbAvailList button[data-act='add'][data-code='{code}']")
+        for code in codes:
+            expect(page.locator(f"#plbPlanList .plb-prow[data-code='{code}']")).to_be_attached()
+        page.select_option("#plbSource", was)  # back to the list the test was reading
 
     @staticmethod
     def _eligible(page) -> None:
@@ -746,8 +772,9 @@ class PlannerBoardCase(StaticLiveServerTestCase):
 
     @staticmethod
     def _tab_lines(page, name: str) -> list[str]:
+        """A tab's lines, without its Changes line (an edited plan's build; read on its own)."""
         return page.eval_on_selector_all(
-            f"#plbTabs [data-opt='{name}'] > span",
+            f"#plbTabs [data-opt='{name}'] > span:not(.plb-tab-chg)",
             "spans => spans.map(s => s.textContent.replace(/\\s+/g, ' ').trim())",
         )
 
@@ -832,7 +859,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             fake.hold_projection = 1
         page = self._open(fake, **kwargs)
         if ignore:
-            self._rules(page, mode="ignore")
+            self._registered_ignored(page)
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text(
             "Rebuild options" if kwargs.get("language", "en") == "en" else "أعد بناء الخيارات"
@@ -860,12 +887,28 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             })"""
         )
 
+    @classmethod
+    def _registered_ignored(cls, page) -> None:
+        """Ignore with every registered course taken out of the plan: the registered week plays no
+        part in the build, which is what Ignore meant before the registered courses became rows
+        of the plan (S7). The adviser's own way there: Ignore, then × on each registered row."""
+        cls._rules(page, mode="ignore")
+        codes = page.eval_on_selector_all(
+            "#plbPlanList .plb-prow[data-reg]", "rows => rows.map(r => r.dataset.code)"
+        )
+        for code in codes:
+            cls._remove(page, code)
+        expect(page.locator("#plbPlanList .plb-prow[data-reg]")).to_have_count(0)
+
     @staticmethod
     def _rules(page, **values) -> None:
         """Set the given rules on the board's own controls (a changed eligibility over an edited
-        course list is confirmed with "Change and reset")."""
+        course list is confirmed with "Change and clear"; Keep over changed registered rows with
+        "Drop the changes")."""
         if "mode" in values:
             page.click("#plbRegIgnore" if values["mode"] == "ignore" else "#plbRegKeep")
+            if values["mode"] == "keep" and page.locator("#plbEligConfirm").is_visible():
+                page.click("#plbEligGo")
         if "elig" in values:
             page.click("#plbEligRelaxed" if values["elig"] == "relaxed" else "#plbEligStrict")
             if page.locator("#plbEligConfirm").is_visible():

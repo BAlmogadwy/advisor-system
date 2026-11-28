@@ -7,7 +7,7 @@ from hashlib import sha256
 
 from django.contrib.auth.decorators import login_required
 from django.core import signing
-from django.db.models import TextField, Value
+from django.db.models import Q, TextField, Value
 from django.db.models.functions import Replace, Upper
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -32,11 +32,12 @@ from core.services.credit_policy import (
     REGULATORY_MAX_CREDITS,
 )
 from core.services.eligibility import evaluate_prerequisites
-from core.services.planner_builder import build_plans
+from core.services.planner_builder import build_plans, meetings_complete
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.recommender import recommend_next_courses
 from core.services.section_programmes import filter_sections_for_program
+from core.services.student_graduation import registered_elective_rows_filled
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
 from core.services.student_sections import (
     UnknownStudentGender,
@@ -45,6 +46,7 @@ from core.services.student_sections import (
     gender_section_filter,
     get_student_term_baseline,
     replace_student_term_sections,
+    section_course_key,
     section_is_available_to_student,
     snapshot_class_filter,
     student_gender,
@@ -182,6 +184,63 @@ def _registered_load(rows: list[dict[str, object]]) -> tuple[int, int]:
             seen.add(key)
             credits_total += int(row.get("credits", 0) or 0)  # type: ignore[call-overload]
     return len(seen), credits_total
+
+
+def _elective_rows_filled_by(
+    student_id: int, year: str, term: str, baseline: list[dict[str, object]]
+) -> dict[str, dict[str, str]]:
+    """Elective row code -> the registered course the forecast counts for it, and on what basis.
+
+    The term's courses are the ones the page shows as registered (``baseline``). The policy is
+    ``elective_row_filling``'s, with the arguments the graduation report builds; a failure only
+    costs the hint, never the student.
+    """
+    try:
+        filling = registered_elective_rows_filled(
+            student_id, int(year), int(term), baseline_rows=baseline
+        )
+    except Exception:
+        logger.warning("elective row filling failed for student=%s", student_id, exc_info=True)
+        return {}
+    # A course is CODE::NAME where its section says so; the page names it by the code.
+    return {
+        row.row_code: {"course_code": row.course_code.partition("::")[0], "basis": row.basis}
+        for row in filling.filled
+    }
+
+
+def _student_holds(
+    student_id: int, year: str, term: str
+) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, dict[str, object]]]:
+    """What the student holds this term, read from the database exactly as Keep reads it.
+
+    Returns the timetable (``Snapshot.EFFECTIVE``), the same rows with the studying courses no
+    section maps (the load the page shows), and per course key: the section ids, the credit hours
+    (the baseline's figure, 0 when no source knows them) and whether a build could place it
+    (``timed``: a section whose meetings are all usable). A course that is not timed is held as
+    load only: counted, never scheduled.
+    """
+    baseline = list(
+        get_student_term_baseline(str(student_id), year, term, snapshot=Snapshot.EFFECTIVE) or []
+    )
+    rows = append_unmapped_studying_courses(str(student_id), baseline)
+    courses: dict[str, dict[str, object]] = {}
+    meetings: dict[str, list[tuple[object, object, object]]] = {}
+    for row in rows:
+        key = normalize_code(row.get("course_key") or row.get("course_code") or "")
+        if not key:
+            continue
+        entry = courses.setdefault(key, {"section_ids": set(), "credits": 0, "timed": False})
+        tsid = row.get("term_section_id")
+        if tsid:
+            entry["section_ids"].add(int(tsid))  # type: ignore[attr-defined]
+            meetings.setdefault(key, []).append(
+                (row.get("day"), row.get("start_time"), row.get("end_time"))
+            )
+        entry["credits"] = max(int(entry["credits"]), int(row.get("credits") or 0))  # type: ignore[call-overload]
+    for key, entry in courses.items():
+        entry["timed"] = bool(entry["section_ids"]) and meetings_complete(meetings.get(key, []))
+    return baseline, rows, courses
 
 
 def _kept_timetable_digest(rows: list[dict[str, object]]) -> str:
@@ -450,6 +509,17 @@ def _planner_context_inner(
             }
         )
 
+    # A registered course outside the plan is posted under an open elective row once its grade
+    # lands (FE1 "Free Elective", GSE1 "University Elective"). The recommender knows nothing of it
+    # and proposes the row again; the forecast's own policy says which row the course is counted
+    # for, and the page says so beside the row ("GS311 (registered) likely counts for it"). An
+    # assumption, never a record: the row stays addable.
+    filled_by = _elective_rows_filled_by(student_id_int, year, term, baseline)
+    for rec in recommendations:
+        filled = filled_by.get(normalize_code(str(rec["course_code"])))
+        if filled:
+            rec["filled_by"] = filled
+
     courses_total, credits_total = _registered_load(baseline)
 
     return _ok(
@@ -461,6 +531,8 @@ def _planner_context_inner(
                 "credits": credits_total,
             },
             "recommendations": recommendations,
+            # Row code -> {course_code, basis}: the same answer for the plan's own rows.
+            "elective_rows_filled": filled_by,
             "eligibility_mode": eligibility_mode,
             "strict_passed_only": eligibility_mode == "strict",
             "year": year,
@@ -486,6 +558,10 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
     term = str(payload.get("term", "")).strip()
     section_ids = payload.get("term_section_ids", [])
     confirm_replace = bool(payload.get("confirm_replace", False))
+    # How the option was built: "ignore" when the registered courses were rows of the plan the
+    # adviser could edit. `dropped_registered` names the registered courses they took out of it.
+    mode = str(payload.get("mode", "keep")).strip().lower()
+    dropped_raw = payload.get("dropped_registered", [])
 
     if not student_id or not year or not term:
         return _err(
@@ -495,6 +571,14 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
         )
     if not isinstance(section_ids, list):
         return _err("term_section_ids must be a list", code="VALIDATION_LIST_REQUIRED", status=400)
+    if mode not in {"keep", "ignore"}:
+        return _err("mode must be keep or ignore", code="VALIDATION_MODE", status=400)
+    if not isinstance(dropped_raw, list) or not all(isinstance(c, str) for c in dropped_raw):
+        return _err(
+            "dropped_registered must be a list of course codes",
+            code="VALIDATION_DROPPED_REGISTERED",
+            status=400,
+        )
 
     term_err = _validate_term_inputs(year, term)
     if term_err:
@@ -519,6 +603,24 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
     cleaned = [int(x) for x in section_ids if str(x).strip().isdigit()]
 
     try:
+        # What the student holds, read as the build read it (the same snapshot): a held section
+        # is theirs already and is never refused as outside their programme or cohort.
+        _held_baseline, _held_rows, held_courses = _student_holds(student_id_int, year, term)
+        held_section_ids = {
+            sid
+            for held in held_courses.values()
+            for sid in held["section_ids"]  # type: ignore[attr-defined]
+        }
+        dropped = {normalize_code(code) for code in dropped_raw} - {""}
+        unknown = sorted(dropped - set(held_courses))
+        if unknown:
+            return _err(
+                "dropped_registered names courses this student is not registered in",
+                code="VALIDATION_DROPPED_REGISTERED",
+                status=400,
+                details={"course_codes": unknown},
+            )
+        selected_sections: list[TermSection] = []
         if cleaned:
             selected_sections = list(
                 TermSection.objects.filter(
@@ -538,7 +640,8 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
             unavailable = [
                 int(section.id)
                 for section in selected_sections
-                if not section_is_available_to_student(section, student_id=student_id_int)
+                if int(section.id) not in held_section_ids
+                and not section_is_available_to_student(section, student_id=student_id_int)
             ]
             if unavailable:
                 return _err(
@@ -580,7 +683,20 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
         # another adviser, a re-scrape - and applying a stale option writes a
         # clash nobody checked for. This does not block the write; it reports
         # the clash so the adviser sees it in the same breath as the result.
-        clashes = _planner_apply_clashes(student_id, student_id_int, year, term, cleaned)
+        clashes = _planner_apply_clashes(
+            student_id,
+            student_id_int,
+            year,
+            term,
+            cleaned,
+            # Ignore: the registrar's rows of a course this option places (in its old section,
+            # or moved) or of one the adviser dropped are not what the plan keeps beside it.
+            set_aside=(
+                dropped | {section_course_key(section) for section in selected_sections}
+                if mode == "ignore"
+                else set()
+            ),
+        )
 
         write_result = replace_student_term_sections(
             student_id, year, term, cleaned, source="planner"
@@ -600,6 +716,8 @@ def _planner_apply_clashes(
     year: str,
     term: str,
     section_ids: list[int],
+    *,
+    set_aside: set[str] | None = None,
 ) -> list[dict[str, object]]:
     """Meetings in the applied plan that collide with the REGISTRAR's timetable.
 
@@ -609,11 +727,17 @@ def _planner_apply_clashes(
     Reported, not enforced: an adviser may legitimately plan a change they
     intend to make at the registrar. Silence was the problem, not the write.
     """
+    # ``set_aside``: course keys whose registrar rows are not checked (an edited plan places
+    # those courses itself, or drops them).
+    aside = {normalize_code(code) for code in set_aside or ()}
     registrar_rows = [
         row
         for row in get_student_term_baseline(student_id, year, term, snapshot=Snapshot.REGISTERED)
         or []
-        if row.get("day") and row.get("start_time") and row.get("end_time")
+        if row.get("day")
+        and row.get("start_time")
+        and row.get("end_time")
+        and normalize_code(row.get("course_key") or row.get("course_code") or "") not in aside
     ]
     if not registrar_rows or not section_ids:
         return []
@@ -708,7 +832,20 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
             if scope_err:
                 return scope_err
 
+    include_registered = bool(payload.get("include_registered", False))
+
     try:
+        # The sections the student holds this term (Ignore on the board): listed whatever the
+        # programme filter says, read from the database, never from the request.
+        held_ids: set[int] = set()
+        if include_registered and student_id:
+            held_ids = {
+                int(row["term_section_id"])  # type: ignore[call-overload]
+                for row in get_student_term_baseline(
+                    student_id, year, term, snapshot=Snapshot.EFFECTIVE
+                )
+                if row.get("term_section_id")
+            }
         ts_qs = TermSection.objects.filter(scenario__isnull=True)
         # Gender-segregated sections: only surface the student's own cohort
         # (M/F) sections. Gender is derived server-side from Student.section.
@@ -738,7 +875,12 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                         code="STUDENT_PROGRAM_UNRESOLVED",
                         status=409,
                     )
-                ts_qs = filter_sections_for_program(ts_qs, student_program)
+                in_programme = filter_sections_for_program(ts_qs, student_program)
+                ts_qs = (
+                    ts_qs.filter(Q(id__in=in_programme.values("id")) | Q(id__in=held_ids))
+                    if held_ids
+                    else in_programme
+                )
         if isinstance(course_codes, list) and course_codes:
             normalized = [
                 str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()
@@ -1056,6 +1198,70 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     max_credits, max_credits_err = _int_field(payload.get("max_credits"), "max_credits")
     if max_credits_err:
         return max_credits_err
+
+    # IGNORE, THE REGISTERED COURSES AS EDITABLE ROWS. What the student holds is read here, never
+    # taken from the request: the sections they hold (always in the catalogue, never "full" for
+    # them), the hours of each registered course (a shortlist row of one keeps the registered
+    # figure, so the client cannot lower the load) and the courses held as load only (no section,
+    # or one with no usable meetings), which the page sends as `registered_load_only`.
+    held_baseline: list[dict[str, object]] = []
+    held_courses: dict[str, dict[str, object]] = {}
+    held_total = 0
+    held_load_credits = 0
+    held_in_plan = 0
+    if not keep_registered and student_id_for_baseline is not None:
+        try:
+            held_baseline, held_rows, held_courses = _student_holds(
+                student_id_for_baseline, year, term
+            )
+        except Exception:
+            logger.warning(
+                "planner_build_view: held timetable failed for student=%s",
+                student_id_for_baseline,
+                exc_info=True,
+            )
+            return _err(
+                "Could not read the student's registered timetable",
+                code="BASELINE_UNAVAILABLE",
+                status=409,
+            )
+        _held_courses_count, held_total = _registered_load(held_rows)
+        load_only_raw = payload.get("registered_load_only", [])
+        if not isinstance(load_only_raw, list) or len(load_only_raw) > MAX_SHORTLIST_COURSES:
+            return _err(
+                "registered_load_only must be a list of course codes",
+                code="VALIDATION_LOAD_ONLY",
+                status=400,
+            )
+        shortlist_keys = {normalize_code(item["course_code"]) for item in normalized_shortlist}
+        load_only_keys: set[str] = set()
+        for raw in load_only_raw:
+            key = normalize_code(raw) if isinstance(raw, str) else ""
+            held = held_courses.get(key)
+            if not held or held["timed"] or int(held["credits"]) <= 0:  # type: ignore[call-overload]
+                return _err(
+                    f"{raw!r} is not a registered course of this student held without a timetable",
+                    code="VALIDATION_LOAD_ONLY",
+                    status=400,
+                )
+            if key in shortlist_keys or key in load_only_keys:
+                return _err(
+                    f"{key} is listed twice (load only and in the shortlist, or twice)",
+                    code="VALIDATION_LOAD_ONLY_DUPLICATE",
+                    status=400,
+                )
+            load_only_keys.add(key)
+            held_load_credits += int(held["credits"])  # type: ignore[call-overload]
+        # A registered course in the shortlist counts its registered hours, whatever was sent. It
+        # counts in the registered load the plan still holds when the student holds a section of it
+        # (usable meetings or not), exactly as the builder counts it beside the limit.
+        for item in normalized_shortlist:
+            held = held_courses.get(normalize_code(item["course_code"]))
+            if held and int(held["credits"]) > 0:  # type: ignore[call-overload]
+                item["credits"] = int(held["credits"])  # type: ignore[call-overload]
+                if held["section_ids"]:
+                    held_in_plan += int(held["credits"])  # type: ignore[call-overload]
+        held_in_plan += held_load_credits
     # THE BASELINE IS SERVER-DERIVED. "Keep Registered" promises the build
     # avoids clashing with what the student is already registered for; taking
     # that list from the request body made the promise only as good as whatever
@@ -1112,17 +1318,34 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             kept_credits=kept_credits,
             gender=gender,
             program=program,
+            held_section_ids={
+                sid
+                for held in held_courses.values()
+                for sid in held["section_ids"]  # type: ignore[attr-defined]
+            },
+            held_load_credits=held_load_credits,
+            held_credits=held_total,
         )
         result["mode"] = mode
         result["eligibility_mode"] = eligibility_mode
+        # The limit is never below the load the student holds (Ignore): 21 registered under 18
+        # leaves room to swap a course for one of the same hours, none to add one.
+        limit = max(max_credits, held_total) if max_credits > 0 else max_credits
+        registered = kept_credits if keep_registered else held_in_plan
         result["constraints"] = {
             "program_sections_only": program_sections_only,
             "allow_full_sections": allow_full_sections,
-            # What the cap was measured against: the kept load, and the room it
-            # left for the shortlist (None when no cap was set).
-            "registered_credits": kept_credits,
-            "credit_room": max(0, max_credits - kept_credits) if max_credits > 0 else None,
+            # What the cap was measured against: the registered load the plan holds (kept, or
+            # the registered rows and load-only hours of an edited plan), and the room it left
+            # for courses the student does not hold (None when no cap was set).
+            "registered_credits": registered,
+            "credit_room": max(0, limit - registered) if max_credits > 0 else None,
         }
+        if not keep_registered:
+            # The limit the build used when the registered load is above the one set; else None.
+            result["constraints"]["cap_raised_to"] = (
+                limit if max_credits > 0 and limit > max_credits else None
+            )
         if result.get("options") and student_id_for_baseline is not None:
             # A later request can use only the exact sections this build returned.
             # Without a student there is nothing to forecast, so no token is issued.
@@ -1134,6 +1357,11 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                     "term": term,
                     "kept_timetable": (
                         _kept_timetable_digest(effective_baseline) if keep_registered else None
+                    ),
+                    # Ignore: the timetable the held sections and hours were read from. A
+                    # forecast of these options is refused once it changed.
+                    "held_timetable": (
+                        None if keep_registered else _kept_timetable_digest(held_baseline)
                     ),
                     "options": [
                         {
@@ -1214,6 +1442,16 @@ def planner_graduation_projection_view(request: HttpRequest) -> JsonResponse:
             if _kept_timetable_digest(kept) != build["kept_timetable"]:
                 return _err(
                     "The retained timetable has changed. Build it again.",
+                    code="PROJECTION_BUILD_STALE",
+                    status=409,
+                )
+        if build.get("held_timetable") is not None:
+            held = get_student_term_baseline(
+                str(student_id), year, term, snapshot=Snapshot.EFFECTIVE
+            )
+            if _kept_timetable_digest(held) != build["held_timetable"]:
+                return _err(
+                    "The registered timetable has changed. Build it again.",
                     code="PROJECTION_BUILD_STALE",
                     status=409,
                 )

@@ -42,7 +42,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertTrue(page.locator("#plbSource").is_disabled())
 
     def test_load_shows_the_student_figures(self) -> None:
-        page = self._open(Fake())
+        page = self._open(Fake(), plan=False)
         student = self._text(page, "#plbStudent")
         self.assertIn("Sample Student", student)
         self.assertIn(STUDENT_ID, student)
@@ -59,6 +59,9 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertIn("After the first build", self._text(page, ".plb-sf:nth-child(4)"))
         self.assertEqual(self._text(page, "#plbContext"), "4500000 · 1448/1")
         self.assertEqual(self._text(page, "#plbStatus"), "")
+        # FETCH ADDS NO COURSE (owner, 2026-11-28): Your plan holds the registered courses only.
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
 
     def test_loading_not_found_and_error_are_plain_lines(self) -> None:
         fake = Fake()
@@ -135,7 +138,8 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         page = self._open(fake, load=False)
         self._fetch(page, STUDENT_ID)  # the student loads; their plan is still on its way
         self._eligible(page)
-        self.assertEqual(self._rows(page, "could"), [])
+        # Only the eligible recommendations so far (none is in Your plan: Fetch adds no course).
+        self.assertEqual(self._rows(page, "could"), ["AI331", "AI342"])
         # A second fetch fails while that plan is still on its way.
         fake.context_answer = lambda body: (404, {"error": {"code": "STUDENT_NOT_FOUND"}})
         self._fetch(page, "4999999")
@@ -144,7 +148,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         # the group must not be left saying "loading" for good.
         fake.pending_plan.pop().fulfill(json=STUDENT_PLAN)
         expect(page.locator("#plbAvailList .plb-arow[data-code='STAT305']")).to_be_visible()
-        self.assertEqual(self._rows(page, "could"), ["STAT305", "CS351"])
+        self.assertEqual(self._rows(page, "could"), ["AI331", "AI342", "STAT305", "CS351"])
         self.assertIn("Sample Student", self._text(page, "#plbStudent"))
 
     def test_a_slow_earlier_plan_cannot_paint_over_a_newer_students_plan(self) -> None:
@@ -168,7 +172,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         fake.pending_plan.pop().fulfill(json={"terms": [{"courses": [stale_course]}]})
         page.wait_for_timeout(400)
         page.evaluate("new Promise(r => requestAnimationFrame(() => r(true)))")
-        self.assertEqual(self._rows(page, "could"), ["STAT305", "CS351"])
+        self.assertEqual(self._rows(page, "could"), ["AI331", "AI342", "STAT305", "CS351"])
 
     # ── The rules ────────────────────────────────────────────────────────────
     def test_the_rules_row_and_the_cap_default(self) -> None:
@@ -202,7 +206,8 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         )
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbMaxIn")).to_have_value("")
-        self.assertEqual(self._load(page), ("15 cr", "6 planned + 9 registered"))
+        # Another student: nothing planned (Fetch adds no course).
+        self.assertEqual(self._load(page), ("9 cr", "0 planned + 9 registered"))
         self.assertEqual(page.locator("#plbMaxInHint").count(), 0)  # no hint line at all
         self.assertNotIn("Credit cap 0", self._text(page, "#plbStudent"))
         # The student's cap is back when the next student has one.
@@ -274,20 +279,22 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         # The edited list asks first, and the switch keeps the rule in force until Go.
         page.click("#plbEligRelaxed")
         expect(page.locator("#plbEligConfirm")).to_be_visible()
-        self.assertIn("reloads the suggested courses", self._text(page, "#plbEligConfirm"))
+        confirm = self._text(page, "#plbEligConfirm")
+        self.assertIn("reloads the recommended courses", confirm)
+        self.assertIn("clears the courses you added to Your plan", confirm)
         expect(page.locator("#plbEligStrict")).to_be_checked()
         expect(page.locator("#plbEligGo")).to_be_focused()
         self.assertEqual(len(fake.context_bodies), before)
         page.click("#plbEligGo")
         expect(page.locator("#plbEligConfirm")).to_be_hidden()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
-        expect(page.locator("#plbPlanList .plb-prow[data-code='AI431']")).to_be_visible()
+        expect(page.locator("#plbAvailList .plb-arow[data-code='AI431']")).to_be_visible()
         self.assertEqual(len(fake.context_bodies), before + 1)
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "relaxed")
         self.assertEqual(fake.context_bodies[-1]["student_id"], STUDENT_ID)
-        # The suggestions were reloaded (the removed course is back), and the
-        # max credits the adviser chose is still the max credits.
-        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342", "AI431"])
+        # The recommendations were reloaded (AI431 is one now), Your plan is cleared back to the
+        # registered courses, and the max credits the adviser chose is still the max credits.
+        self.assertEqual(self._rows(page, "new"), [])
         self.assertEqual(self._rules_now(page)["max"], "16")
         self.assertEqual(self._text(page, "#plbRulesChanged"), "2 rules changed")
 
@@ -298,7 +305,9 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             500,
             {"ok": False, "error": {"code": "X", "message": "boom"}},
         )
-        self._rules(page, elig="relaxed", mode="ignore")
+        # Ignore with the registered courses taken out (S7), then the prerequisite switch.
+        self._registered_ignored(page)
+        self._rules(page, elig="relaxed")
         expect(page.locator("#plbStatus")).to_have_text(
             "The student could not be loaded. Try again."
         )
@@ -388,13 +397,18 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertEqual(self._rows(page, "could"), ["STAT305", "CS351"])
         self.assertEqual(self._rows(page, "blocked"), ["AI431", "AI450"])
         self.assertEqual(self._load(page), ("15 / 18 cr", "6 planned + 9 registered · 3 cr free"))
-        self.assertEqual(self._text(page, "#plbPlanCount"), "Your plan · 2 courses")
-        # Registered: a lock, the credits and the section, no controls.
+        self.assertEqual(self._text(page, "#plbPlanCount"), "Your plan · 3 registered + 2 added")
+        # Registered (S7): the credits, a "Registered" tag, its section as a control, Required on,
+        # a tick and ×; no lock. Using a control makes the registered courses editable.
         reg = "#plbPlanList .plb-prow--kept[data-code='CS301']"
-        self.assertEqual(self._text(page, f"{reg} .plb-cr"), "3 cr · section M1")
-        self.assertEqual(page.locator(f"{reg} [role='img'][aria-label='Registered']").count(), 1)
-        self.assertEqual(self._text(page, f"{reg} .plb-flag"), "Registered · kept")
-        self.assertEqual(page.locator(f"{reg} button, {reg} input").count(), 0)
+        self.assertEqual(self._text(page, f"{reg} .plb-cr"), "3 cr")
+        self.assertEqual(page.locator(f"{reg} [role='img'][aria-label='Registered']").count(), 0)
+        self.assertEqual(self._text(page, f"{reg} .plb-flag"), "Registered")
+        self.assertEqual(self._text(page, f"{reg} .plb-secbtn"), "§M1")
+        self.assertEqual(
+            page.get_attribute(f"{reg} button[data-act='must']", "aria-pressed"), "true"
+        )
+        self.assertEqual(page.locator(f"{reg} button, {reg} input").count(), 4)
         # New: "Any section" and a Required toggle that is not pressed.
         row = "#plbPlanList .plb-prow[data-code='AI331']"
         self.assertEqual(self._text(page, f"{row} .plb-secbtn"), "Any section")
@@ -460,10 +474,15 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
 
     def test_ignoring_registered_courses_changes_what_counts(self) -> None:
         page = self._open(Fake())
+        # Ignore makes the registered courses rows of the plan (S7): they still count, and once
+        # one is removed it can be planned again like any course.
         self._rules(page, mode="ignore")
-        self.assertEqual(self._load(page), ("6 / 18 cr", "6 planned · 12 cr free"))
-        self.assertEqual(self._rows(page, "registered"), [])  # nothing is kept: no locked rows
-        # The registered courses can be planned again.
+        self.assertEqual(self._load(page), ("15 / 18 cr", "6 planned + 9 registered · 3 cr free"))
+        self.assertEqual(self._rows(page, "registered"), [])  # nothing is kept as registered
+        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342", "CS301", "CS322", "CS330"])
+        self.assertNotIn("CS301", self._rows(page, "could"))
+        self._remove(page, "CS301")
+        self.assertEqual(self._load(page), ("12 / 18 cr", "6 planned + 6 registered · 6 cr free"))
         self.assertIn("CS301", self._rows(page, "could"))
 
     def test_the_search_narrows_what_the_student_could_add(self) -> None:
@@ -489,8 +508,9 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbStatus")).to_have_text(
             "The student's plan could not be loaded, so no extra courses are listed."
         )
-        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
-        self.assertEqual(self._rows(page, "could"), [])
+        # Nothing planned (Fetch adds no course); the eligible recommendations are still offered.
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "could"), ["AI331", "AI342"])
         # The catalogue failing leaves section information unknown, not "none".
         fake.plan_status = 200
         fake.catalog_status = 500
@@ -502,7 +522,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertIn(
             "Section data is not available", self._text(page, "#plbAvailList [data-code='CS351']")
         )
-        self.assertEqual(self._load(page), ("15 / 18 cr", "6 planned + 9 registered · 3 cr free"))
+        self.assertEqual(self._load(page), ("9 / 18 cr", "0 planned + 9 registered · 9 cr free"))
 
     def test_a_slow_earlier_section_reply_cannot_paint_over_a_newer_one(self) -> None:
         fake = Fake()
@@ -584,7 +604,8 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
                 page = self._open(fake, font=font)
                 kept = "#plbPlanList .plb-prow--kept[data-code='GS104']"
                 self.assertEqual(self._text(page, f"{kept} .plb-nm"), long_name)
-                self.assertEqual(self._text(page, f"{kept} .plb-cr"), "2 cr · section M46")
+                self.assertEqual(self._text(page, f"{kept} .plb-cr"), "2 cr")
+                self.assertEqual(self._text(page, f"{kept} .plb-secbtn"), "§M46")
                 name = page.locator(f"{kept} .plb-nm").bounding_box()
                 pane = page.locator("#plbPlan").bounding_box()
                 self.assertGreater(name["width"], pane["width"] * 0.4)
@@ -625,6 +646,8 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbWeek")).to_contain_text("No registered classes this term.")
         self.assertEqual(self._text(page, "#plbTabFacts1"), "No timed classes")
         self.assertEqual(self._rows(page, "registered"), [])
+        self.assertEqual(self._load(page), ("0 / 18 cr", "0 planned + 0 registered · 18 cr free"))
+        self._plan_recommended(page)
         self.assertEqual(self._load(page), ("6 / 18 cr", "6 planned + 0 registered · 12 cr free"))
 
     def test_a_friday_class_gets_its_own_column(self) -> None:
@@ -646,16 +669,17 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
 
     # ── Arabic ───────────────────────────────────────────────────────────────
     def test_arabic_renders_arabic_labels_and_right_to_left(self) -> None:
-        page = self._open(Fake(), language="ar")
+        page = self._open(Fake(), language="ar", plan=False)
         self.assertEqual(page.evaluate("document.documentElement.dir"), "rtl")
         self.assertEqual(self._text(page, "#plbStatus"), "")
+        self._plan_recommended(page)
         self.assertIn("المعدل التراكمي", self._text(page, "#plbStudent"))
         self.assertIn("المسجّل الآن", self._text(page, "#plbStudent"))
         self.assertIn("بعد أول بناء", self._text(page, "#plbStudent"))
         self.assertEqual(self._rules_now(page), {"mode": "keep", "elig": "strict", "max": "18"})
         self.assertIn("الشُعب من", self._text(page, "#plbZoneRules"))
         self.assertIn("اقتراح تبديلات (غير متاح بعد)", self._text(page, "#plbZoneRules"))
-        self.assertEqual(self._text(page, "#plbPlanList .plb-prow--kept .plb-flag"), "مسجّل · مُبقى")
+        self.assertEqual(self._text(page, "#plbPlanList .plb-prow--kept .plb-flag"), "مسجّل")
         self.assertEqual(
             self._text(page, "#plbPlanList [data-code='AI331'] .plb-secbtn"), "أي شعبة"
         )

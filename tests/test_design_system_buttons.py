@@ -81,6 +81,8 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/planner_board.html", "plbFetch"),
     ("core/templates/core/planner_board.html", "plbTermBtn"),
     ("core/templates/core/planner_board.html", "plbEligGo"),
+    # ... and the Go of the notice bar's own confirm (Back to Keep with changes, S7).
+    ("core/templates/core/planner_board.html", "plbConvGo"),
     # ... and "Review and apply", neutral in the template (no build exists yet; the board's
     # script makes it the filled button once a build can be applied, which its own browser
     # test checks by computed colour), and the review dialog's Cancel.

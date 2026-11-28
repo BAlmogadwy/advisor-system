@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from django.db.models import Q
+
 from core.models import TermSection, TermSectionMeeting
 from core.services.section_programmes import filter_sections_for_program
 from core.services.student_sections import gender_section_filter
@@ -278,6 +280,7 @@ def _catalog_for_courses(
     course_codes: list[str],
     gender: str = "",
     program: str | None = None,
+    extra_section_ids: set[int] | frozenset[int] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:  # year/term kept for API compatibility
     if not course_codes:
         return {}
@@ -286,7 +289,16 @@ def _catalog_for_courses(
     # ``None`` means an intentionally unscoped staff build. A supplied blank
     # value came from a student profile and must fail closed.
     if program is not None:
-        qs = filter_sections_for_program(qs, program)
+        in_programme = filter_sections_for_program(qs, program)
+        # The sections the student already holds stay in the catalogue whatever the programme
+        # filter says: a registration the registrar accepted is never "outside the programme"
+        # for the student who holds it (one live student does, 1448/1).
+        held = {int(sid) for sid in extra_section_ids or () if int(sid) > 0}
+        qs = (
+            qs.filter(Q(id__in=in_programme.values("id")) | Q(id__in=held))
+            if held
+            else in_programme
+        )
     # Always applied, including for a staff build with no student in scope.
     # gender_section_filter's blank branch exists precisely to exclude the
     # other branch's YM/YF sections from an unscoped catalogue; skipping the
@@ -393,6 +405,26 @@ def _complete_catalogue(
                 clean_options.append(option)
         complete[code] = clean_options
     return complete, issues
+
+
+def meetings_complete(meetings: list[tuple[Any, Any, Any]]) -> bool:
+    """Whether a section's meetings, as (day, start, end), can take part in a build.
+
+    The rule ``_complete_catalogue`` applies: at least one meeting, each on a known day with a
+    clock start before its clock end. A registered section that fails it can never be placed, so
+    the board holds that course as load only (counted, never scheduled) and the build accepts it
+    as such.
+    """
+    if not meetings:
+        return False
+    for day, start, end in meetings:
+        raw_day = str(day or "").strip()
+        if str(DAY_MAP.get(raw_day, raw_day)).strip().upper() not in _DAY_INDEX:
+            return False
+        first, last = _strict_clock_minutes(start), _strict_clock_minutes(end)
+        if first is None or last is None or last <= first:
+            return False
+    return True
 
 
 def _choose(
@@ -1474,6 +1506,19 @@ def build_plans(
     # these leave of ``max_credits``. A caller that has made that room itself
     # (``student_planner`` subtracts before it calls) leaves this at 0.
     kept_credits: int = 0,
+    # IGNORE MODE, WHEN THE REGISTERED COURSES ARE EDITABLE ROWS (the staff board, S7). The
+    # registered timetable is not busy time then: each registered course the adviser keeps is a
+    # shortlist row of its own. What the student holds still matters three ways:
+    #   ``held_section_ids``  the sections the student holds: always in the catalogue (whatever the
+    #                         programme filter says) and never refused as full;
+    #   ``held_load_credits`` the hours of registered courses kept as load only (no section, or one
+    #                         with no usable meetings): they come off the room, in either mode;
+    #   ``held_credits``      the whole registered load. The limit is never below it, so a student
+    #                         holding 21 hours under a limit of 18 can swap a course for one of the
+    #                         same hours; adding on top of a full load finds no room.
+    held_section_ids: set[int] | frozenset[int] | None = None,
+    held_load_credits: int = 0,
+    held_credits: int = 0,
 ) -> dict[str, Any]:
     must_take_codes = {
         str(item.get("course_code", "")).replace(" ", "").upper()
@@ -1490,7 +1535,16 @@ def build_plans(
             if str(x.get("course_code", "")).strip()
         }
     )
-    catalog = _catalog_for_courses(year, term, codes, gender, program)
+    held_ids = {int(sid) for sid in held_section_ids or () if int(sid) > 0}
+    catalog = _catalog_for_courses(
+        year, term, codes, gender, program, extra_section_ids=held_ids or None
+    )
+    # The shortlist's courses the student holds a section of: the registered rows of the plan.
+    held_codes = {
+        code
+        for code, section_options in catalog.items()
+        if any(int(option.get("term_section_id") or 0) in held_ids for option in section_options)
+    }
     incomplete_meetings: dict[str, list[dict[str, Any]]] = {}
     if require_complete_meetings:
         catalog, incomplete_meetings = _complete_catalogue(catalog)
@@ -1509,10 +1563,14 @@ def build_plans(
     # full sections. Unknown counts stay eligible: they are not evidence that a
     # section has reached capacity. Filtering here makes A, B, C and the
     # no-OR-Tools fallback follow the same contract.
+    # A section the student holds is never refused for being full: the seat is already theirs.
     if consider_capacity:
         for code, section_options in catalog.items():
             catalog[code] = [
-                option for option in section_options if not _known_full_section(option)
+                option
+                for option in section_options
+                if not _known_full_section(option)
+                or int(option.get("term_section_id") or 0) in held_ids
             ]
 
     # Build course → credits mapping for max-credit enforcement
@@ -1531,11 +1589,21 @@ def build_plans(
     kept = (
         max(0, int(kept_credits or 0)) if keep_registered and max_credits and max_credits > 0 else 0
     )
-    credit_room = max_credits - kept if kept else max_credits
-    if kept and credit_room <= 0:
+    capped = bool(max_credits and max_credits > 0)
+    # Registered courses kept as load only take their hours off the room in either mode.
+    held_load = max(0, int(held_load_credits or 0)) if capped else 0
+    # The limit is never below the load the student already holds (``held_credits``).
+    limit = max(max_credits, int(held_credits or 0)) if capped else max_credits
+    credit_room = limit - kept - held_load if (kept or held_load) else limit
+    # What the student holds that this plan still counts: the registered rows of the shortlist
+    # and the load-only hours. The reasons below say it beside the limit.
+    held_in_plan = held_load + sum(credits_map.get(code, 0) for code in held_codes)
+    registered_note = kept or held_in_plan
+    if (kept or held_load) and credit_room <= 0:
         # One sentence for a load at the limit and for one above it (21 against 18).
+        shown = kept or held_load
         no_room = (
-            f"No room left under the {max_credits}-credit limit: {kept} credits are registered"
+            f"No room left under the {max_credits}-credit limit: {shown} credits are registered"
         )
         return {
             "summary": {
@@ -1558,7 +1626,7 @@ def build_plans(
                         {
                             "course_credits": int(credits_map.get(code, 0) or 0),
                             "credit_limit": max_credits,
-                            "registered_credits": kept,
+                            "registered_credits": shown,
                         }
                     ],
                 }
@@ -1568,8 +1636,8 @@ def build_plans(
         }
     # Said beside the limit wherever a reason names it, so "the 18-credit limit"
     # is not read as 18 hours of room.
-    kept_note = f" ({kept} of it registered)" if kept else ""
-    kept_detail = {"registered_credits": kept} if kept else {}
+    kept_note = f" ({registered_note} of it registered)" if registered_note else ""
+    kept_detail = {"registered_credits": registered_note} if registered_note else {}
 
     rejected_unscheduled: list[list[dict[str, Any]]] = []
     rejected_hard_failures: list[dict[str, Any]] = []
@@ -1635,7 +1703,7 @@ def build_plans(
                         "course_code": "",
                         "reason": (
                             f"Generated option has {scheduled_credits} credits, "
-                            f"above the {max_credits}-credit limit{kept_note}"
+                            f"above the {limit}-credit limit{kept_note}"
                         ),
                     }
                 )
@@ -1756,29 +1824,48 @@ def build_plans(
                 # smallest gaps") - true, and of no use to an adviser deciding
                 # what to change. Name the binding constraint instead.
                 course_credits = int(credits_map.get(code, 0) or 0)
-                if max_credits and course_credits > credit_room:
+                # A course the student does not hold has only what the registered rows of the
+                # plan leave of the limit; none left is said as the no-room sentence, against
+                # the limit the adviser set (a raised limit is the registered load itself).
+                room_for_new = limit - held_in_plan if held_ids and code not in held_codes else None
+                if max_credits and room_for_new is not None and room_for_new <= 0:
                     item["reason"] = (
-                        f"{code} is {course_credits} credits, above the "
-                        f"{max_credits}-credit limit set for this build{kept_note}"
+                        f"No room left under the {max_credits}-credit limit: "
+                        f"{held_in_plan} credits are registered"
                     )
                     item["reason_code"] = "DID_NOT_FIT"
                     item["details"] = [
                         {
                             "course_credits": course_credits,
                             "credit_limit": max_credits,
+                            "registered_credits": held_in_plan,
+                        }
+                    ]
+                elif max_credits and course_credits > (
+                    credit_room if room_for_new is None else room_for_new
+                ):
+                    item["reason"] = (
+                        f"{code} is {course_credits} credits, above the "
+                        f"{limit}-credit limit set for this build{kept_note}"
+                    )
+                    item["reason_code"] = "DID_NOT_FIT"
+                    item["details"] = [
+                        {
+                            "course_credits": course_credits,
+                            "credit_limit": limit,
                             **kept_detail,
                         }
                     ]
                 elif max_credits:
                     item["reason"] = (
                         "Could not fit alongside the other courses within the "
-                        f"{max_credits}-credit limit{kept_note}, or its sections clash"
+                        f"{limit}-credit limit{kept_note}, or its sections clash"
                     )
                     item["reason_code"] = "DID_NOT_FIT"
                     item["details"] = [
                         {
                             "course_credits": course_credits,
-                            "credit_limit": max_credits,
+                            "credit_limit": limit,
                             **kept_detail,
                             "sections_considered": len(catalog.get(code) or []),
                         }
@@ -1806,6 +1893,13 @@ def build_plans(
                 item["details"] = []
             annotated.append(item)
         return annotated
+
+    # The sections that are the only one a must-take course may use (see _top_k_method).
+    only_sections_of_musts = {
+        int(section_options[0].get("term_section_id") or 0)
+        for code, section_options in catalog.items()
+        if code in must_take_codes and len(section_options) == 1
+    }
 
     def _top_k_method(
         method: str, k: int = 3
@@ -1865,6 +1959,11 @@ def build_plans(
             results.append((sel, uns))
 
             for sid in sig:
+                # Leaving out the one section a must-take course may use can only fail: its
+                # search is skipped, so the budget goes to alternatives that can exist. (Every
+                # registered row of an edited plan is such a course.)
+                if int(sid) in only_sections_of_musts:
+                    continue
                 nxt = set(excl)
                 nxt.add(int(sid))
                 nk = tuple(sorted(nxt))
