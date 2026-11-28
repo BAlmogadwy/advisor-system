@@ -276,7 +276,7 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         """A case as staff left it (PR 4 will put it there), with ``points`` live
         points about the student's own section."""
         case = TimetableFeedback.objects.create(
-            student_id=SID, academic_year="1448", term="1", status=status, **fields
+            **{"student_id": SID, "academic_year": "1448", "term": "1", "status": status, **fields}
         )
         for n in range(points):
             TimetableFeedbackPoint.objects.create(
@@ -377,13 +377,20 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
                 self.assertTrue(date.evaluate(ONE_LINE), (language, rem))
 
     def test_the_list_fits_a_small_phone_and_a_whole_row_opens_its_feedback(self):
-        # The longest status there is, in English.
+        # The longest status there is, in English, beside last term's feedback.
         case = self._case("NEEDS_INFORMATION", points=2)
+        self._case(
+            "CLOSED",
+            academic_year="1447",
+            term="2",
+            close_reason="ANSWER_ACCEPTED",
+            closed_at=timezone.now(),
+        )
         for language in ("en", "ar"):
             page = self._page(language)
             page.set_viewport_size({"width": 360, "height": 800})
             page.goto(f"{self.live_server_url}/student/timetable-feedback/")
-            row = page.locator(".ttf-case-list .ttf-case").first
+            row = page.locator('.ttf-case-list .ttf-case[data-status="NEEDS_INFORMATION"]')
             # The status stays inside its row, on the reference's line or the next.
             inside = row.evaluate(
                 "(row) => { const r = row.getBoundingClientRect();"
@@ -391,10 +398,25 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
                 " return s.left >= r.left - 0.5 && s.right <= r.right + 0.5; }"
             )
             self.assertTrue(inside, language)
-            # The one waiting on the student has its edge in the status's colour.
-            self.assertEqual(
-                row.evaluate("(row) => getComputedStyle(row).borderInlineStartWidth"), "3px"
+            # The one waiting on the student has its edge in the status's colour,
+            # beside the row: every row's reference starts at the same place.
+            # (A pseudo-element is drawn only when it has content.)
+            edge = row.evaluate(
+                "(row) => { const s = getComputedStyle(row, '::before');"
+                " return [s.content, s.width, s.backgroundColor]; }"
             )
+            self.assertNotIn(edge[0], ("none", "normal"))
+            self.assertEqual(edge[1], "3px")
+            self.assertNotEqual(edge[2], "rgba(0, 0, 0, 0)")
+            starts = page.locator(".ttf-case-list .ttf-case-link").evaluate_all(
+                "(links) => links.map((a) => { const r = a.getBoundingClientRect();"
+                " return Math.round(document.dir === 'rtl' ? r.right : r.left); })"
+            )
+            self.assertEqual(len(starts), 2)
+            self.assertEqual(len(set(starts)), 1, (language, starts))
+            # The keyboard's focus tints the row as the pointer does.
+            row.locator(".ttf-case-link").focus()
+            expect(row).not_to_have_css("background-color", "rgba(0, 0, 0, 0)")
             # The stretched link covers its own row and nothing else: the button
             # under the list is still the button.
             send = page.locator(".ttf-actions .btn-primary")

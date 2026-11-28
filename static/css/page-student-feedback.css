@@ -384,15 +384,23 @@
   position: relative;
 }
 
-.ttf-case-list .ttf-case:hover {
+/* Under the pointer or the keyboard's focus, the row is tinted as one. */
+.ttf-case-list .ttf-case:hover,
+.ttf-case-list .ttf-case:focus-within {
   background: color-mix(in srgb, var(--teal) 5%, transparent);
 }
 
 /* The one that waits on the student draws the eye: an edge in its status's
-   colour, which the status's own words also say. */
-.ttf-case-list .ttf-case[data-status="NEEDS_INFORMATION"] {
-  border-inline-start: 3px solid var(--sev-warning);
-  padding-inline-start: 12px;
+   colour, which the status's own words also say. It stands in the card's
+   margin beside the row, so the row's words line up with every other row's. */
+.ttf-case-list .ttf-case[data-status="NEEDS_INFORMATION"]::before {
+  background: var(--sev-warning);
+  border-radius: var(--radius-pill);
+  content: "";
+  inline-size: 3px;
+  inset-block: 12px;
+  inset-inline-start: -10px;
+  position: absolute;
 }
 
 /* The reference and its status share a line, the status at its end, and take

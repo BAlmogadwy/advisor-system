@@ -229,7 +229,7 @@ def _last_change(case: TimetableFeedback, language: str) -> object:
         "changed_by",
         language,
         name=_actor(event, language),
-        time=copy.bdi(_moment(event.created_at)),
+        time=copy.date_html(_moment(event.created_at)),
     )
 
 

@@ -720,7 +720,8 @@ def test_a_case_changed_since_the_page_was_drawn_says_who_changed_it(world, staf
     assert response.status_code == 409
     html = _html(response)
     assert str(scopy.refusal("CASE_CHANGED", "en")) in html
-    assert "Last changed by Adv-One-B Staff on" in html
+    # When, as a date and time kept on one line.
+    assert 'Last changed by Adv-One-B Staff on <bdi dir="ltr" class="ttf-date">' in html
     assert "My answer, kept." in html
     # The page drawn again names the case as it is now.
     assert f'name="version" value="{case.version + 1}"' in html
