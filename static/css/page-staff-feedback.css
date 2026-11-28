@@ -145,6 +145,47 @@
   color: var(--t2);
 }
 
+/* Waiting on staff, untouched for over two days: the report's own rule, said in
+   words in the tag. */
+.ttfs-untouched {
+  background: var(--sev-warning-bg);
+  border-color: var(--sev-warning);
+  color: var(--sev-warning-ink);
+}
+
+/* A page of cases scrolls with the page, never inside it: global.css caps a
+   .table-wrap's height, with !important on a phone. */
+.table-wrap.ttfs-queue-wrap {
+  max-height: none !important;
+}
+
+/* With the page script: the bulk actions wait until a case is ticked, then stay
+   in view at the foot of the page. */
+.ttfs-bulk.is-waiting {
+  display: none;
+}
+
+.ttfs-bulk.is-active {
+  border-color: var(--line-strong);
+}
+
+/* Kept in view only where the screen has room: on a phone the two forms stack
+   into a tall bar, which would sit over the very rows being ticked. */
+@media (min-width: 641px) {
+  .ttfs-bulk.is-active {
+    box-shadow: var(--shadow-lift);
+    inset-block-end: 12px;
+    position: sticky;
+    z-index: var(--z-sticky);
+  }
+}
+
+.ttfs-bulk-count {
+  color: var(--t0);
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
 .ttfs-pages {
   align-items: center;
   display: flex;
@@ -195,9 +236,40 @@
   margin: 0 0 6px;
 }
 
+/* The student's expected timetable now: one course a line, its times under it. */
 .ttfs-current {
+  display: grid;
+  gap: 8px;
+  list-style: none;
   margin: 0;
-  padding-inline-start: 1.25rem;
+  padding: 0;
+}
+
+.ttfs-current li {
+  border-block-end: 1px solid var(--line);
+  display: grid;
+  gap: 2px;
+  padding-block-end: 8px;
+}
+
+.ttfs-current li:last-child {
+  border-block-end: 0;
+  padding-block-end: 0;
+}
+
+.ttfs-current-code {
+  color: var(--t0);
+  font-weight: 700;
+}
+
+.ttfs-current-name {
+  color: var(--t1);
+}
+
+.ttfs-current-times {
+  color: var(--t2);
+  display: block;
+  font-size: var(--text-sm);
 }
 
 .ttfs-action + .ttfs-action {
@@ -213,16 +285,198 @@
   margin: 0 0 8px;
 }
 
+/* The history as a timeline: a dot per entry on a line, its time above it. */
 .ttfs-history {
   color: var(--t1);
+  display: grid;
   font-size: var(--text-sm);
+  gap: 12px;
+  list-style: none;
   margin: 0;
-  padding-inline-start: 1.25rem;
+  padding: 0;
+}
+
+.ttfs-history li {
+  padding-inline-start: 20px;
+  position: relative;
+}
+
+.ttfs-history li::before {
+  background: var(--line-strong);
+  border-radius: var(--radius-full);
+  content: "";
+  height: 9px;
+  inset-block-start: 5px;
+  inset-inline-start: 3px;
+  position: absolute;
+  width: 9px;
+}
+
+.ttfs-history li::after {
+  background: var(--line);
+  content: "";
+  inset-block: 18px -10px;
+  inset-inline-start: 7px;
+  position: absolute;
+  width: 1px;
+}
+
+.ttfs-history li:last-child::after {
+  display: none;
+}
+
+.ttfs-history-when {
+  color: var(--t2);
+  display: block;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .ttfs-changed-by {
   display: block;
   margin-block-start: 4px;
+}
+
+/* Two columns on a wide screen: the work, and beside it the facts, the
+   timetable and the history. The side comes first in the page (who and what,
+   before the work), so the grid places it. Columns follow the page's direction. */
+.ttfs-case-layout {
+  display: grid;
+  gap: 0 20px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ttfs-case-main,
+.ttfs-case-side {
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  .ttfs-case-layout {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  }
+
+  .ttfs-case-main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .ttfs-case-side {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+/* In the narrow side column the facts sit two to a row, the student across. */
+.ttfs-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ttfs-fact-wide {
+  grid-column: 1 / -1;
+}
+
+/* Staff read the conversation from their side: the student's messages at the
+   start, the staff's at the far side, staff-only comments in their own dashed
+   amber (above). */
+.ttf-thread .ttf-message:not(.ttfs-from-student) {
+  /* On the far side, so the small corner, the bubble's tail, is at the end. */
+  border-end-end-radius: var(--radius-xs);
+  border-end-start-radius: var(--radius);
+  justify-self: end;
+}
+
+.ttf-thread .ttf-message:not(.ttfs-from-student):not(.ttfs-internal) {
+  background: var(--sev-info-bg);
+  border-color: transparent;
+}
+
+/* The composer's tabs, made by the page script from the forms' own headings. */
+.ttfs-compose-tabs {
+  border-block-end: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 14px;
+}
+
+.ttfs-compose-tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-block-end: 3px solid transparent;
+  color: var(--t1);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  margin-block-end: -1px;
+  min-height: 44px;
+  padding: 8px 14px;
+}
+
+.ttfs-compose-tab:hover {
+  color: var(--t0);
+}
+
+.ttfs-compose-tab[aria-selected="true"] {
+  border-block-end-color: var(--text-brand);
+  color: var(--t0);
+  font-weight: 700;
+}
+
+.ttfs-compose-tab:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--text-brand);
+  outline-offset: -2px;
+}
+
+/* Tabbed forms show one at a time, so the rule between forms goes. */
+.ttfs-action.is-tabbed + .ttfs-action.is-tabbed {
+  border-block-start: 0;
+  margin-block-start: 0;
+  padding-block-start: 0;
+}
+
+/* The rarer moves, each behind its own disclosure. */
+.ttfs-more {
+  border-block-start: 1px solid var(--line);
+  margin-block-start: 18px;
+  padding-block-start: 14px;
+}
+
+.ttfs-more-title {
+  color: var(--t1);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.ttfs-more-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-block-end: 8px;
+}
+
+.ttfs-more-item > summary {
+  box-sizing: border-box;
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.ttfs-more-item > summary:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
+}
+
+.ttfs-more-item[open] > summary {
+  border-block-end: 1px solid var(--line);
+}
+
+.ttfs-more-item > .ttfs-action {
+  padding: 12px;
 }
 
 .ttfs-redact-current {

@@ -527,6 +527,11 @@ def queue_view(request: HttpRequest) -> HttpResponse:
                 and case.assigned_advisor_id not in routed,
                 "registered": case.has_registration_at_submission,
                 "graduating": (student or {}).get("status") == EXPECTED_GRADUATE_STATUS,
+                # The report's own rule: waiting on staff, nobody has acted, sent
+                # more than two days ago.
+                "untouched": case.status in service.WAITING_ON_STAFF
+                and case.first_staff_action_at is None
+                and case.created_at < now - report.PROMPT,
             }
         )
 
@@ -735,8 +740,11 @@ def case_page(
     errors: list[dict[str, Any]] | None = None,
     values: dict[str, str] | None = None,
     status: int = 200,
+    refused_action: str = "",
 ) -> HttpResponse:
-    """One case as staff see it, with what this person can do on it now."""
+    """One case as staff see it, with what this person can do on it now.
+    ``refused_action`` names the action just refused, whose form the page opens
+    whatever the refusal was about (a stale version as much as a missing word)."""
     t = scopy.strings(language)
     errors = list(errors or [])
     for index, error in enumerate(errors):
@@ -830,6 +838,7 @@ def case_page(
         errors=errors,
         error_for={error["field"]: error for error in errors if error.get("field")},
         values=values or {},
+        refused_action=refused_action if refused_action in _ACTIONS else "",
         empty_text=t["case_none"],
     )
     return render(request, "core/staff_timetable_feedback_case.html", context, status=status)
@@ -919,6 +928,7 @@ def _refused_page(
     language: str,
     field: str,
     values: dict[str, str],
+    action: str = "",
 ) -> HttpResponse:
     """The case again, as it is now, with the refusal: read again through the
     person's scope, which may have changed since the case was first read."""
@@ -943,6 +953,7 @@ def _refused_page(
         errors=errors,
         values=values,
         status=refused.status,
+        refused_action=action,
     )
 
 
@@ -985,6 +996,7 @@ def action_view(request: HttpRequest, reference: str) -> HttpResponse:
             language=language,
             field=f"{action}_body",
             values=values,
+            action=action,
         )
     log_audit_event(
         request,

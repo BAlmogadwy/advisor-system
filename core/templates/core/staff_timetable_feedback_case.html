@@ -3,7 +3,9 @@
 
 {% block title %}{{ case.page_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=3">{% endblock %}
+{% block content_width %}wide{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=5"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=4">{% endblock %}
 
 {% block page_heading %}{{ case.title }}{% endblock %}
 
@@ -14,6 +16,11 @@
   message with its audience said in words, what this person can do, and the
   history. Every action is a plain form naming the version this page showed, and
   is offered only where the service's own check says it would be taken.
+
+  Laid out in two columns on a wide screen: the work (what was sent, the
+  conversation, the actions) and, beside it, the facts, the timetable and the
+  history. The side comes first in the page, so a phone and a screen reader meet
+  who and what the case is about before the work on it.
 {% endcomment %}
 
 {% if notice %}
@@ -31,14 +38,16 @@
 </div>
 {% endif %}
 
+<div class="ttfs-case-layout">
+<aside class="ttfs-case-side">
 <section class="card p-3 mb-3" aria-labelledby="ttfsFactsTitle">
   <div class="ttfs-head mb-2">
     <h2 class="ttfs-section-title mb-0" id="ttfsFactsTitle">{{ t.case_facts }}</h2>
     <span class="ttf-status" data-status="{{ case.status_code }}" id="ttfsStatus">{{ case.status }}</span>
   </div>
   {% if case.close_reason %}<p class="ttf-small" dir="auto">{{ case.close_reason }}</p>{% endif %}
-  <dl class="ttf-meta">
-    <div><dt>{{ t.case_student }}</dt><dd>{% if student.missing %}{{ t.student_unavailable }}{% else %}<span dir="auto">{{ student.name }}</span>{% endif %} <bdi dir="ltr">{{ student.id }}</bdi></dd></div>
+  <dl class="ttf-meta ttfs-facts">
+    <div class="ttfs-fact-wide"><dt>{{ t.case_student }}</dt><dd>{% if student.missing %}{{ t.student_unavailable }}{% else %}<span dir="auto">{{ student.name }}</span>{% endif %} <bdi dir="ltr">{{ student.id }}</bdi></dd></div>
     <div><dt>{{ t.case_programme }}</dt><dd><bdi dir="ltr">{{ student.programme|default:"—" }}</bdi></dd></div>
     <div><dt>{{ t.case_cohort }}</dt><dd>{{ student.cohort|default:"—" }}</dd></div>
     <div><dt>{{ t.case_standing }}</dt><dd><bdi dir="ltr">{{ student.standing|default:"—" }}</bdi></dd></div>
@@ -57,6 +66,39 @@
   {% if student.record_url %}<p class="mt-2 mb-0"><a href="{{ student.record_url }}">{{ t.case_record_link }}</a></p>{% endif %}
 </section>
 
+<section class="card p-3 mb-3" aria-labelledby="ttfsCurrentTitle" id="ttfsCurrent">
+  <h2 class="ttfs-section-title" id="ttfsCurrentTitle">{{ t.current_title }}</h2>
+  {% if current.note %}
+  <p class="mb-0" dir="auto">{{ current.note }}</p>
+  {% else %}
+  {% if current.registered %}<p class="ttf-small" dir="auto">{{ t.current_registered }}</p>{% endif %}
+  {% if current.sections %}
+  <ul class="ttfs-current">
+    {% for section in current.sections %}
+    <li><span class="ttfs-current-code"><bdi dir="ltr">{{ section.course }} {{ section.section }}</bdi></span>{% if section.name %} <span class="ttfs-current-name" dir="auto">{{ section.name }}</span>{% endif %}{% if section.meetings %}<span class="ttfs-current-times">{% for m in section.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="mb-0" dir="auto">{{ t.current_empty }}</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="card p-3 mb-3" aria-labelledby="ttfsHistoryTitle">
+  <h2 class="ttfs-section-title" id="ttfsHistoryTitle">{{ t.history_title }}</h2>
+  {% if history %}
+  <ol class="ttfs-history">
+    {% for entry in history %}
+    <li><bdi dir="ltr" class="ttfs-history-when">{{ entry.when }}</bdi> <span class="ttfs-history-what"><span dir="auto">{{ entry.who }}</span>: <span dir="auto">{{ entry.what }}</span>{% if entry.change %} (<span dir="auto">{{ entry.change }}</span>){% endif %}</span></li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="mb-0">{{ t.history_empty }}</p>
+  {% endif %}
+</section>
+</aside>
+
+<div class="ttfs-case-main">
 <section class="card p-3 mb-3" aria-labelledby="ttfsPointsTitle">
   <h2 class="ttfs-section-title" id="ttfsPointsTitle">{{ t.points_title }}</h2>
   <ol class="ttf-points">
@@ -81,24 +123,6 @@
   </ol>
 </section>
 
-<section class="card p-3 mb-3" aria-labelledby="ttfsCurrentTitle" id="ttfsCurrent">
-  <h2 class="ttfs-section-title" id="ttfsCurrentTitle">{{ t.current_title }}</h2>
-  {% if current.note %}
-  <p class="mb-0" dir="auto">{{ current.note }}</p>
-  {% else %}
-  {% if current.registered %}<p class="ttf-small" dir="auto">{{ t.current_registered }}</p>{% endif %}
-  {% if current.sections %}
-  <ul class="ttfs-current">
-    {% for section in current.sections %}
-    <li><bdi dir="ltr">{{ section.course }} {{ section.section }}</bdi>{% if section.name %} — <span dir="auto">{{ section.name }}</span>{% endif %}{% if section.meetings %}: {% for m in section.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}{% endif %}</li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="mb-0" dir="auto">{{ t.current_empty }}</p>
-  {% endif %}
-  {% endif %}
-</section>
-
 <section class="card p-3 mb-3" aria-labelledby="ttfsThreadTitle">
   <h2 class="ttfs-section-title" id="ttfsThreadTitle">{{ t.thread_title }}</h2>
   {% if thread %}
@@ -118,12 +142,19 @@
   {% endif %}
 </section>
 
-<section class="card p-3 mb-3" aria-labelledby="ttfsActionsTitle" id="ttfsActions">
+{% comment %}
+  The actions. Taking the case is one button. Writing (an answer, a question, a
+  comment for colleagues) is a composer: without JavaScript its three forms stand
+  one under another; with it they become tabs, opening on a form that was refused
+  or holds typed text. The rarer moves (forward, close, assign) are disclosures
+  under "Other actions", open when one of them was refused.
+{% endcomment %}
+<section class="card p-3 mb-3 ttfs-actions" aria-labelledby="ttfsActionsTitle" id="ttfsActions" data-composer-label="{{ t.composer_label }}">
   <h2 class="ttfs-section-title" id="ttfsActionsTitle">{{ t.actions_title }}</h2>
   {% if language_hint %}<p class="student-guidance-note" dir="auto">{{ language_hint }}</p>{% endif %}
 
   {% if offered.take %}
-  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsTakeForm">
+  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action ttfs-take" id="ttfsTakeForm">
     {% csrf_token %}
     <input type="hidden" name="action" value="take"><input type="hidden" name="version" value="{{ case.version }}">
     <button type="submit" class="btn btn-primary">{% if taking_over %}{{ t.action_take_over }}{% else %}{{ t.action_take }}{% endif %}</button>
@@ -131,7 +162,7 @@
   {% endif %}
 
   {% if offered.answer %}
-  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsAnswerForm" novalidate>
+  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action ttfs-compose" id="ttfsAnswerForm" novalidate>
     {% csrf_token %}
     <input type="hidden" name="action" value="answer"><input type="hidden" name="version" value="{{ case.version }}">
     <h3 class="ttfs-action-title">{{ t.action_answer_title }}</h3>
@@ -150,7 +181,7 @@
   {% endif %}
 
   {% if offered.ask %}
-  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsAskForm" novalidate>
+  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action ttfs-compose" id="ttfsAskForm" novalidate>
     {% csrf_token %}
     <input type="hidden" name="action" value="ask"><input type="hidden" name="version" value="{{ case.version }}">
     <h3 class="ttfs-action-title">{{ t.action_ask_title }}</h3>
@@ -159,51 +190,8 @@
   </form>
   {% endif %}
 
-  {% if offered.forward %}
-  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsForwardForm" novalidate>
-    {% csrf_token %}
-    <input type="hidden" name="action" value="forward"><input type="hidden" name="version" value="{{ case.version }}">
-    <h3 class="ttfs-action-title">{{ t.action_forward_title }}</h3>
-    {% include "core/partials/ttf_text_field.html" with field_id="ttfsForward" label=t.action_forward_label hint=text_hint value=values.forward_body error=error_for.forward_body text_max=text_max rows=3 %}
-    <div class="ttfs-row-actions"><button type="submit" class="btn btn-outline-secondary">{{ t.action_forward }}</button></div>
-  </form>
-  {% endif %}
-
-  {% if offered.assign %}
-  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsAssignForm" novalidate>
-    {% csrf_token %}
-    <input type="hidden" name="action" value="assign"><input type="hidden" name="version" value="{{ case.version }}">
-    <h3 class="ttfs-action-title">{{ t.action_assign_title }}</h3>
-    <div class="ttf-field">
-      <label class="ttf-label" for="ttfsAssignAdvisor">{{ t.action_assign_label }}</label>
-      <p class="ttf-hint" id="ttfsAssignAdvisorHint" dir="auto">{{ t.action_assign_hint }}</p>
-      {% if error_for.assign_advisor %}<p class="ttf-field-error" id="{{ error_for.assign_advisor.id }}-field" dir="auto">{{ error_for.assign_advisor.html }}</p>{% endif %}
-      <input class="form-control" id="ttfsAssignAdvisor" name="advisor_id" value="{{ values.assign_advisor|default:'' }}" maxlength="64" dir="ltr" autocomplete="off" aria-describedby="ttfsAssignAdvisorHint{% if error_for.assign_advisor %} {{ error_for.assign_advisor.id }}-field{% endif %}"{% if error_for.assign_advisor %} aria-invalid="true"{% endif %}>
-    </div>
-    <div class="ttfs-row-actions"><button type="submit" class="btn btn-outline-secondary">{{ t.action_assign }}</button></div>
-  </form>
-  {% endif %}
-
-  {% if offered.close %}
-  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsCloseForm" novalidate>
-    {% csrf_token %}
-    <input type="hidden" name="action" value="close"><input type="hidden" name="version" value="{{ case.version }}">
-    <h3 class="ttfs-action-title">{{ t.action_close_title }}</h3>
-    <div class="ttf-field">
-      <label class="ttf-label" for="ttfsCloseReason">{{ t.action_close_reason }}</label>
-      {% if error_for.close_reason %}<p class="ttf-field-error" id="{{ error_for.close_reason.id }}-field" dir="auto">{{ error_for.close_reason.html }}</p>{% endif %}
-      <select class="form-select" id="ttfsCloseReason" name="reason"{% if error_for.close_reason %} aria-invalid="true" aria-describedby="{{ error_for.close_reason.id }}-field"{% endif %}>
-        <option value=""></option>
-        {% for code, label in close_reasons %}<option value="{{ code }}"{% if values.close_reason == code %} selected{% endif %}>{{ label }}</option>{% endfor %}
-      </select>
-    </div>
-    {% include "core/partials/ttf_text_field.html" with field_id="ttfsClose" label=t.action_close_label hint=text_hint value=values.close_body error=error_for.close_body text_max=text_max rows=2 %}
-    <div class="ttfs-row-actions"><button type="submit" class="btn btn-outline-danger">{{ t.action_close }}</button></div>
-  </form>
-  {% endif %}
-
   {% if offered.note %}
-  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsNoteForm" novalidate>
+  <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action ttfs-compose" id="ttfsNoteForm" novalidate>
     {% csrf_token %}
     <input type="hidden" name="action" value="note"><input type="hidden" name="version" value="{{ case.version }}">
     <h3 class="ttfs-action-title">{{ t.action_note_title }}</h3>
@@ -211,22 +199,66 @@
     <div class="ttfs-row-actions"><button type="submit" class="btn btn-outline-secondary">{{ t.action_note }}</button></div>
   </form>
   {% endif %}
-</section>
 
-<section class="card p-3 mb-3" aria-labelledby="ttfsHistoryTitle">
-  <h2 class="ttfs-section-title" id="ttfsHistoryTitle">{{ t.history_title }}</h2>
-  {% if history %}
-  <ol class="ttfs-history">
-    {% for entry in history %}
-    <li><bdi dir="ltr">{{ entry.when }}</bdi> — <span dir="auto">{{ entry.who }}</span>: <span dir="auto">{{ entry.what }}</span>{% if entry.change %} (<span dir="auto">{{ entry.change }}</span>){% endif %}</li>
-    {% endfor %}
-  </ol>
-  {% else %}
-  <p class="mb-0">{{ t.history_empty }}</p>
+  {% if offered.forward or offered.assign or offered.close %}
+  <div class="ttfs-more" id="ttfsMore">
+    <h3 class="ttfs-more-title">{{ t.more_actions }}</h3>
+
+    {% if offered.forward %}
+    <details class="ttfs-more-item"{% if refused_action == "forward" or error_for.forward_body %} open{% endif %}>
+      <summary>{{ t.action_forward_title }}</summary>
+      <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsForwardForm" novalidate>
+        {% csrf_token %}
+        <input type="hidden" name="action" value="forward"><input type="hidden" name="version" value="{{ case.version }}">
+        {% include "core/partials/ttf_text_field.html" with field_id="ttfsForward" label=t.action_forward_label hint=text_hint value=values.forward_body error=error_for.forward_body text_max=text_max rows=3 %}
+        <div class="ttfs-row-actions"><button type="submit" class="btn btn-outline-secondary">{{ t.action_forward }}</button></div>
+      </form>
+    </details>
+    {% endif %}
+
+    {% if offered.assign %}
+    <details class="ttfs-more-item"{% if refused_action == "assign" or error_for.assign_advisor %} open{% endif %}>
+      <summary>{{ t.action_assign_title }}</summary>
+      <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsAssignForm" novalidate>
+        {% csrf_token %}
+        <input type="hidden" name="action" value="assign"><input type="hidden" name="version" value="{{ case.version }}">
+        <div class="ttf-field">
+          <label class="ttf-label" for="ttfsAssignAdvisor">{{ t.action_assign_label }}</label>
+          <p class="ttf-hint" id="ttfsAssignAdvisorHint" dir="auto">{{ t.action_assign_hint }}</p>
+          {% if error_for.assign_advisor %}<p class="ttf-field-error" id="{{ error_for.assign_advisor.id }}-field" dir="auto">{{ error_for.assign_advisor.html }}</p>{% endif %}
+          <input class="form-control" id="ttfsAssignAdvisor" name="advisor_id" value="{{ values.assign_advisor|default:'' }}" maxlength="64" dir="ltr" autocomplete="off" aria-describedby="ttfsAssignAdvisorHint{% if error_for.assign_advisor %} {{ error_for.assign_advisor.id }}-field{% endif %}"{% if error_for.assign_advisor %} aria-invalid="true"{% endif %}>
+        </div>
+        <div class="ttfs-row-actions"><button type="submit" class="btn btn-outline-secondary">{{ t.action_assign }}</button></div>
+      </form>
+    </details>
+    {% endif %}
+
+    {% if offered.close %}
+    <details class="ttfs-more-item"{% if refused_action == "close" or error_for.close_reason or error_for.close_body %} open{% endif %}>
+      <summary>{{ t.action_close_title }}</summary>
+      <form method="post" action="{% url 'staff_timetable_feedback_action' case.reference %}" class="ttf-form ttfs-action" id="ttfsCloseForm" novalidate>
+        {% csrf_token %}
+        <input type="hidden" name="action" value="close"><input type="hidden" name="version" value="{{ case.version }}">
+        <div class="ttf-field">
+          <label class="ttf-label" for="ttfsCloseReason">{{ t.action_close_reason }}</label>
+          {% if error_for.close_reason %}<p class="ttf-field-error" id="{{ error_for.close_reason.id }}-field" dir="auto">{{ error_for.close_reason.html }}</p>{% endif %}
+          <select class="form-select" id="ttfsCloseReason" name="reason"{% if error_for.close_reason %} aria-invalid="true" aria-describedby="{{ error_for.close_reason.id }}-field"{% endif %}>
+            <option value=""></option>
+            {% for code, label in close_reasons %}<option value="{{ code }}"{% if values.close_reason == code %} selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        {% include "core/partials/ttf_text_field.html" with field_id="ttfsClose" label=t.action_close_label hint=text_hint value=values.close_body error=error_for.close_body text_max=text_max rows=2 %}
+        <div class="ttfs-row-actions"><button type="submit" class="btn btn-outline-danger">{{ t.action_close }}</button></div>
+      </form>
+    </details>
+    {% endif %}
+  </div>
   {% endif %}
 </section>
+</div>
+</div>
 
 <p><a href="{% url 'staff_timetable_feedback_queue' %}">{{ t.back_to_queue }}</a></p>
 {% endblock %}
 
-{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=1" defer></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=2" defer></script>{% endblock %}
