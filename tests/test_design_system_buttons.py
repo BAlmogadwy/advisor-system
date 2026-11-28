@@ -77,10 +77,10 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/advisor_inbox_case.html", "add_note"),
     ("core/templates/core/db_admin.html", "elecRefreshBtn"),
     ("core/templates/core/instructor_management.html", "imModalCancel"),
-    # The new planner screen (planner_board.html): Fetch and the Edit rules dialog.
+    # The new planner screen (planner_board.html): Fetch and the eligibility confirm's Go.
     ("core/templates/core/planner_board.html", "plbFetch"),
-    ("core/templates/core/planner_board.html", "plbRulesReset"),
-    ("core/templates/core/planner_board.html", "plbRulesCancel"),
+    ("core/templates/core/planner_board.html", "plbTermBtn"),
+    ("core/templates/core/planner_board.html", "plbEligGo"),
     # ... and "Review and apply", neutral in the template (no build exists yet; the board's
     # script makes it the filled button once a build can be applied, which its own browser
     # test checks by computed colour), and the review dialog's Cancel.

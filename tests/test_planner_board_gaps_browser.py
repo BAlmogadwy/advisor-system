@@ -79,15 +79,14 @@ def _fake(catalog=CATALOG) -> BuildFake:
 
 class PlannerBoardGapsTests(PlannerBoardCase):
     def _open_panel(self, page, code="AI331") -> None:
-        page.click(f"#plbTable tr[data-code='{code}'] button[data-act='detail']")
-        expect(page.locator("#plbDetail")).to_be_visible()
+        self._sections_pop(page, code)
         expect(page.locator("#plbDetailTitle")).to_contain_text(code)
 
     def _main(self, page, tsid: int) -> str:
-        return self._text(page, f"#plbDetail [data-tsid='{tsid}'] .plb-dt-sec-main")
+        return self._text(page, f"#plbPop [data-tsid='{tsid}'] .plb-dt-sec-main")
 
     def _second(self, page, tsid: int) -> str:
-        return self._text(page, f"#plbDetail [data-tsid='{tsid}'] .plb-dt-sec-seats")
+        return self._text(page, f"#plbPop [data-tsid='{tsid}'] .plb-dt-sec-seats")
 
     # ── 1. Section times by day ──────────────────────────────────────────────
     def test_section_times_name_the_days_of_each_group_in_the_panel(self) -> None:
@@ -102,7 +101,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self.assertEqual(self._main(page, 24), "§M4")  # no meetings: no stray separator
         # Every time range is a left-to-right island of its own.
         ranges = page.eval_on_selector_all(
-            "#plbDetail [data-tsid='23'] .plb-dt-sec-main bdi[dir='ltr']",
+            "#plbPop [data-tsid='23'] .plb-dt-sec-main bdi[dir='ltr']",
             "ns => ns.map(n => n.textContent)",
         )
         self.assertEqual(ranges, ["§M3", "08:00-08:50", "09:30-10:45", "14:00-15:15"])
@@ -116,15 +115,18 @@ class PlannerBoardGapsTests(PlannerBoardCase):
             self._main(page, 23), "§M3 اثن 08:00-08:50 · أحد ثلا 09:30-10:45 · خم 14:00-15:15"
         )
 
-    def test_a_course_that_could_be_added_with_one_section_says_when_it_meets(self) -> None:
+    def test_a_course_that_could_be_added_says_when_each_section_meets(self) -> None:
+        row = "#plbAvailList [data-code='STAT305']"
         page = self._open(_fake())
-        self.assertEqual(
-            self._text(page, "tr[data-code='STAT305'] .plb-sc"),
-            "Mon 08:00-09:15 · Wed 10:00-11:15 · 3 seats left",
-        )
+        page.click(f"{row} button[data-act='open']")
+        line = self._text(page, f"{row} .plb-sec:not(.plb-sec--h)")
+        self.assertIn("Mon 08:00-09:15 · Wed 10:00-11:15", line)
+        self.assertIn("3 left", line)
         page = self._open(_fake(), language="ar")
+        page.click(f"{row} button[data-act='open']")
         self.assertIn(
-            "اثن 08:00-09:15 · أرب 10:00-11:15", self._text(page, "tr[data-code='STAT305'] .plb-sc")
+            "اثن 08:00-09:15 · أرب 10:00-11:15",
+            self._text(page, f"{row} .plb-sec:not(.plb-sec--h)"),
         )
 
     def test_the_apply_dialog_names_the_days_of_each_group(self) -> None:
@@ -164,9 +166,10 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self.assertEqual(self._second(page, 22), "غير مرتبط ببرنامج · 20 من 40 مشغولة")
         self.assertEqual(self._second(page, 23), "لبرنامج AI · 20 من 40 مشغولة")
 
-    def test_a_read_only_section_names_its_programmes_too(self) -> None:
-        # STAT305 is not in the plan until added: its panel is read-only and still says whose it is.
+    def test_a_section_added_from_the_picker_names_its_programmes_too(self) -> None:
+        # STAT305 is not in the plan until added: once it is, its popover says whose sections they are.
         page = self._open(_fake())
+        self._add(page, "STAT305")
         self._open_panel(page, "STAT305")
         self.assertEqual(self._second(page, 13), "For AI · 37 of 40 taken")
 
@@ -176,52 +179,57 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         page = self._open(fake)
         reset = page.locator("#plbReset")
         expect(reset).to_have_text("Reset to suggestions")
-        expect(reset).to_be_disabled()  # the list is the suggested one
+        expect(reset).to_be_hidden()  # the list is the suggested one
         # Change the list in every way a build reads: remove, add, must-take, a ticked section.
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         expect(reset).to_be_enabled()
-        page.click("#plbTable tr[data-code='STAT305'] [data-act='add']")
-        page.check("#plbTable tr[data-code='AI331'] input[data-act='must']")
+        self._add(page, "STAT305")
+        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
         self._open_panel(page, "AI331")
-        page.locator("#plbDetail [data-tsid='21'] input").check()
+        page.locator("#plbPop [data-tsid='21'] input").check()
         self.assertEqual(self._rows(page, "new"), ["AI331", "STAT305"])
         reset.click()
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
         expect(page.locator("#plbStatus")).to_have_text("Courses reset to the 2 suggested.")
-        expect(reset).to_be_disabled()
-        expect(page.locator("#plbAdd")).to_be_focused()
-        self.assertFalse(page.is_checked("#plbTable tr[data-code='AI331'] input[data-act='must']"))
+        expect(reset).to_be_hidden()
+        expect(page.locator("#plbFind")).to_be_focused()
+        self.assertEqual(
+            page.get_attribute(
+                "#plbPlanList button[data-act='must'][data-code='AI331']", "aria-pressed"
+            ),
+            "false",
+        )
         # The suggested list itself is never the one being edited: a tick now is a change again.
-        page.check("#plbTable tr[data-code='AI331'] input[data-act='must']")
+        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
         expect(reset).to_be_enabled()
         reset.click()
-        expect(reset).to_be_disabled()
+        expect(reset).to_be_hidden()
         # What a build would send is the suggested list, field for field.
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertEqual(fake.build_bodies[-1]["shortlist"], EXPECTED_BUILD_BODY["shortlist"])
 
     def test_reset_is_enabled_again_after_each_kind_of_change(self) -> None:
         page = self._open(_fake())
         reset = page.locator("#plbReset")
-        page.check("#plbTable tr[data-code='AI331'] input[data-act='must']")
+        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
         expect(reset).to_be_enabled()  # no build on screen: the tick alone must reach the button
-        page.uncheck("#plbTable tr[data-code='AI331'] input[data-act='must']")
-        expect(reset).to_be_disabled()
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
+        expect(reset).to_be_hidden()
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         expect(reset).to_be_enabled()
-        page.click("#plbTable tr[data-code='AI342'] [data-act='add']")
+        self._add(page, "AI342")
         # The same course added back from the plan is not the suggested item (its priority and score
         # are the plan's), so the list is still not the suggested one.
         expect(reset).to_be_enabled()
         page.click("#plbReset")
-        expect(reset).to_be_disabled()
+        expect(reset).to_be_hidden()
 
     def test_reset_marks_a_build_out_of_date(self) -> None:
         page, fake = self._built()
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         page.click("#plbBuild")  # a fresh build of the shorter list
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         expect(page.locator("#plbBuild")).to_be_enabled()
         expect(page.locator("#plbActs")).to_have_attribute("data-stale", "")
         expect(page.locator("#plbReview")).to_be_enabled()
@@ -239,7 +247,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         fake = _fake()
         fake.hold_build = 1
         page = self._open(fake)
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         page.click("#plbBuild")
         expect(page.locator("#plbBuildLine")).to_contain_text("Building options")
         page.click("#plbReset")
@@ -251,19 +259,19 @@ class PlannerBoardGapsTests(PlannerBoardCase):
 
     def test_reset_is_disabled_without_a_student_and_in_arabic_it_is_said_in_arabic(self) -> None:
         page = self._open(_fake(), load=False)
-        expect(page.locator("#plbReset")).to_have_count(0)  # no student: no group, no link
+        expect(page.locator("#plbReset")).to_be_hidden()  # no student: no link
         page.context.close()
         page = self._open(_fake(), language="ar")
         expect(page.locator("#plbReset")).to_be_disabled()  # loaded, the list is the suggested one
         expect(page.locator("#plbReset")).to_have_text("العودة إلى المقترح")
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         page.click("#plbReset")
         expect(page.locator("#plbStatus")).to_have_text("أُعيدت المقررات إلى المقترح (2).")
 
     def test_a_new_student_has_their_own_suggestions(self) -> None:
         fake = _fake()
         page = self._open(fake)
-        page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
         expect(page.locator("#plbReset")).to_be_enabled()
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbContext")).to_have_text(f"{OTHER_ID} · 1448/1")
@@ -350,14 +358,14 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self.assertEqual(page.locator("#plbWeek .plb-note").count(), 2)
         self._rules(page, mode="ignore")  # the registered week is not on this board any more
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text("Rebuild")
+        expect(page.locator("#plbBuild")).to_have_text("Rebuild options")
         self.assertEqual(page.locator("#plbWeek .plb-note").count(), 0)
 
     # ── 5. The advisor ───────────────────────────────────────────────────────
     def test_the_student_card_names_the_advisor(self) -> None:
         for language, text in (
-            ("en", "ID 4500000 · AI · Advisor 90210"),
-            ("ar", "الرقم 4500000 · AI · المرشد 90210"),
+            ("en", "Sample Student · 4500000 · Advisor 90210"),
+            ("ar", "Sample Student · 4500000 · المرشد 90210"),
         ):
             with self.subTest(language=language):
                 fake = _fake()
@@ -369,7 +377,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                 self.assertEqual(self._text(page, "#plbStudent .plb-smeta"), text)
                 self.assertEqual(
                     page.locator("#plbStudent .plb-smeta bdi[dir='ltr']").all_inner_texts(),
-                    ["4500000", "AI", "90210"],
+                    ["4500000", "90210"],
                 )
                 page.context.close()
 
@@ -382,7 +390,9 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                     context_for(str(body["student_id"]), advisor_id=v),
                 )
                 page = self._open(fake)
-                self.assertEqual(self._text(page, "#plbStudent .plb-smeta"), "ID 4500000 · AI")
+                self.assertEqual(
+                    self._text(page, "#plbStudent .plb-smeta"), "Sample Student · 4500000"
+                )
                 page.context.close()
 
     # ── 6. Fetch while a student loads ───────────────────────────────────────
@@ -491,12 +501,12 @@ class PlannerBoardGapsTests(PlannerBoardCase):
             " (CS112 Programming I, CS112 Discrete Structures)."
         )
 
-    def test_a_section_line_that_wraps_never_covers_the_name_or_leaves_its_row(self) -> None:
-        row = "#plbTable tbody[data-group='could'] tr[data-code='STAT305']"
+    def test_a_course_line_that_wraps_never_covers_the_name_or_leaves_its_row(self) -> None:
+        row = "#plbAvailList .plb-arow[data-code='STAT305']"
         geometry = """(sel) => {
           const row = document.querySelector(sel);
-          const box = (n) => { const r = n.getBoundingClientRect(); return {top: r.top, bottom: r.bottom, height: r.height, width: r.width}; };
-          return {row: box(row), name: box(row.querySelector('.plb-name')), text: box(row.querySelector('.plb-sc-t'))};
+          const box = (n) => { const r = n.getBoundingClientRect(); return {top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height, width: r.width}; };
+          return {row: box(row), name: box(row.querySelector('.plb-nm')), text: box(row.querySelector('.plb-meta'))};
         }"""
         for width in (1440, 390):
             for font in ("app", "wide"):
@@ -504,15 +514,16 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                     page = self._open(_fake(), width=width, font=font)
                     # Half the width the line takes now: it has to wrap, whatever the font.
                     half = page.evaluate(geometry, row)["text"]["width"] / 2
-                    page.add_style_tag(content=f"{row} .plb-sc-btn {{ max-width: {half:.1f}px; }}")
+                    page.add_style_tag(content=f"{row} .plb-meta {{ max-width: {half:.1f}px; }}")
                     boxes = page.evaluate(geometry, row)
-                    self.assertGreater(boxes["text"]["height"], 24, boxes)  # two lines or more
-                    self.assertGreaterEqual(
-                        boxes["text"]["top"], boxes["name"]["bottom"] - 0.5, boxes
+                    name, text = boxes["name"], boxes["text"]
+                    # the line is under the name or beside it, never over it
+                    under = text["top"] >= name["bottom"] - 0.5
+                    beside = (
+                        text["left"] >= name["right"] - 0.5 or text["right"] <= name["left"] + 0.5
                     )
-                    self.assertLessEqual(
-                        boxes["text"]["bottom"], boxes["row"]["bottom"] + 0.5, boxes
-                    )
+                    self.assertTrue(under or beside, boxes)
+                    self.assertLessEqual(text["bottom"], boxes["row"]["bottom"] + 0.5, boxes)
 
     def test_nothing_overflows_at_three_widths_in_both_languages_and_both_fonts(self) -> None:
         crowded = _multi(
@@ -558,7 +569,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
                     page.click("#plbReview")
                     expect(page.locator("#plbApplyDialog")).to_be_visible()
                     page.click("#plbApplyCancel")
-                    page.click("#plbTable tr[data-code='AI342'] [data-act='remove']")
+                    page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
                     page.click("#plbReset")
                     found += page.evaluate(OVERFLOWS)
                     if found:

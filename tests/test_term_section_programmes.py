@@ -1074,6 +1074,73 @@ def test_planner_programme_only_flag_controls_catalogue_scope() -> None:
     assert wrong_gender.id not in catalog(False)
 
 
+def test_planner_catalogue_sections_carry_credit_hours() -> None:
+    """The picker lists courses of every programme: each section says how many credits the
+    course is worth - the student's programme row first, else the course row, else null."""
+    from core.models import Course
+
+    student = Student.objects.create(
+        student_id=910009, name="AI Student", program="AI", section="M"
+    )
+    own = _section("M1", course_key="CS112")
+    fallback = _section("M1", course_key="MA101")
+    unknown = _section("M1", course_key="XX900")
+    for section in (own, fallback, unknown):
+        TermSectionProgram.objects.create(term_section=section, program="AI")
+    ProgrammeRequirement.objects.create(program="AI", course_code="CS112", credit_hours=4)
+    Course.objects.create(course_code="CS112", credit_hours=3)  # the programme row wins
+    Course.objects.create(course_code="MA101", credit_hours=2)
+    Course.objects.create(course_code="XX900", credit_hours=0)  # 0 = not known
+    # Rows that disagree on one code are unknown, not an arbitrary one of them.
+    for_code = _section("M1", course_key="PH201")
+    spaced = _section("M1", course_key="BI110")
+    # No stored key: the key is the code and the number, as the page derives it.
+    keyless = TermSection.objects.create(
+        course_code="CH", course_number="301", course_key="", course_name="Chemistry", section="M1"
+    )
+    for section in (for_code, spaced, keyless):
+        TermSectionProgram.objects.create(term_section=section, program="AI")
+    Course.objects.create(course_code="PH201", credit_hours=3)
+    Course.objects.create(course_code="PH 201", credit_hours=4)
+    Course.objects.create(course_code="BI 110", credit_hours=2)  # held with a space
+    Course.objects.create(course_code="CH301", credit_hours=5)
+    Course.objects.create(course_code="ZZ999", credit_hours=1)  # no section of it: never read
+    client = _staff_planner_client("planner-credit-hours")
+
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as queries:
+        response = client.post(
+            "/ops/planner/sections-catalog/",
+            data=json.dumps(
+                {
+                    "academic_year": "1448",
+                    "term": "1",
+                    "student_id": student.student_id,
+                    "program_sections_only": False,
+                }
+            ),
+            content_type="application/json",
+        )
+    assert response.status_code == 200, response.json()
+    hours = {
+        (row["course_key"] or row["course_code"] + row["course_number"]): row["credit_hours"]
+        for row in response.json()["sections"]
+    }
+    assert hours == {
+        "CS112": 4,
+        "MA101": 2,
+        "XX900": None,
+        "PH201": None,
+        "BI110": 2,
+        "CH301": 5,
+    }
+    # One read of the courses table (only the codes of the reply), never one per section.
+    course_reads = [q for q in queries.captured_queries if 'FROM "courses"' in q["sql"]]
+    assert len(course_reads) == 1
+    assert "ZZ999" not in course_reads[0]["sql"]
+
+
 def test_planner_build_maps_controls_to_programme_and_capacity_contracts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1255,10 +1322,10 @@ def test_staff_planner_ui_uses_clear_positive_control_names() -> None:
     )
     script = (root / "static" / "js" / "page-planner-board.js").read_text(encoding="utf-8")
 
-    assert 'id="plbRuleProg" type="checkbox"' in template
-    assert 'id="plbRuleFull" type="checkbox"' in template
-    assert "Only this student's programme" in template
-    assert "Include sections with no seats left" in template
+    assert 'id="plbProgOnly"' in template
+    assert 'id="plbFullIn" type="checkbox"' in template
+    assert "This programme" in template
+    assert "Use full sections" in template
     assert "program_sections_only: state.rules.programOnly," in script
     assert "allow_full_sections: state.rules.allowFull," in script
     assert "mustTake: IS_AR ? 'إلزامي' : 'Must-take'" in script

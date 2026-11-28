@@ -108,7 +108,6 @@ PROBE_ROW = (
   return {row: isRow(), tickGap: tickGap(), axisGap: axisGap(), inside: inside()};
 }"""
 )
-PROBE_SIZE = "(size) => {" + _GAPS + " won.dataset.size = size; return wonState(); }"
 # One style element whose rules exaggerate a text; replaced on each call.
 STRESS = """(css) => {
   let style = document.getElementById('plbStress');
@@ -119,16 +118,6 @@ TEXT_WIDTH = """(selector) => {
   const r = document.createRange();
   r.selectNodeContents(document.querySelector(selector));
   return r.getBoundingClientRect().width;
-}"""
-# The result may never sit on top of a tick of its own line.
-TOUCHES_A_TICK = """() => {
-  const line = document.querySelector('#plbGrad .plb-rwl--opt');
-  const won = line.querySelector('.plb-won');
-  if (!won) return [];
-  const w = won.getBoundingClientRect();
-  return [...line.querySelectorAll('.plb-tk')].map((t) => t.getBoundingClientRect())
-    .filter((t) => !(w.left >= t.right - 1 || w.right <= t.left + 1 || w.bottom <= t.top + 1 || w.top >= t.bottom - 1))
-    .map((t) => [Math.round(t.left), Math.round(t.top)]);
 }"""
 
 
@@ -175,8 +164,12 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             "word": self._grad(page, f".plb-rwl--{kind} .plb-st b"),
             "label": self._grad(page, f".plb-rwl--{kind} .plb-mic"),
             "ticks": self._grad(page, f".plb-rwl--{kind} .plb-tk"),
-            "won": self._grad(page, f".plb-rwl--{kind} .plb-won"),
-            "land": self._grad(page, f".plb-rwl--{kind} .plb-land b"),
+            "won": self._grad(page, "#plbGradPill:not([hidden])") if kind == "opt" else [],
+            "land": (
+                self._grad(page, "#plbGradTop:not([hidden]) #plbGradTerm")
+                if kind == "opt"
+                else self._grad(page, f".plb-rwl--{kind} .plb-land b")
+            ),
             "units": page.locator(f"{base} .plb-u").count(),
             "ends": page.locator(f"{base} .plb-tk--end").count(),
         }
@@ -290,39 +283,34 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             self.assertAlmostEqual(box["x"], reg[i]["x"], delta=1)
             self.assertAlmostEqual(box["x"], axis[i]["x"], delta=1)
         self.assertAlmostEqual(reg[4]["x"], axis[4]["x"], delta=1)
-        # The shorter line's landing uses the column it leaves free.
-        landing = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-land")[0]
-        self.assertAlmostEqual(landing["left"], reg[4]["left"], delta=1)
+        # Only the registered line ends with its term; the option's result is the header's.
+        self.assertEqual(page.locator("#plbGrad .plb-rwl--opt .plb-land").count(), 0)
+        self.assertAlmostEqual(
+            self._boxes(page, "#plbGrad .plb-rwl--reg .plb-land")[0]["left"],
+            reg[4]["right"],
+            delta=40,
+        )
         # The option's ticks are taller than the quiet line's.
         self.assertGreater(opt[0]["bottom"] - opt[0]["top"], reg[0]["bottom"] - reg[0]["top"])
 
     def test_sooner_later_same_and_no_result(self) -> None:
         page, _fake = self._projected()
-        # Beside the guidance column the band is narrow; given room to spare the good news is the
-        # largest text of the page (how it steps down is the fit tests' business).
-        page.evaluate(RESIZE, self.ROOMY)
-        size = "n => getComputedStyle(n).fontSize"
-        color = "n => getComputedStyle(n).color"
-        won = page.locator("#plbGrad .plb-rwl--opt .plb-won")
-        self.assertEqual(won.get_attribute("data-result"), "sooner")
-        sooner = (won.evaluate(size), won.evaluate(color))
+        pill = page.locator("#plbGradPill")
+        color = "n => getComputedStyle(n).backgroundColor"
+        self.assertEqual(pill.get_attribute("data-result"), "sooner")
+        self.assertEqual(self._text(page, "#plbGradPill"), "1 term sooner")
+        sooner = pill.evaluate(color)
         self._pick(page, "B3")
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["1 term later"])
-        self.assertEqual(won.get_attribute("data-result"), "later")
-        # Good news is the largest text of the page; bad news is bold warning ink at reading size,
-        # which always fits beside its own line.
-        self.assertEqual(sooner[0], "22px")
-        self.assertEqual(won.evaluate(size), "15px")
-        self.assertEqual(won.evaluate("n => getComputedStyle(n).fontWeight"), "700")
-        self.assertNotEqual(won.evaluate(color), sooner[1])
-        later = won.evaluate(color)
+        self.assertEqual(self._text(page, "#plbGradPill"), "1 term later")
+        self.assertEqual(pill.get_attribute("data-result"), "later")
+        self.assertNotEqual(pill.evaluate(color), sooner)
         self._pick(page, "B2")
-        self.assertEqual(later, page.locator("#plbTab_B2 .plb-tab-warn").evaluate(color))
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["Same term"])
-        self.assertEqual(won.get_attribute("data-result"), "same")
-        self.assertEqual(won.evaluate("n => getComputedStyle(n).fontWeight"), "600")
-        self.assertLess(float(won.evaluate(size)[:-2]), float(sooner[0][:-2]))
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-land b"), ["Term 1, 1450"])
+        self.assertEqual(self._text(page, "#plbGradPill"), "Same term")
+        self.assertEqual(pill.get_attribute("data-result"), "same")
+        self.assertEqual(self._text(page, "#plbGradTerm"), "Term 1, 1450")
+        # The runway no longer repeats the result: no big result, no landing on the option's line.
+        self.assertEqual(page.locator("#plbGrad .plb-won").count(), 0)
+        self.assertEqual(page.locator("#plbGrad .plb-rwl--opt .plb-land").count(), 0)
         # A screen reader hears the line alone: its sentence says which term is meant.
         self.assertIn(
             "completes Term 1, 1450, the same term as registered. Credits per term:",
@@ -332,7 +320,8 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
     def test_a_null_difference_shows_no_result(self) -> None:
         page, _fake = self._projected(_reply(B1=forecast([15, 18, 18, 15], delta=None)))
         self.assertEqual(page.locator("#plbGrad .plb-won").count(), 0)
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-land b"), ["Term 2, 1449"])
+        self.assertEqual(self._text(page, "#plbGradTerm"), "Term 2, 1449")
+        expect(page.locator("#plbGradPill")).to_be_hidden()
         self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-num"), ["4"])
 
     def test_another_tab_redraws_its_own_figures(self) -> None:
@@ -583,7 +572,7 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
 
     def test_a_reply_after_a_plan_change_still_shows_with_the_refresh_line(self) -> None:
         page, fake = self._held()
-        self._rules(page, swap=True)
+        self._rules(page, full=True)
         fake.pending_projection.pop().fulfill(json=READY)
         expect(page.locator("#plbGradLine")).to_be_hidden()
         self.assertEqual(page.locator("#plbGrad .plb-rw").count(), 1)
@@ -843,17 +832,17 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
 
     def test_arabic_band_text(self) -> None:
         page, _fake = self._projected(language="ar")
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["أبكر بفصل واحد"])
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-land b"), ["الفصل 2، 1449"])
+        self.assertEqual(self._text(page, "#plbGradPill"), "أبكر بفصل واحد")
+        self.assertEqual(self._text(page, "#plbGradTerm"), "الفصل 2، 1449")
         self.assertEqual(self._grad(page, ".plb-axn"), ["الساعات في كل فصل"])
         self.assertEqual(
             self._text(page, "#plbGradAsm"),
             "يشمل هذا الفصل (1448/1) · يفترض اجتياز المقررات · حتى 18 ساعة في كل فصل لاحق",
         )
         self._pick(page, "B3")
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["أبعد بفصل واحد"])
+        self.assertEqual(self._text(page, "#plbGradPill"), "أبعد بفصل واحد")
         self._pick(page, "B2")
-        self.assertEqual(self._grad(page, ".plb-rwl--opt .plb-won"), ["نفس الفصل"])
+        self.assertEqual(self._text(page, "#plbGradPill"), "نفس الفصل")
         # A screen reader hears the line alone: its sentence says which term is meant.
         self.assertIn(
             "، نفس فصل التسجيل الحالي.", self._text(page, "#plbGrad .plb-rwl--opt .sr-only")
@@ -899,13 +888,12 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             "flex",
         )
         label = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-rl")[0]
-        landing = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-land")[0]
         opt = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-tk")
         reg = self._boxes(page, "#plbGrad .plb-rwl--reg .plb-tk")
         axis = self._boxes(page, "#plbGrad .plb-ax")
         self.assertGreaterEqual(opt[0]["top"], label["bottom"] - 1)
-        self.assertGreater(landing["left"], label["right"] - 1)
-        self.assertLess(landing["top"], opt[0]["top"])
+        # The option's line has no landing block: its result is the band's header.
+        self.assertEqual(page.locator("#plbGrad .plb-rwl--opt .plb-land").count(), 0)
         # The ticks sit under their label and the axis under the ticks; both lines share the columns.
         self.assertEqual(len(axis), 5)
         for i, box in enumerate(opt):
@@ -921,11 +909,6 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertGreaterEqual(caption["top"], axis[0]["bottom"] - 1)
         self.assertLess(caption["left"], axis[0]["right"])
         # The result is on one line with the completion term, at the smaller size.
-        won = page.locator("#plbGrad .plb-rwl--opt .plb-won")
-        self.assertLess(float(won.evaluate("n => getComputedStyle(n).fontSize")[:-2]), 18)
-        won_box = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-won")[0]
-        completion = self._boxes(page, "#plbGrad .plb-rwl--opt .plb-land b")[0]
-        self.assertAlmostEqual(won_box["bottom"], completion["bottom"], delta=8)
         self.assertEqual(page.evaluate(OVERFLOWS), [])
 
     def test_the_row_layout_applies_from_each_spans_width(self) -> None:
@@ -1086,14 +1069,15 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         self.assertEqual(page.get_attribute("#plbTab_B1", "data-probe"), "1")
         self.assertEqual(page.get_attribute("#plbGrad .plb-rw", "data-probe"), "1")
 
-    def test_the_band_keeps_its_height_when_the_forecast_lands_and_between_tabs(self) -> None:
-        # The tabs sit under the band: they must not jump away from the pointer. The band is as
+    def test_the_tab_strip_is_only_pushed_down_never_up_when_the_forecast_lands(self) -> None:
+        # What this proves: when the forecast lands, and when another tab is chosen, the tab strip
+        # is only ever pushed down, never pulled up. Side by side, the band keeps the height it
+        # reached, so the strip does not move after landing. The band is as
         # tall as its tallest column. The guidance is there from the build and the runway arrives
         # with the forecast, so landing may add what the runway has beyond the guidance; after
         # that the band never gets shorter, so changing tab does not pull the tabs up. On a phone
-        # the page is scrolled to the tabs by then and the browser's scroll anchoring holds them:
-        # there the strip does not move when the forecast lands.
-        top = "document.getElementById('plbStrip').getBoundingClientRect().top"
+        # the columns stack, nothing is held, and the strip is only ever pushed down.
+        top = "document.getElementById('plbStrip').getBoundingClientRect().top - document.getElementById('plbRoot').getBoundingClientRect().top"
         for kwargs in (
             {"width": 1152},
             {"width": 1152, "language": "ar"},
@@ -1119,9 +1103,10 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
                 page.click("#plbTab_B1")
                 self.assertAlmostEqual(page.evaluate(top), registered, delta=2, msg=kwargs)
             else:
-                self.assertAlmostEqual(landed, loading, delta=2, msg=str(kwargs))
-                page.click("#plbTabRegistered")
-                self.assertAlmostEqual(page.evaluate(top), loading, delta=2, msg=str(kwargs))
+                # One column: the strip sits under the whole band, which now lives in the options
+                # zone below the Build button, so the runway landing pushes it down. It is never
+                # pulled up (the redraw keeps the keyboard without scrolling the page).
+                self.assertGreaterEqual(landed, loading - 2, msg=str(kwargs))
 
     def test_no_assumptions_when_no_line_is_drawn(self) -> None:
         nothing = projection_reply(
@@ -1234,9 +1219,6 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             self.assertTrue(state["inside"], where)
         elif state["tickGap"] < 2 - 0.01:
             self.assertEqual(state["unit"], "off", where)  # nothing more to give up
-        if state["size"]:
-            self.assertTrue(state["row"] and state["result"] == "sooner", where)
-            self.assertTrue(state["oneLine"] and state["wonInside"], where)
         # The most that fits: one step denser, the unit back, the row layout back, one size up.
         if step != 1 and columns > 1:
             denser = {2: 1, 4: 2, 0: 4}[step]
@@ -1250,9 +1232,6 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
                 forced["tickGap"] < 2 or forced["axisGap"] < 4 or not forced["inside"],
                 (where, forced),
             )
-        if state["row"] and state["result"] == "sooner" and state["size"] != "xl":
-            bigger = page.evaluate(PROBE_SIZE, "lg" if state["size"] == "" else "xl")
-            self.assertFalse(bigger["oneLine"] and bigger["wonInside"], (where, bigger))
 
     def _sooner(self, registered: int) -> dict:
         reply = _reply(B1=forecast([15] + [18] * (registered - 3) + [12], delta=-1))
@@ -1273,9 +1252,6 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
             self.assertTrue(state["row"], where)
             self.assertEqual(state["labelled"], [0, 1, 2, 3, 4], where)
             self.assertTrue(state["unitShown"], where)
-            self.assertEqual(state["size"], "xl", where)
-            self.assertEqual(state["fontSize"], "22px", where)
-            self.assertTrue(state["oneLine"] and state["wonInside"], where)
             self._check_fit(page, state, where)
 
     def test_whatever_the_width_language_or_font_the_runway_fits(self) -> None:
@@ -1360,60 +1336,21 @@ class PlannerBoardGraduationBrowserTests(PlannerBoardCase):
         state = self._fit(page, self.ROOMY)
         self.assertEqual((state["row"], state["fit"]), (True, ""), state)
 
-    def test_the_result_is_as_large_as_its_line_allows(self) -> None:
-        sizes = {"xl": "22px", "lg": "18px", "": "15px"}
-        page, _fake = self._projected()
-        state = self._fit(page, self.ROOMY)
-        self.assertEqual((state["size"], state["fontSize"]), ("xl", "22px"), state)
-        # Stretch the text a pixel per letter at a time: the size steps down once, then again,
-        # and never back up. Each state is checked for being the largest that fits.
-        seen: list[str] = []
-        wrapped = False
-        for spacing in range(41):
-            page.evaluate(
-                STRESS, f"#plbGrad .plb-won {{ letter-spacing: {spacing}px !important; }}"
-            )
-            page.click("#plbTab_B1")  # a redraw fits the runway again
-            state = self._fit(page)
-            if not state["row"]:
-                break  # a single word no longer fits its line: stacked (the next test)
-            self.assertEqual(state["fontSize"], sizes[state["size"]], state)
-            self._check_fit(page, state, ("result", spacing))
-            if not seen or seen[-1] != state["size"]:
-                seen.append(state["size"])
-            wrapped = wrapped or (state["size"] == "" and not state["oneLine"])
-        self.assertEqual(seen, ["xl", "lg", ""], seen)
-        # Too wide for one line even at reading size, it wraps where it is: the runway stays a
-        # row (and inside the band, which _check_fit asserted) until a single word has no room.
-        self.assertTrue(wrapped)
-        # Bad news and "same term" are never enlarged; stacked, nothing is.
-        page, _fake = self._projected()
-        for tab, kind, size in (("B3", "later", "15px"), ("B2", "same", "13px")):
-            self._pick(page, tab)
-            state = self._fit(page)
-            self.assertEqual((state["result"], state["size"], state["fontSize"]), (kind, "", size))
-        page, _fake = self._projected(width=390, height=900)
-        state = self._fit(page)
-        self.assertEqual((state["row"], state["size"]), (False, ""))
-        self.assertLessEqual(float(state["fontSize"][:-2]), 15)  # reading size, a phone's own
-
-    def test_the_result_and_the_completion_terms_never_leave_the_band(self) -> None:
+    def test_the_completion_term_never_leaves_the_band(self) -> None:
         for registered in (5, 8, 14):
             reply = READY if registered == 5 else self._sooner(registered)
             for language, font in (("en", "wide"), ("ar", "wide")):
                 page, _fake = self._projected(reply, language=language, font=font)
                 # Even with a text far too wide for any size, and whatever the layout.
                 page.add_style_tag(
-                    content="#plbGrad .plb-won, #plbGrad .plb-land b { letter-spacing: 5px !important; }"
+                    content="#plbGrad .plb-land b { letter-spacing: 5px !important; }"
                 )
                 for tab in ("B1", "B2", "B3") if registered == 5 else ("B1",):
                     self._pick(page, tab)
                     for width in (440, 520, 620, 800):
                         state = self._fit(page, width)
                         where = (registered, language, tab, width)
-                        self.assertTrue(state["wonInside"], where)
                         self.assertTrue(state["inside"], where)
-                        self.assertEqual(page.evaluate(TOUCHES_A_TICK), [], where)
 
     def test_stacked_ticks_stay_on_one_row_for_any_number_of_columns(self) -> None:
         for columns in (6, 7, 11, 13, 16):

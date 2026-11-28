@@ -10,6 +10,8 @@
 
   const IS_AR = document.documentElement.lang === 'ar';
   const $ = (id) => document.getElementById(id);
+  // Phones: the picker shows one panel at a time and the section popover is a sheet under its row.
+  const PHONE = window.matchMedia('(max-width: 768px)');
 
   /* ── Strings ───────────────────────────────────────────────────────────── */
   const forms = (one, two, few, many) => ({ one, two, few, many, other: many });
@@ -29,23 +31,15 @@
     noStudentHint: IS_AR ? 'أدخل رقم الطالب أعلاه واضغط جلب.' : 'Enter a student ID above and press Fetch.',
     gpa: IS_AR ? 'المعدل التراكمي' : 'GPA',
     registeredCredits: IS_AR ? 'مسجّل هذا الفصل' : 'Registered this term',
-    creditCap: IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap',
     advisory: (max) => (max ? (IS_AR ? `إرشادي · الأقصى ${max}` : `advisory · max ${max}`) : (IS_AR ? 'إرشادي' : 'advisory')),
     programme: IS_AR ? 'البرنامج' : 'Programme',
-    idLabel: IS_AR ? 'الرقم' : 'ID',
     registered: IS_AR ? 'المسجّل' : 'Registered',
-    registeredFixed: IS_AR ? 'المسجّل · ثابت هنا' : 'Registered · fixed here',
-    registeredIgnored: IS_AR ? 'المسجّل · مُتجاهَل في هذا البناء' : 'Registered · ignored in this build',
-    newInPlan: IS_AR ? 'جديد في هذه الخطة' : 'New in this plan',
-    mustTake: IS_AR ? 'إلزامي' : 'Must-take',
-    couldAdd: IS_AR ? 'يمكن إضافته' : 'Could be added',
     blocked: IS_AR ? 'غير مؤهل' : 'Blocked',
     missing: IS_AR ? 'ناقص:' : 'Missing:',
     inThisPlan: IS_AR ? '(ضمن هذه الخطة)' : '(in this plan)',
     prereqNotMet: IS_AR ? 'المتطلبات غير مستوفاة' : 'Prerequisites not met',
     anySection: IS_AR ? 'أي شعبة' : 'Any section',
     noRegistered: IS_AR ? 'لا مقررات مسجلة في هذا الفصل.' : 'No registered courses this term.',
-    nothingAdded: IS_AR ? 'لم تُضف مقررات بعد.' : 'No courses added yet.',
     loadFirstCourses: IS_AR ? 'حمّل طالبًا لعرض مقرراته.' : 'Load a student to see their courses.',
     loadingPlan: IS_AR ? 'جارٍ تحميل خطة الطالب…' : "Loading the student's plan…",
     noSections: IS_AR ? 'لا شُعب هذا الفصل' : 'No sections this term',
@@ -60,8 +54,6 @@
     noFreeDay: IS_AR ? 'لا يوم فارغ' : 'no free day',
     noTimedClasses: IS_AR ? 'بلا محاضرات' : 'No timed classes',
     removeCourse: (code) => (IS_AR ? `إزالة ${code}` : `Remove ${code}`),
-    addCourse: (code) => (IS_AR ? `إضافة ${code}` : `Add ${code}`),
-    mustTakeFor: (code) => (IS_AR ? `إلزامي ${code}` : `Must-take ${code}`),
     registeredLock: IS_AR ? 'مسجّل' : 'Registered',
     added: (code) => (IS_AR ? ['أُضيف ', bdi(code), ' إلى الخطة.'] : ['Added ', bdi(code), ' to the plan.']),
     removed: (code) => (IS_AR ? ['أُزيل ', bdi(code), ' من الخطة.'] : ['Removed ', bdi(code), ' from the plan.']),
@@ -104,7 +96,64 @@
       if (!list.length) return [IS_AR ? 'غير مرتبط ببرنامج' : 'Unassigned'];
       return [IS_AR ? (list.length === 1 ? 'لبرنامج ' : 'لبرامج ') : 'For ', bdi(list.join(' / '))];
     },
-    resetPlan: IS_AR ? 'العودة إلى المقترح' : 'Reset to suggestions',
+    // The course picker (zone 02)
+    srcRecommended: (n) => (IS_AR ? `مقترحة لهذا الطالب (${n})` : `Recommended for this student (${n})`),
+    srcPlan: (n) => (IS_AR ? `خطة هذا الطالب (${n})` : `This student's plan (${n})`),
+    srcEligible: (n) => (IS_AR ? `كل ما يمكنه تسجيله (${n})` : `Everything they can register (${n})`),
+    srcAll: (n) => (n === null ? (IS_AR ? 'مقررات كل البرامج' : "All programmes' courses") : (IS_AR ? `مقررات كل البرامج (${n})` : `All programmes' courses (${n})`)),
+    mustTake: IS_AR ? 'إلزامي' : 'Must-take',
+    tabAvail: (n) => (IS_AR ? `المتاحة · ${n}` : `Available · ${n}`),
+    tabPlan: (n) => (IS_AR ? `خطتك · ${n}` : `Your plan · ${n}`),
+    addCourse: (code, secs) => {
+      if (!secs.length) return IS_AR ? `إضافة ${code}` : `Add ${code}`;
+      const list = IS_AR ? secs.join(' و') : (secs.length > 1 ? `${secs.slice(0, -1).join(', ')} and ${secs[secs.length - 1]}` : secs[0]);
+      return IS_AR ? `إضافة ${code}، الشُعب ${list}` : `Add ${code}, section${secs.length > 1 ? 's' : ''} ${list}`;
+    },
+    phoneSum: (n, load) => `${T.courseWord(n)} · ${load}`,
+    availHead: (n) => `${IS_AR ? 'المتاحة' : 'Available'} · ${T.courseWord(n)}`,
+    planHead: (n) => `${IS_AR ? 'خطتك' : 'Your plan'} · ${T.courseWord(n)}`,
+    tickedLine: (k, cr) => (IS_AR ? `${k} محدد · ${cr} ${T.creditUnit(cr)}` : `${k} ticked · ${cr} cr`),
+    plannedN: (n) => (IS_AR ? `${n} مخطَّطة` : `${n} planned`),
+    registeredN: (n) => (IS_AR ? `${n} مسجّلة` : `${n} registered`),
+    overLimitN: (n) => (IS_AR ? `${n} ${T.creditUnit(n)} فوق الحد` : `${n} cr over the limit`),
+    tagRecommended: IS_AR ? 'مقترح' : 'Recommended',
+    tagCompare: IS_AR ? 'للمقارنة فقط' : 'Compare only',
+    compareWhy: IS_AR
+      ? 'لا شعبة من برنامج هذا الطالب: يمكن بناؤه فقط مع «الشُعب من: أي برنامج».'
+      : "No section of this student's programme: it can be built only with Sections from: Any programme.",
+    tagFewSeats: IS_AR ? 'مقاعد قليلة' : 'Few seats',
+    creditsUnknown: IS_AR ? '؟ ساعة' : '? cr',
+    skippedUnknown: (codes, added) => [...(added ? [IS_AR ? `أُضيفت ${T.courseWord(added)}. ` : `Added ${added}. `] : []), IS_AR ? 'لم تُضف لأن ساعاتها غير معروفة: ' : 'Not added, their credits are not known: ', ...codes.flatMap((c, i) => (i ? [IS_AR ? '، ' : ', ', bdi(c)] : [bdi(c)]))],
+    creditsUnknownWhy: IS_AR ? 'عدد ساعات المقرر غير معروف، لذا لا يمكن إضافته.' : 'The credits of this course are not known, so it cannot be added.',
+    leftTag: (n) => (IS_AR ? `${n} متبقٍ` : `${n} left`),
+    secHead: IS_AR ? 'الشعبة' : 'Sec',
+    meetsHead: IS_AR ? 'اللقاء' : 'Meets',
+    seatsHead: IS_AR ? 'المقاعد' : 'Seats',
+    addOnly: (n) => (IS_AR ? `أضف ${T.sectionWord(n)} فقط` : `Add only these ${T.sectionWord(n)}`),
+    blockedFold: (n) => (IS_AR ? `${n} لا يمكن تسجيلها بعد · متطلبات سابقة ناقصة` : `${n} can't be registered yet · prerequisites missing`),
+    sectionsOf: (code) => (IS_AR ? `شُعب ${code}` : `Sections of ${code}`),
+    tickCourse: (code) => (IS_AR ? `تحديد ${code}` : `Tick ${code}`),
+    tickSection: (code, label) => (IS_AR ? `تحديد الشعبة ${label} من ${code}` : `Tick section ${label} of ${code}`),
+    tickPlanned: (code) => (IS_AR ? `اختيار ${code} في الخطة` : `Select ${code} in the plan`),
+    nothingHere: IS_AR ? 'لا مقررات لإضافتها من هذه القائمة.' : 'Nothing to add from this list.',
+    allLoading: IS_AR ? 'جارٍ تحميل كل مقررات هذا الفصل…' : 'Loading every course offered this term…',
+    allFailed: IS_AR ? 'تعذّر تحميل قائمة كل المقررات.' : 'The list of all courses could not be loaded.',
+    sectionsBtn: (labels) => (IS_AR
+      ? `${labels.length === 1 ? 'الشعبة' : 'الشعب'} ${labels.join('، ')}`
+      : `${labels.length === 1 ? 'Section' : 'Sections'} ${labels.join(', ')}`),
+    sectionsOfPlanned: (code, label) => `${code}: ${label}`,
+    required: IS_AR ? 'إلزامي' : 'Required',
+    requiredOn: (code) => (IS_AR ? `${code} إلزامي، اضغط للإلغاء` : `${code} is required, press to undo`),
+    makeRequired: (code) => (IS_AR ? `اجعل ${code} إلزاميًا` : `Make ${code} required`),
+    registeredKept: IS_AR ? 'مسجّل · مُبقى' : 'Registered · kept',
+    hintA: IS_AR ? 'حدّد مقررات من القائمة المجاورة واضغط ' : 'Tick courses on the left and press ',
+    hintB: IS_AR ? ' أو انقر مرتين على أحدها' : ', or double-click one',
+    xAdd: IS_AR ? 'إضافة المقررات المحدّدة إلى الخطة' : 'Add the ticked courses',
+    xAddAll: IS_AR ? 'إضافة كل المقررات المعروضة' : 'Add every course shown',
+    xRem: IS_AR ? 'إزالة المقررات المحدّدة من الخطة' : 'Remove the ticked courses from the plan',
+    xRemAll: IS_AR ? 'إزالة كل مقررات الخطة' : 'Remove every planned course',
+    addedMany: (n) => (IS_AR ? `أُضيفت ${T.courseWord(n)} إلى الخطة.` : `Added ${n} courses to the plan.`),
+    removedMany: (n) => (IS_AR ? `أُزيلت ${T.courseWord(n)} من الخطة.` : `Removed ${n} courses from the plan.`),
     resetDone: (n) => (IS_AR
       ? `أُعيدت المقررات إلى المقترح (${n}).`
       : `Courses reset to the ${n} suggested.`),
@@ -126,13 +175,17 @@
       return IS_AR ? 'الحد الإرشادي غير معروف.' : 'The advisory cap is not known.';
     },
     maxError: (max) => (IS_AR ? `أدخل عددًا صحيحًا من 1 إلى ${max}.` : `Enter a whole number from 1 to ${max}.`),
-    // The summary of the three rules that are not on the board.
-    ruleProg: { true: IS_AR ? 'شُعب البرنامج فقط' : 'This programme only', false: IS_AR ? 'أي برنامج' : 'Any programme' },
-    ruleFull: { true: IS_AR ? 'الشُعب الممتلئة مسموحة' : 'Full sections allowed', false: IS_AR ? 'بلا شُعب ممتلئة' : 'No full sections' },
-    ruleSwap: { true: IS_AR ? 'اقتراح تبديلات' : 'Suggest swaps', false: IS_AR ? 'بلا تبديلات' : 'No swaps' },
+    // The student band and the current-timetable disclosure.
+    termButton: (year, term) => (IS_AR ? [`الفصل ${term}، `, bdi(year)] : [`Term ${term}, `, bdi(year)]),
+    bandProgress: IS_AR ? 'التقدم' : 'Progress',
+    bandRegistered: IS_AR ? 'المسجّل الآن' : 'Registered now',
+    bandGraduates: IS_AR ? 'يتخرّج كما هو الحال' : 'Graduates as it stands',
+    afterFirstBuild: IS_AR ? 'بعد أول بناء' : 'After the first build',
+    curTTNone: IS_AR ? 'بلا محاضرات' : 'No timed classes',
+
     // Build, options and apply.
     buildFirst: IS_AR ? 'ابنِ الخيارات' : 'Build options',
-    rebuild: IS_AR ? 'أعد البناء' : 'Rebuild',
+    rebuild: IS_AR ? 'أعد بناء الخيارات' : 'Rebuild options',
     building: IS_AR ? 'جارٍ بناء الخيارات… قد يستغرق ذلك حتى 10 ثوانٍ' : 'Building options… this can take up to 10 seconds',
     planChanged: IS_AR ? 'تغيّرت الخطة. ابنِ الخيارات مرة أخرى لعرضها.' : 'The plan changed. Build again to see options.',
     buildFailed: IS_AR ? 'تعذّر بناء الخيارات. حاول مرة أخرى.' : 'The build failed. Try again.',
@@ -191,11 +244,29 @@
       : `${n} not scheduled`),
     notScheduledHere: IS_AR ? 'غير مجدول في هذا الخيار' : 'not scheduled in this option',
     review: IS_AR ? 'مراجعة وتطبيق' : 'Review and apply',
+    reviewOpt: (name) => (IS_AR ? ['مراجعة وتطبيق ', bdi(name)] : ['Review and apply ', bdi(name)]),
+    gradWith: (name) => (IS_AR ? ['يتخرّج مع ', bdi(name)] : ['Graduates with ', bdi(name)]),
+    glanceOpt: (name) => (IS_AR ? ['الخيار ', bdi(name), ' في لمحة'] : ['Option ', bdi(name), ' at a glance']),
+    glanceReg: IS_AR ? 'الأسبوع المسجّل في لمحة' : 'Registered week at a glance',
+    fLoad: IS_AR ? 'الحمل' : 'Load',
+    fCampus: IS_AR ? 'في الحرم' : 'On campus',
+    fFree: IS_AR ? 'اليوم الفارغ' : 'Free day',
+    fLast: IS_AR ? 'آخر محاضرة تنتهي' : 'Last class ends',
+    fNone: IS_AR ? 'لا يوجد' : 'none',
+    loadOf: (n, cap) => (IS_AR ? `${n} من ${cap} ساعة` : `${n} of ${cap} cr`),
+    loadOnly: (n) => (IS_AR ? `${n} ساعة` : `${n} cr`),
+    fOnly: IS_AR ? 'فقط' : 'only',
+    placedAll: IS_AR ? 'وُضعت جميع المقررات المخطَّطة' : 'All planned courses placed',
+    notPlaced: (n) => (IS_AR
+      ? pluralAr(n, forms('مقرر واحد لم يوضع', 'مقرران لم يوضعا', '{n} مقررات لم توضع', '{n} مقررًا لم يوضع'))
+      : `${n} not placed`),
+    offDay: (day) => (IS_AR ? `${day} إجازة` : `${day} off`),
+    offDays: (n) => (IS_AR ? `${n} أيام إجازة` : `${n} days off`),
+    keptTag: IS_AR ? 'مسجّل' : 'registered',
     comparisonOnly: IS_AR
       ? 'للمقارنة فقط: تتضمن الخيارات شُعب برامج أخرى'
       : "Comparison only: other programmes' sections are included",
     nothingToSave: IS_AR ? 'لا شُعب في هذا الخيار للحفظ' : 'This option has no sections to save',
-    safe: IS_AR ? 'لا يُحفظ شيء ولا يُحجز أي مقعد حتى تضغط تطبيق.' : 'Nothing is saved and no seat is held until you apply.',
     keptRegistered: (n) => (IS_AR
       ? `المقررات المسجّلة تبقى كما هي (${n}). لا يغيّرها هذا الحفظ.`
       : `Registered courses stay as they are (${n}). This save does not change them.`),
@@ -244,9 +315,6 @@
     tickBroken: IS_AR ? 'محدَّدة، لكن لم يعد استخدامها ممكنًا. ' : 'Ticked, but it can no longer be used. ',
     tickGone: IS_AR ? 'محدَّدة، لكنها ليست في قائمة الشُعب الحالية.' : 'Ticked, but it is not in the current section list.',
     noCatalog: IS_AR ? 'بيانات الشُعب غير متاحة.' : 'Section data is not available.',
-    readOnlyHint: IS_AR ? 'هذا المقرر ليس في الخطة بعد. أضفه لاختيار شُعبه.' : 'This course is not in the plan yet. Add it to choose its sections.',
-    removeFromPlan: IS_AR ? 'إزالة من الخطة' : 'Remove from plan',
-    addToPlan: IS_AR ? 'إضافة إلى الخطة' : 'Add to plan',
     // "Only these": several allowed sections for a course.
     onlyOpt: IS_AR ? 'هذه فقط' : 'Only these',
     onlyNone: IS_AR
@@ -254,13 +322,6 @@
       : 'Tick the sections the build may use. Until one is ticked, any section may be used.',
     onlyPicks: IS_AR ? 'يختار البناء إحدى الشُعب المحدَّدة.' : 'The build picks one of the ticked sections.',
     sixMax: IS_AR ? 'ست شُعب على الأكثر.' : 'Six sections at most.',
-    // The table's line: "Only §3", "Only §3 or §4", "Only 3 sections".
-    onlyLine: (labels) => {
-      const tag = (l) => bdi(`§${l}`);
-      if (labels.length === 1) return [IS_AR ? 'فقط ' : 'Only ', tag(labels[0])];
-      if (labels.length === 2) return [IS_AR ? 'فقط ' : 'Only ', tag(labels[0]), IS_AR ? ' أو ' : ' or ', tag(labels[1])];
-      return [`${IS_AR ? 'فقط ' : 'Only '}${T.sectionWord(labels.length)}`];
-    },
     // On an option's tab, the other ticked sections: " · or §4", " · or 2 others".
     orOthers: (labels) => {
       if (labels.length === 1) return [' · ', IS_AR ? 'أو ' : 'or ', bdi(`§${labels[0]}`)];
@@ -286,7 +347,6 @@
     altTag: (label) => [el('span', 'plb-alt-w', IS_AR ? 'بديل ' : 'alt '), bdi(`§${label}`)],
     legendAlt: IS_AR ? 'بديل' : 'Alternative',
     // Why these options.
-    whyButton: IS_AR ? 'لماذا هذه الخيارات' : 'Why these options',
     whyMethod: {
       A: IS_AR ? 'تحاول جدولة أكبر عدد ممكن من مقررات الخطة.' : 'Tries to schedule as many courses of the plan as it can.',
       B: IS_AR ? 'تبحث عن أسبوع مضغوط: أيام أقل وفجوات أقل معًا.' : 'Looks for a compact week: few days and few gaps together.',
@@ -423,6 +483,7 @@
   const DAY_SHORT = IS_AR
     ? { SUN: 'أحد', MON: 'اثن', TUE: 'ثلا', WED: 'أرب', THU: 'خم', FRI: 'جمع', SAT: 'سبت' }
     : { SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu', FRI: 'Fri', SAT: 'Sat' };
+  const DAY_FULL_EN = { SUN: 'Sunday', MON: 'Monday', TUE: 'Tuesday', WED: 'Wednesday', THU: 'Thursday', FRI: 'Friday', SAT: 'Saturday' };
   const DAY_FULL_AR = { SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس', FRI: 'الجمعة', SAT: 'السبت' };
   const DAY_ALIASES = {
     SUN: 'SUN', SUNDAY: 'SUN', 'الأحد': 'SUN', 'الاحد': 'SUN',
@@ -450,8 +511,13 @@
     recs: [],
     planCourses: null, // null = not loaded / failed; [] = loaded, nothing
     planState: 'idle', // idle | loading | ready | error
+    curTT: { digest: null, drawn: null }, // the registered week the disclosure last drew
+    bandEnds: '',      // the completion term the student band shows
+    planCredits: null, // {done, total}: the plan's credits passed and in all, once the plan reply is in
     catalog: null,     // Map normalised course code -> [section]; null = unknown
     shortlist: [],
+    pickTab: 'avail',  // phones: which picker panel shows (avail | plan)
+    hues: {},          // this student's course colours: code -> 1..6, kept while the plan changes
     suggested: [],     // the courses the page suggested when the student loaded ("Reset to suggestions")
     rules: { ...DEFAULT_RULES },
     shownElig: null,   // the eligibility the suggestions on screen were loaded with
@@ -468,7 +534,11 @@
     fetchKeyboard: false, // Fetch had the keyboard when a load disabled it (see releaseFetch)
     maxDirty: false,   // the max-credits field was typed in since it last showed the applied value
     moreOpen: false,   // the "More options" disclosure
-    detail: null,      // {code, name, credits, only}: the course whose detail panel is open
+    detail: null,      // {code, name, credits, only}: the planned course whose section popover is open
+    pick: null,        // the picker's own state (source, search, ticks, open rows); see newPick
+    allCatalog: null,  // Map course key -> [section]: every course offered this term (source 4); null = not loaded
+    allState: 'idle',  // idle | loading | ready | error
+    allGen: 0,         // whole-term catalogue requests: only the newest may write
     altShown: null,    // what the week drew as dashed blocks last (see syncAlt)
     whyOpen: false,    // the "Why these options" disclosure
     gradWhy: false,    // the "Course-level reasons" disclosure of the projection band
@@ -525,6 +595,8 @@
     x: [['path', { d: 'M6 6l12 12M18 6L6 18' }]],
     chev: [['path', { d: 'M6 9l6 6 6-6' }]],
     next: [['path', { d: 'M9 6l6 6-6 6' }]],
+    nextAll: [['path', { d: 'M5 6l6 6-6 6M12 6l6 6-6 6' }]],
+    pin: [['path', { d: 'M9 4h6l-1 6 3 3H7l3-3-1-6z' }], ['path', { d: 'M12 13v7' }]],
     tick: [['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]],
     warn: [['path', { d: 'M12 4l9 16H3z' }], ['path', { d: 'M12 10v4.5M12 17.2v.3' }]],
   };
@@ -605,9 +677,12 @@
     return node;
   }
   function findSection(tsid) {
-    if (!state.catalog || tsid === null || tsid === undefined) return null;
-    for (const list of state.catalog.values()) {
-      for (const section of list) if (String(section.term_section_id) === String(tsid)) return section;
+    if (tsid === null || tsid === undefined) return null;
+    for (const map of [state.catalog, state.allCatalog]) {
+      if (!map) continue;
+      for (const list of map.values()) {
+        for (const section of list) if (String(section.term_section_id) === String(tsid)) return section;
+      }
     }
     return null;
   }
@@ -635,8 +710,11 @@
   }
   function renderRules() {
     const r = state.rules;
-    $('plbRules2').textContent = [T.ruleProg[r.programOnly], T.ruleFull[r.allowFull], T.ruleSwap[r.swap]].join(' · ');
     // The controls on the board show the rules in force.
+    $('plbProgOnly').checked = r.programOnly;
+    $('plbProgAny').checked = !r.programOnly;
+    $('plbFullIn').checked = r.allowFull;
+    $('plbSwapIn').checked = r.swap;
     $('plbRegKeep').checked = r.mode === 'keep';
     $('plbRegIgnore').checked = r.mode === 'ignore';
     $('plbEligStrict').checked = r.eligibility === 'strict';
@@ -653,10 +731,11 @@
     const badge = $('plbRulesChanged');
     badge.hidden = changed === 0;
     badge.textContent = changed ? T.rulesChanged(changed) : '';
+    $('plbRulesUsual').hidden = changed !== 0;
   }
   const regulatoryMax = () => (state.student && finitePositive(state.student.regulatory_max_credits)) || 99;
   // Max credits as typed: '' is "not set" (null); a whole number from 1 to the regulatory maximum;
-  // anything else is refused. One reading for the dialog and for the field on the board.
+  // anything else is refused.
   function parseMaxCredits(raw) {
     // Arabic-Indic and Persian digits are read as the digits they are.
     const text = raw.trim().replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (c) => String(c.charCodeAt(0) & 15))
@@ -669,57 +748,10 @@
     return { ok: true, value };
   }
 
-  function fillRulesDialog(rules) {
-    $('plbRuleMode').value = rules.mode;
-    $('plbRuleElig').value = rules.eligibility;
-    $('plbRuleMax').value = rules.maxCredits === null ? '' : String(rules.maxCredits);
-    $('plbRuleProg').checked = rules.programOnly;
-    $('plbRuleFull').checked = rules.allowFull;
-    $('plbRuleSwap').checked = rules.swap;
-    $('plbRuleMaxErr').hidden = true;
-    $('plbRuleMaxErr').textContent = '';
-  }
-  // `preset` ({eligibility}) opens the dialog with that change already chosen, for Apply rules to confirm.
-  function openRulesDialog(preset) {
-    $('plbRuleMaxHint').textContent = maxHintText();
-    fillRulesDialog({ ...state.rules, ...(preset || {}) });
-    const note = $('plbRuleEligNote');
-    const dialog = $('plbRulesDialog');
-    if (preset && preset.eligibility) { note.dataset.flag = 'true'; dialog.dataset.from = 'eligibility'; }
-    else { delete note.dataset.flag; delete dialog.dataset.from; }
-    if (typeof dialog.showModal === 'function') dialog.showModal();
-    else dialog.setAttribute('open', '');
-    (preset && preset.eligibility ? $('plbRuleElig') : $('plbRuleMode')).focus();
-  }
-  function closeRulesDialog() {
-    const dialog = $('plbRulesDialog');
-    if (typeof dialog.close === 'function') dialog.close();
-    else dialog.removeAttribute('open');
-  }
-  function applyRulesDialog() {
-    const max = parseMaxCredits($('plbRuleMax').value);
-    if (!max.ok) {
-      const err = $('plbRuleMaxErr');
-      err.textContent = T.maxError(max.ceiling);
-      err.hidden = false;
-      $('plbRuleMax').setAttribute('aria-invalid', 'true');
-      $('plbRuleMax').focus();
-      return;
-    }
-    $('plbRuleMax').removeAttribute('aria-invalid');
-    closeRulesDialog();
-    commitRules({
-      mode: $('plbRuleMode').value === 'ignore' ? 'ignore' : 'keep',
-      eligibility: $('plbRuleElig').value === 'relaxed' ? 'relaxed' : 'strict',
-      maxCredits: max.value,
-      programOnly: $('plbRuleProg').checked,
-      allowFull: $('plbRuleFull').checked,
-      swap: $('plbRuleSwap').checked,
-    });
-  }
-  // What a change of rules does, for the dialog and for the controls on the board alike.
+  // What a change of rules does, whichever control made it.
   function commitRules(next) {
     const before = { ...state.rules };
+    closeEligConfirm(false);
     state.rules = next;
     renderRules();
     // Options built under other rules are not options for these: they stay, marked out of date.
@@ -736,14 +768,68 @@
   // A switch on the board.
   function changeRuleInPlace(key, value) {
     if (state.rules[key] === value) return;
-    // The reload would replace a course list the adviser has changed: the dialog says so and asks.
-    // The switch goes back to the rule in force; Apply rules makes the change, Cancel leaves it.
+    // The reload would replace a course list the adviser has changed: an inline confirm says so and
+    // asks. The switch keeps showing the rule in force until "Change and reset".
     if (key === 'eligibility' && state.ctx && !isSuggested()) {
       renderRules();
-      openRulesDialog({ eligibility: value });
+      openEligConfirm(value);
       return;
     }
+    closeEligConfirm(false);
     commitRules({ ...state.rules, [key]: value });
+  }
+  // The eligibility the confirm is asking about; null while it is closed. `eligReset`: the question
+  // came from "Reset", so Go puts back every usual rule, not only the eligibility.
+  let eligPending = null;
+  let eligReset = false;
+  // Escape closes the confirm wherever the keyboard is while it is open.
+  function eligEscape(event) {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    event.preventDefault();
+    closeEligConfirm(true);
+  }
+  function openEligConfirm(value, reset) {
+    eligPending = value;
+    eligReset = !!reset;
+    $('plbEligConfirm').hidden = false;
+    document.addEventListener('keydown', eligEscape);
+    $('plbEligGo').focus();
+  }
+  // `focusBack`: the keyboard returns to the Eligibility switch (Keep or Escape). Any other change
+  // closes the confirm and leaves the keyboard where it is.
+  function closeEligConfirm(focusBack) {
+    const box = $('plbEligConfirm');
+    if (box.hidden) return;
+    box.hidden = true;
+    eligPending = null;
+    eligReset = false;
+    document.removeEventListener('keydown', eligEscape);
+    if (focusBack) {
+      const on = document.querySelector('input[name="plbEligIn"]:checked');
+      if (on) on.focus();
+    }
+  }
+  function goEligConfirm() {
+    const value = eligPending;
+    if (!value) return;
+    const next = eligReset ? { ...state.defaults } : { ...state.rules, eligibility: value };
+    const wasInside = $('plbEligConfirm').contains(document.activeElement);
+    closeEligConfirm(false);
+    commitRules(next);
+    if (wasInside) {
+      const on = document.querySelector('input[name="plbEligIn"]:checked');
+      if (on) on.focus();
+    }
+  }
+  // "Reset": back to the usual rules. Putting back another eligibility reloads the suggestions, so
+  // over an edited course list it asks first, as the switch does.
+  function resetRules() {
+    if (state.ctx && !isSuggested() && state.defaults.eligibility !== state.rules.eligibility) {
+      openEligConfirm(state.defaults.eligibility, true);
+      return;
+    }
+    closeEligConfirm(false);
+    commitRules({ ...state.defaults });
   }
   function commitMaxInPlace() {
     const field = $('plbMaxIn');
@@ -765,14 +851,36 @@
   }
 
   /* ── Student ───────────────────────────────────────────────────────────── */
+  // The header shows the term as one button; Year and Semester sit behind it.
+  function renderTermBtn() {
+    const year = $('plbYear').value.trim() || '—';
+    const term = $('plbTerm').value;
+    $('plbTermBtn').replaceChildren(...T.termButton(year, term), svg(ICONS.chev, 12));
+  }
+  function setTermPop(open, focusBack) {
+    $('plbTermPop').hidden = !open;
+    $('plbTermBtn').setAttribute('aria-expanded', String(open));
+    if (open) $('plbYear').focus();
+    else if (focusBack) $('plbTermBtn').focus();
+  }
   function renderContextChip() {
     const chip = $('plbContext');
     if (!state.ctx) { chip.hidden = true; return; }
     chip.replaceChildren(bdi(`${state.ctx.studentId} · ${state.ctx.year}/${state.ctx.term}`));
     chip.hidden = false;
   }
-  function stat(value, label, sub) {
-    return el('div', 'plb-stat', el('b', '', value), el('span', '', label), sub ? el('span', '', sub) : null);
+  // One fact of the student band: a mono label, a big number, a small line.
+  function fact(label, big, ...rest) {
+    return el('div', 'plb-sf', el('span', 'plb-mic', label), big, ...rest);
+  }
+  // Plan credits passed over the plan's total, from the plan reply; null while it is loading or failed.
+  function planProgress() {
+    return state.planState === 'ready' && state.planCredits && state.planCredits.total > 0 ? state.planCredits : null;
+  }
+  // The completion term the band's last fact shows ('' before there is one).
+  function bandEndsKey() {
+    const row = projectionOf() ? projectionOf().baseline : null;
+    return isComplete(row) ? `${row.completion_academic_year}/${row.completion_term}` : '';
   }
   function renderStudent() {
     const host = $('plbStudent');
@@ -786,18 +894,35 @@
     // `registered_credits` is the registrar's running total (144 for a senior): beside an
     // 18-credit cap it reads as a mistake, and it is not what this screen is about.
     const registered = registeredCredits();
-    const cap = finitePositive(st.credit_cap);
-    const reg = finitePositive(st.regulatory_max_credits);
+    const courses = registeredCourses();
+    const codes = [...new Set(courses.map((c) => c.code).filter(Boolean))];
     const advisor = st.advisor_id === null || st.advisor_id === undefined ? '' : String(st.advisor_id).trim();
+    const progress = planProgress();
+    const baseline = projectionOf() ? projectionOf().baseline : null;
+    const ends = isComplete(baseline) ? completionParts(baseline) : [];
+    state.bandEnds = bandEndsKey();
     host.replaceChildren(
-      el('div', 'plb-who',
-        el('div', 'plb-sn', st.name ? String(st.name) : T.unnamed),
-        el('div', 'plb-smeta', `${T.idLabel} `, bdi(st.student_id), st.program ? ' · ' : null, st.program ? bdi(st.program) : null,
+      fact(T.programme,
+        el('div', 'plb-big', st.program ? bdi(st.program) : '—'),
+        el('div', 'plb-smeta', st.name ? isolate(st.name) : T.unnamed, ' · ', bdi(st.student_id),
           advisor ? ` · ${T.advisor} ` : null, advisor ? bdi(advisor) : null)),
-      el('div', 'plb-stats',
-        stat(gpa === null ? '—' : gpa.toFixed(2), T.gpa),
-        stat(registered === null ? '—' : String(registered), T.registeredCredits),
-        stat(cap === null ? '—' : String(cap), T.creditCap, cap === null ? null : T.advisory(reg && reg > cap ? reg : null))),
+      fact(T.bandProgress,
+        el('div', 'plb-big', ...(progress
+          ? [bdi(`${progress.done} / ${progress.total}`), ' ', el('span', 'plb-big-u', T.creditUnit(progress.total))]
+          : ['—'])),
+        progress ? (() => {
+          const bar = el('div', 'plb-bar', el('i'));
+          bar.firstChild.style.inlineSize = `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%`;
+          bar.setAttribute('aria-hidden', 'true');
+          return bar;
+        })() : null,
+        el('div', 'plb-smeta', `${T.gpa} `, gpa === null ? '—' : gpa.toFixed(2))),
+      fact(T.bandRegistered,
+        el('div', 'plb-big', registered === null ? '—' : String(registered)),
+        el('div', 'plb-smeta', T.courseWord(courses.length ? new Set(courses.map((c) => c.key)).size : 0)),
+        codes.length ? el('div', 'plb-codes', ...codes.flatMap((c, i) => (i ? [' ', el('span', 'plb-cd', bdi(c))] : [el('span', 'plb-cd', bdi(c))]))) : null),
+      fact(T.bandGraduates,
+        ends.length ? el('div', 'plb-big', ...ends) : el('div', 'plb-big plb-big--muted', T.afterFirstBuild)),
     );
   }
 
@@ -941,21 +1066,51 @@
     if (m.kind !== 'new') return null;
     return state.shortlist.find((c) => norm(c.course_code) === norm(m.key)) || null;
   }
-  function weekBlock(m, rowStart, rowEnd, col) {
+  // One colour per planned course, given the first time the course appears for this student and
+  // kept while other courses come and go; a hue freed by a removed course goes to a NEW course only.
+  // Kept registered courses have none.
+  const HUES = 6;
+  function planKeys() {
+    const keys = state.shortlist.map((c) => norm(c.course_code));
+    if (state.build) for (const c of state.build.shortlist) if (!keys.includes(norm(c.course_code))) keys.push(norm(c.course_code));
+    return keys;
+  }
+  function hueOf(code) {
+    const key = norm(code);
+    const keys = planKeys();
+    if (!keys.includes(key)) return 0;
+    for (const k of Object.keys(state.hues)) if (!keys.includes(k)) delete state.hues[k];
+    if (!state.hues[key]) {
+      const taken = new Set(Object.values(state.hues));
+      let hue = 1;
+      while (hue <= HUES && taken.has(hue)) hue += 1;
+      state.hues[key] = hue <= HUES ? hue : (Object.keys(state.hues).length % HUES) + 1;
+    }
+    return state.hues[key];
+  }
+  function swatch(code) {
+    const mark = el('i', 'plb-sw');
+    const hue = hueOf(code);
+    if (hue) mark.dataset.hue = String(hue);
+    mark.setAttribute('aria-hidden', 'true');
+    return mark;
+  }
+  function weekBlock(m, rowStart, rowEnd, col, inert) {
     const rows = rowEnd - rowStart;
     const range = `${hhmm(m.st)}-${hhmm(m.en)}`;
-    const item = plannedItem(m);
+    const item = inert ? null : plannedItem(m);
     const block = el(item ? 'button' : 'div', 'plb-b');
     if (item) {
       block.type = 'button';
       block.dataset.act = 'week-open';
-      block.setAttribute('aria-controls', 'plbDetail');
+      block.setAttribute('aria-controls', 'plbPop');
     }
     block.style.gridColumn = String(col);
     block.style.gridRow = `${rowStart} / ${rowEnd}`;
     block.dataset.code = m.key;
     block.dataset.kind = m.kind || 'reg';
     if (m.clash) block.dataset.clash = 'true';
+    if (m.kind === 'new' && hueOf(m.key)) block.dataset.hue = String(hueOf(m.key));
     const label = `${m.code}${m.section ? ` ${IS_AR ? 'شعبة' : 'section'} ${m.section}` : ''}, ${DAY_SHORT[m.day]} ${range}`
       + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
     if (item) {
@@ -1031,6 +1186,7 @@
     const host = $('plbWeek');
     const regModel = weekModel(registeredMeetings());
     renderTab(regModel);
+    renderCurTT();
     const opt = currentOption();
     const alts = altMeetings(opt);
     state.altShown = altSignature(opt, alts);
@@ -1041,6 +1197,7 @@
       name.replaceChildren(...T.optionName(opt.name), ...(said ? [' · ', said] : []));
     } else name.textContent = T.registered;
     $('plbWeekPanel').setAttribute('aria-labelledby', opt ? tabId(opt.name) : 'plbTabRegistered');
+    renderGlance();
     if (!state.ctx) { host.replaceChildren(el('p', 'plb-empty', T.loadFirstWeek)); return; }
     const showRegistered = !opt || state.build.rules.mode === 'keep';
     // One entry per course (CODE::NAME, never the bare code); a code two courses share is told
@@ -1057,7 +1214,14 @@
       partial ? el('p', 'plb-note', T.mappingPartial(partial)) : null,
       clashes ? el('p', 'plb-note', T.clashNote(clashes)) : null,
     ].filter(Boolean);
-    const model = opt ? weekModel(weekMeetings(opt)) : regModel;
+    drawWeekGrid(opt ? weekMeetings(opt) : registeredMeetings(), host, notes, alts);
+    markOpenBlocks();
+  }
+  // The week's grid for `meetings`, drawn into `host` with `notes` under it. `alts` are the dashed
+  // alternatives of an open course panel. The one builder for the week and for the current-timetable
+  // disclosure.
+  function drawWeekGrid(meetings, host, notes, alts, inert) {
+    const model = weekModel(meetings);
     if (!model.meetings.length && !alts.length) {
       host.replaceChildren(...[el('p', 'plb-empty', T.noClassesAtAll), ...notes]);
       return;
@@ -1105,7 +1269,7 @@
       for (const m of list) {
         const rowStart = 2 + Math.floor((m.st - geo.startMin) / 15);
         const rowEnd = Math.max(rowStart + 1, 2 + Math.ceil((m.en - geo.startMin) / 15));
-        grid.append(weekBlock(m, rowStart, rowEnd, i + 2));
+        grid.append(weekBlock(m, rowStart, rowEnd, i + 2, inert));
       }
       const foot = list.length
         ? el('div', 'plb-df', el('b', '', T.classWord(list.length)),
@@ -1116,7 +1280,39 @@
       grid.append(foot);
     });
     host.replaceChildren(el('div', 'plb-wkwrap', grid), ...notes);
-    markOpenBlocks();
+  }
+  // The registered classes in one line: "CS101 Sun Tue 10:00-11:15; AI201 Mon 08:00-09:15".
+  function curTTDigest() {
+    const rows = state.baseline.filter((r) => normDay(r.day) && toMins(r.start_time) !== null && toMins(r.end_time) !== null);
+    const codes = [...new Set(rows.map((r) => String(r.course_code || r.course_key || '')).filter(Boolean))];
+    if (!codes.length) return [T.curTTNone];
+    return codes.flatMap((code, i) => [
+      ...(i ? [IS_AR ? '؛ ' : '; '] : []),
+      el('bdi', '', bdi(code), ' ',
+        ...whenNodes(rows.filter((r) => String(r.course_code || r.course_key || '') === code))),
+    ]);
+  }
+  // The "Current timetable" disclosure under the student band: closed by default, the registered
+  // week drawn with the week's own grid when it is opened, redrawn while it stays open.
+  const weekKey = () => state.baseline.map((r) => [r.course_code, r.course_key, r.section, r.day, r.start_time, r.end_time].join('|')).join(';');
+  function renderCurTT() {
+    const box = $('plbCurTT');
+    box.hidden = !state.ctx;
+    if (!state.ctx) { $('plbCurTTWeek').replaceChildren(); state.curTT = { digest: null, drawn: null }; return; }
+    const key = weekKey();
+    // The digest and the grid are drawn again only when the registered week changed (a student
+    // load), not on every redraw of the week below.
+    if (state.curTT.digest !== key) {
+      $('plbCurTTDigest').replaceChildren(...curTTDigest());
+      state.curTT.digest = key;
+    }
+    if (!box.open) { $('plbCurTTWeek').replaceChildren(); state.curTT.drawn = null; return; }
+    if (state.curTT.drawn === key) return;
+    state.curTT.drawn = key;
+    const untimedRows = [...new Map(registeredCourses().filter((c) => !c.timed).map((c) => [`${c.code}::${c.name}`, c])).values()];
+    const shared = new Set(untimedRows.map((c) => c.code).filter((code, i, all) => all.indexOf(code) !== i));
+    const untimed = untimedRows.map((c) => (shared.has(c.code) && c.name ? `${c.code} ${c.name}` : c.code));
+    drawWeekGrid(registeredMeetings(), $('plbCurTTWeek'), untimed.length ? [el('p', 'plb-note', ...T.untimed(untimed))] : [], [], true);
   }
   // While a course's panel is open its blocks in the week are marked.
   function markOpenBlocks() {
@@ -1529,6 +1725,101 @@
     guide.replaceChildren(el('dl', 'plb-fx', ...rows));
   }
 
+
+  /* ── Option at a glance: the facts of the selected week, its sections and the guidance ─────── */
+  function dayLabel(day, full) {
+    return IS_AR ? DAY_FULL_AR[day] : (full ? DAY_FULL_EN[day] : DAY_SHORT[day]);
+  }
+  // The same model the tab facts read (weekModel of the week's meetings): one source of truth.
+  function glanceFacts(opt) {
+    const model = weekModel(opt ? weekMeetings(opt) : registeredMeetings());
+    const credits = opt ? optionCredits(opt) : registeredCredits();
+    const cap = opt && state.build && state.build.rules ? state.build.rules.maxCredits : state.rules.maxCredits;
+    let load = '—';
+    if (credits !== null) load = cap === null || cap === undefined ? T.loadOnly(credits) : T.loadOf(credits, cap);
+    const timed = model.meetings.length > 0;
+    let free = '—';
+    if (timed) {
+      if (!model.freeDays.length) free = T.fNone;
+      else if (model.freeDays.length === 1) free = dayLabel(model.freeDays[0], true);
+      else free = model.freeDays.map((d) => dayLabel(d, false)).join(IS_AR ? '، ' : ', ');
+    }
+    return { model, load, campus: timed ? T.dayWord(model.campusDays) : '—', free, last: timed ? hhmm(model.lastEnd) : '—' };
+  }
+  function sectionRows(opt) {
+    const rows = [];
+    if (opt) {
+      const placed = (opt.mappings || []).map((m) => {
+        const item = state.build.shortlist.find((c) => norm(c.course_code) === courseKeyOf(m) || norm(c.course_code) === norm(m.course_code));
+        const code = String((item && item.course_code) || m.course_code || courseKeyOf(m));
+        return { code, name: item && item.course_name ? String(item.course_name) : '', section: String(m.section || '').trim(), limited: !!(item && pinsOf(item).length) };
+      });
+      const order = planKeys();
+      const at = (r) => { const i = order.indexOf(norm(r.code)); return i < 0 ? 999 : i; };
+      placed.sort((a, b) => at(a) - at(b));
+      for (const r of placed) {
+        const chip = r.section ? el('span', 'plb-sch', bdi(`§${r.section}`), r.limited ? ` ${T.fOnly}` : '') : null;
+        if (chip && r.limited) chip.dataset.only = 'true';
+        const row = el('li', 'plb-sr', swatch(r.code), el('span', 'plb-code', bdi(r.code)),
+          el('span', 'plb-nm', r.name ? isolate(r.name) : ''), chip);
+        row.dataset.code = norm(r.code);
+        rows.push(row);
+      }
+    }
+    if (!opt || state.build.rules.mode === 'keep') {
+      for (const c of registeredCourses()) {
+        const row = el('li', 'plb-sr plb-sr--kept', el('span', 'plb-code', bdi(c.code)),
+          el('span', 'plb-nm', c.name ? isolate(c.name) : ''),
+          c.section ? el('span', 'plb-sch', bdi(`§${c.section}`)) : null, el('span', 'plb-kt', T.keptTag));
+        row.dataset.code = c.key;
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+  function renderGlance() {
+    const box = $('plbGlance');
+    box.hidden = !state.ctx;
+    if (!state.ctx) return;
+    const opt = currentOption();
+    const f = glanceFacts(opt);
+    $('plbGlanceTitle').replaceChildren(...(opt ? T.glanceOpt(opt.name) : [T.glanceReg]));
+    const fact = (id, label, value) => {
+      $(id).replaceChildren(el('dt', 'plb-mic', label), el('dd', 'plb-fv', value));
+    };
+    fact('plbFactLoad', T.fLoad, f.load);
+    fact('plbFactCampus', T.fCampus, f.campus);
+    fact('plbFactFree', T.fFree, f.free);
+    fact('plbFactLast', T.fLast, f.last);
+    $('plbSecs').replaceChildren(...sectionRows(opt));
+  }
+  // The apply bar's own words about the selected option: all placed, or which are not; and a summary.
+  function renderApplyStatus() {
+    const status = $('plbApplyStatus');
+    const sum = $('plbApplySum');
+    const opt = currentOption();
+    const build = state.build;
+    const show = !!(opt && build && !build.stale && build.shortlist.length);
+    status.hidden = !show;
+    sum.hidden = !show;
+    if (!show) { status.replaceChildren(); sum.replaceChildren(); return; }
+    const left = unplacedFor(opt).map((item) => String(item.course_code));
+    status.dataset.kind = left.length ? 'warn' : 'ok';
+    status.replaceChildren(svg(left.length ? ICONS.warn : ICONS.tick, 14),
+      el('span', '', ...(left.length ? [T.notPlaced(left.length), ': ', ...joinCodes(left)] : [T.placedAll])));
+    const f = glanceFacts(opt);
+    const parts = [...T.optionName(opt.name)];
+    const add = (text) => parts.push(' · ', text);
+    if (f.load !== '—') add(f.load);
+    if (f.model.meetings.length) {
+      add(f.campus);
+      const n = f.model.freeDays.length;
+      if (n === 1) add(T.offDay(dayLabel(f.model.freeDays[0], true)));
+      else if (n > 1) add(T.offDays(n));
+    }
+    sum.replaceChildren(...parts);
+  }
+
   /* ── Courses ───────────────────────────────────────────────────────────── */
   function registeredCredits() {
     const list = registeredCourses();
@@ -1545,9 +1836,6 @@
       .filter((c) => !inShortlist(c.code) && !registeredKeys.has(c.code))
       .filter((c) => (c.status === 'not_taken' && c.canRegister) || (includeStudying && c.status === 'studying'))
       .sort((a, b) => b.importance - a.importance);
-  }
-  function blockedRecs() {
-    return state.recs.filter((r) => String(r.status) !== 'Eligible' && !inShortlist(r.course_code));
   }
   function shortlistFromRecs(recs) {
     return recs
@@ -1568,23 +1856,13 @@
   function planCredits() {
     return state.shortlist.reduce((sum, c) => sum + (Number(c.credits) || 0), 0);
   }
-  function usedCredits() {
-    const registered = state.rules.mode === 'keep' ? registeredCredits() : 0;
-    return (registered || 0) + planCredits();
-  }
-  function sectionInfo(code) {
-    if (!state.catalog) return [T.unknown];
-    const sections = state.catalog.get(norm(code)) || [];
-    if (!sections.length) return [T.noSections];
-    const caps = sections.map(sectionCapacity);
-    if (caps.every((c) => c.known && c.full)) return [T.allFull];
-    if (sections.length === 1) {
-      const left = fewSeats(caps[0]) ? caps[0].remaining : null;
-      const when = whenNodes(sections[0].meetings);
-      if (!when.length && left === null) return [T.sectionWord(1)];
-      return [...when, ...(when.length && left !== null ? [' · '] : []), ...(left !== null ? [T.seatsLeft(left)] : [])];
-    }
-    return [T.sectionWord(sections.length)];
+  // The section list of a course as the picker and the popover read it: the catalogue the rules
+  // asked for, else the whole-term catalogue (the "All programmes' courses" source) when it has it.
+  function catalogSections(code) {
+    const own = state.catalog ? state.catalog.get(code) : null;
+    if (own && own.length) return own;
+    const all = state.allCatalog ? state.allCatalog.get(code) : null;
+    return all || own || [];
   }
   function iconButton(icon, label, act, code, extra) {
     const button = el('button', `plb-ib ${extra || ''}`.trim(), svg(ICONS[icon]));
@@ -1595,44 +1873,6 @@
     button.dataset.code = norm(code);
     return button;
   }
-  // The section line of a course row opens that course's detail panel.
-  function sectionButton(code, parts, miss) {
-    const open = !!state.detail && state.detail.code === norm(code);
-    const button = el('button', `plb-sc plb-sc-btn${miss ? ' plb-sc--miss' : ''}`,
-      el('span', 'plb-sc-t', ...parts), svg(ICONS.chev, 12));
-    button.type = 'button';
-    button.dataset.act = 'detail';
-    button.dataset.code = norm(code);
-    button.setAttribute('aria-expanded', String(open));
-    button.setAttribute('aria-controls', 'plbDetail');
-    return button;
-  }
-  function groupBody(name, left, right) {
-    const body = el('tbody', 'plb-group');
-    body.dataset.group = name;
-    body.append(el('tr', 'plb-grp', el('th', 'plb-mic', left), el('td', 'plb-mic plb-grp-end', right || '')));
-    body.firstChild.firstChild.colSpan = 2;
-    body.firstChild.lastChild.colSpan = 2;
-    body.firstChild.firstChild.scope = 'rowgroup';
-    return body;
-  }
-  function emptyRow(text) {
-    const row = el('tr', 'plb-tr plb-tr--note', el('td', 'plb-empty-cell', text));
-    row.firstChild.colSpan = 4;
-    return row;
-  }
-  // A course row is: code | name over its section line | must-take | action. The name and the
-  // section share one cell so the name has the width of the pane: real course titles are long
-  // Arabic phrases, and in a column of their own they wrapped onto four or five lines.
-  function courseRow(code, name, section, cells, off, effect) {
-    const row = el('tr', 'plb-tr');
-    row.dataset.code = norm(code);
-    const title = el('span', off ? 'plb-name plb-name--off' : 'plb-name', name ? isolate(name) : '');
-    // The effect of the course on graduation shares the section line, and wraps under it when short of room.
-    const line = effect ? el('span', 'plb-sl', section, effect) : section;
-    row.append(el('td', 'plb-code', bdi(code)), el('td', 'plb-main', title, line), ...cells);
-    return row;
-  }
   function blockedReason(rec) {
     const missing = (rec.missing_prerequisites || []).map(String).filter(Boolean);
     const cell = el('span', 'plb-sc plb-sc--blocked', el('span', 'plb-chip', T.blocked));
@@ -1642,243 +1882,593 @@
     if (missing.every((m) => inShortlist(m))) cell.append(` ${T.inThisPlan}`);
     return cell;
   }
-  function renderCourses() {
-    const table = $('plbTable');
-    table.querySelectorAll('tbody').forEach((n) => n.remove());
-    const addInput = $('plbAdd');
-    addInput.disabled = !state.ctx;
-    if (!state.ctx) {
-      const body = el('tbody', 'plb-group');
-      body.append(emptyRow(T.loadFirstCourses));
-      table.append(body);
-      renderCreditsHeader();
-      state.focus = null;
-      state.detail = null;
-      renderDetail();
-      return;
+
+  /* ── Courses: the picker (zone 02) ─────────────────────────────────────── */
+  const SOURCES = ['recommended', 'plan', 'eligible', 'all'];
+  const newPick = () => ({
+    src: 'recommended', find: '', ticked: new Set(), secs: new Map(), opened: new Set(),
+    planTicked: new Set(), blockedOpen: false,
+  });
+  // What the search box compares: Arabic-Indic digits read as digits, no case, no spaces.
+  const fold = (text) => String(text || '')
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .toLowerCase().replace(/\s+/g, '');
+  const takenKeys = () => new Set(state.rules.mode === 'keep' ? registeredCourses().map((c) => c.key) : []);
+  // A course the picker can offer: {code, name, credits|null, rec, plan (the plan's row), sections}.
+  function sourceLists(src) {
+    const kept = takenKeys();
+    const free = (code) => !!code && !inShortlist(code) && !kept.has(code);
+    const recCodes = new Set(state.recs.map((r) => norm(r.course_code)));
+    const poolBy = new Map(planPool().map((c) => [c.code, c]));
+    const planBy = new Map((state.planCourses || []).map((c) => [c.code, c]));
+    const fromRec = (r) => {
+      const code = norm(r.course_code);
+      return { code, name: String(r.course_name || ''), credits: Number(r.credits) || 0, rec: true, plan: poolBy.get(code) || null, recRow: r };
+    };
+    const fromPlan = (c) => ({ code: c.code, name: c.name, credits: c.credits, rec: recCodes.has(c.code), plan: c, recRow: null });
+    const out = { avail: [], blocked: [] };
+    const seen = new Set();
+    const push = (list, entry) => { if (!seen.has(entry.code)) { seen.add(entry.code); list.push(entry); } };
+    if (src === 'recommended') {
+      for (const r of state.recs) {
+        const code = norm(r.course_code);
+        if (!free(code)) continue;
+        if (String(r.status) === 'Eligible') push(out.avail, fromRec(r));
+        else push(out.blocked, { ...fromRec(r), reason: blockedReason(r) });
+      }
+    } else if (src === 'plan') {
+      const ignoring = state.rules.mode === 'ignore';
+      for (const c of state.planCourses || []) {
+        if (!free(c.code)) continue;
+        if (!(c.status === 'not_taken' || (ignoring && c.status === 'studying'))) continue;
+        if (c.canRegister) push(out.avail, fromPlan(c));
+        else push(out.blocked, { ...fromPlan(c), reason: blockedReason({ missing_prerequisites: [] }) });
+      }
+    } else if (src === 'eligible') {
+      for (const c of planPool()) push(out.avail, fromPlan(c));
+      for (const r of state.recs) {
+        const code = norm(r.course_code);
+        if (String(r.status) === 'Eligible' && free(code)) push(out.avail, fromRec(r));
+      }
+    } else if (state.allCatalog) {
+      const mine = String((state.student && state.student.program) || '').trim().toLowerCase();
+      const codes = [...state.allCatalog.keys()].sort();
+      for (const code of codes) {
+        if (!free(code)) continue;
+        const sections = state.allCatalog.get(code);
+        const named = sections.find((s) => String(s.course_name || '').trim());
+        const hours = sections.map((s) => Number(s.credit_hours)).find((n) => Number.isFinite(n) && n > 0);
+        const entry = {
+          code, name: named ? String(named.course_name).trim() : (planBy.has(code) ? planBy.get(code).name : ''),
+          credits: hours === undefined ? null : hours, rec: recCodes.has(code), plan: poolBy.get(code) || null, recRow: null,
+          compareOnly: !sections.some((s) => programmesOf(s).some((p) => p.toLowerCase() === mine)),
+        };
+        push(out.avail, entry);
+      }
     }
-    const keep = state.rules.mode === 'keep';
+    return out;
+  }
+  const listsFor = (src) => {
+    const lists = sourceLists(src);
+    const needle = fold(state.pick.find);
+    if (!needle) return lists;
+    const keep = (e) => fold(e.code).includes(needle) || fold(e.name).includes(needle);
+    return { avail: lists.avail.filter(keep), blocked: lists.blocked.filter(keep) };
+  };
+  const entrySections = (entry, src) => (src === 'all' && state.allCatalog ? state.allCatalog.get(entry.code) || [] : catalogSections(entry.code));
+  const sortSections = (list) => list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
+  // The plan's row for the course, a recommendation's, or one built from the whole-term catalogue.
+  function makeItem(entry) {
+    if (entry.plan) return itemFromPlan(entry.plan);
+    if (entry.recRow && entry.recRow.status === 'Eligible') return shortlistFromRecs([entry.recRow])[0];
+    return {
+      course_code: entry.code, course_name: entry.name, credits: entry.credits || 0, priority: 'Med',
+      status: 'Eligible', missing_prerequisites: [], must_take: false, score: 0,
+    };
+  }
+  function pinsFor(entry, src) {
+    const ids = state.pick.secs.get(entry.code);
+    if (!ids || !ids.size) return [];
+    return sortSections(entrySections(entry, src))
+      .filter((s) => ids.has(String(s.term_section_id)))
+      .slice(0, MAX_ONLY)
+      .map((s) => ({ term_section_id: Number(s.term_section_id), section: String(s.section || '').trim() }));
+  }
+  // Credits unknown: the course cannot be added (its credits would be a guess).
+  const addable = (entry) => entry.credits !== null;
+
+  function renderSource() {
+    const select = $('plbSource');
+    select.disabled = !state.ctx;
+    const counts = {};
+    for (const src of SOURCES) {
+      if (src === 'all' && !state.allCatalog) { counts[src] = null; continue; }
+      const l = sourceLists(src);
+      counts[src] = l.avail.length + l.blocked.length;
+    }
+    const names = {
+      recommended: T.srcRecommended(counts.recommended), plan: T.srcPlan(counts.plan),
+      eligible: T.srcEligible(counts.eligible), all: T.srcAll(counts.all),
+    };
+    if (!select.options.length) {
+      for (const src of SOURCES) { const o = document.createElement('option'); o.value = src; select.append(o); }
+    }
+    [...select.options].forEach((o) => { o.textContent = names[o.value]; });
+    select.value = state.pick.src;
+  }
+  function tagNode(text, kind, title) {
+    const node = el('span', `plb-flag${kind ? ` plb-flag--${kind}` : ''}`, text);
+    if (title) node.title = title;
+    return node;
+  }
+  function sectionRowNode(entry, section, src) {
+    const model = sectionModel(section);
+    const ids = state.pick.secs.get(entry.code) || new Set();
+    const ticked = ids.has(model.id);
+    const input = el('input', 'plb-tick');
+    input.type = 'checkbox';
+    input.checked = ticked;
+    input.disabled = !ticked && (model.reasons.length > 0 || ids.size >= MAX_ONLY);
+    if (!addable(entry)) { input.disabled = true; input.title = T.creditsUnknownWhy; }
+    input.dataset.act = 'sectick';
+    input.dataset.code = entry.code;
+    input.dataset.tsid = model.id;
+    input.setAttribute('aria-label', T.tickSection(entry.code, model.label || '?'));
+    const instructors = [...new Set((section.meetings || []).map((m) => String(m.instructor || '').trim()).filter(Boolean))];
+    const meets = el('span', 'plb-sec-meets', ...present(
+      ...(model.when.length ? model.when : [T.unknown]),
+      instructors.length ? ' · ' : null, instructors.length ? isolate(instructors.join('، ')) : null,
+      model.clash ? ' ' : null, model.clash ? tagNode(T.clashFlag, 'bad') : null));
+    const seats = el('span', 'plb-sec-seats');
+    if (!model.cap.known) seats.append(T.unknown);
+    else if (model.cap.full) seats.append(tagNode(T.seatsFull, 'bad'));
+    else {
+      seats.append(String(model.cap.remaining));
+      if (fewSeats(model.cap)) seats.append(' ', tagNode(T.leftTag(model.cap.remaining), 'warn'));
+    }
+    const row = el('label', 'plb-sec', input, el('span', 'plb-sec-n', bdi(model.label || '?')), meets, seats);
+    row.dataset.tsid = model.id;
+    if (input.disabled) row.dataset.off = 'true';
+    void src;
+    return row;
+  }
+  function availRowNode(entry, src) {
+    const code = entry.code;
+    const sections = entrySections(entry, src);
+    const open = state.pick.opened.has(code);
+    const ticked = state.pick.ticked.has(code);
+    const secsId = `plbSecs_${code.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    const chev = el('button', 'plb-chev', svg(ICONS.chev, 14));
+    chev.type = 'button';
+    chev.dataset.act = 'open';
+    chev.dataset.code = code;
+    chev.setAttribute('aria-expanded', String(open));
+    chev.setAttribute('aria-controls', secsId);
+    chev.setAttribute('aria-label', T.sectionsOf(code));
+    const box = el('input', 'plb-tick');
+    box.type = 'checkbox';
+    box.checked = ticked;
+    box.disabled = !addable(entry);
+    box.dataset.act = 'tick';
+    box.dataset.code = code;
+    box.setAttribute('aria-label', T.tickCourse(code));
+    if (box.disabled) box.title = T.creditsUnknownWhy;
+    const known = src === 'all' || state.catalog !== null;
+    const caps = sections.map(sectionCapacity);
+    const openCaps = caps.filter((c) => c.known && !c.full);
+    const metaText = [entry.credits === null ? T.creditsUnknown : T.credits(entry.credits)];
+    if (known) metaText.push(sections.length ? T.sectionWord(sections.length) : T.noSections);
+    const tags = [];
+    if (entry.rec) tags.push(tagNode(T.tagRecommended, ''));
+    if (src === 'all' && entry.compareOnly) tags.push(tagNode(T.tagCompare, 'warn', T.compareWhy));
+    if (known && sections.length && caps.every((c) => c.known && c.full)) tags.push(tagNode(T.allFull, 'bad'));
+    else if (openCaps.length && openCaps.every(fewSeats)) tags.push(tagNode(T.tagFewSeats, 'warn'));
+    // Phones have no transfer column: every row carries its own "+" (only the ticked sections when some are).
+    const plus = el('button', 'plb-addbtn', svg(ICONS.plus, 18));
+    plus.type = 'button';
+    plus.dataset.act = 'add';
+    plus.dataset.code = code;
+    plus.disabled = !addable(entry);
+    plus.setAttribute('aria-label', T.addCourse(code, pinsFor(entry, src).map((p) => p.section)));
+    const main = el('div', 'plb-ar-main', chev, box, el('span', 'plb-code', bdi(code)),
+      el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''),
+      el('span', 'plb-meta', metaText.join(' · '), ...tags.flatMap((t) => [' ', t])), plus);
+    if (entry.compareOnly && src === 'all') main.title = T.compareWhy;
+    if (!addable(entry)) main.title = T.creditsUnknownWhy;
+    const body = el('div', 'plb-secs');
+    body.id = secsId;
+    body.hidden = !open;
+    if (open) {
+      if (!sections.length) body.append(el('p', 'plb-empty', known ? T.noSections : T.noCatalog));
+      else {
+        body.append(el('div', 'plb-sec plb-sec--h', el('span', ''), el('span', 'plb-mic', T.secHead),
+          el('span', 'plb-mic', T.meetsHead), el('span', 'plb-mic', T.seatsHead)));
+        for (const section of sortSections(sections)) body.append(sectionRowNode(entry, section, src));
+        const n = addable(entry) ? (state.pick.secs.get(code) || new Set()).size : 0;
+        if (n) {
+          const only = el('button', 'btn btn-sm btn-neutral plb-only', T.addOnly(n), svg(ICONS.next, 14));
+          only.querySelector('svg').classList.add('plb-dir');
+          only.type = 'button';
+          only.dataset.act = 'only';
+          only.dataset.code = code;
+          body.append(el('div', 'plb-only-row', only));
+        }
+      }
+    }
+    // On an option's tab the line says what adding the course would do to graduation.
+    const effect = currentOption() ? effectNode(code, 'could') : null;
+    const row = el('div', 'plb-arow', main, effect ? el('div', 'plb-fxl', effect) : null, body);
+    row.dataset.code = code;
+    if (ticked) row.dataset.ticked = 'true';
+    return row;
+  }
+  function renderAvailable() {
+    const host = $('plbAvailList');
+    const src = state.pick.src;
+    const ready = !!state.ctx;
+    const lists = ready ? listsFor(src) : { avail: [], blocked: [] };
+    const nodes = [];
+    if (!ready) nodes.push(el('p', 'plb-empty plb-pad', T.loadFirstCourses));
+    else if (src === 'all' && state.allState === 'loading') nodes.push(el('p', 'plb-empty plb-pad', T.allLoading));
+    else if (src === 'all' && state.allState === 'error') nodes.push(el('p', 'plb-empty plb-pad', T.allFailed));
+    else if ((src === 'plan' || src === 'eligible') && state.planState === 'loading' && !lists.avail.length) nodes.push(el('p', 'plb-empty plb-pad', T.loadingPlan));
+    else if (!lists.avail.length && !lists.blocked.length) nodes.push(el('p', 'plb-empty plb-pad', state.pick.find.trim() ? T.noMatch : T.nothingHere));
+    for (const entry of lists.avail) nodes.push(availRowNode(entry, src));
+    if (lists.blocked.length) {
+      const open = state.pick.blockedOpen;
+      const fold2 = el('button', 'plb-fold', svg(ICONS.chev, 14), T.blockedFold(lists.blocked.length));
+      fold2.type = 'button';
+      fold2.dataset.act = 'fold';
+      fold2.id = 'plbFold';
+      fold2.setAttribute('aria-expanded', String(open));
+      fold2.setAttribute('aria-controls', 'plbBlocked');
+      const list = el('div', 'plb-blocked');
+      list.id = 'plbBlocked';
+      list.hidden = !open;
+      if (open) {
+        for (const entry of lists.blocked) {
+          const row = el('div', 'plb-arow plb-arow--off', el('div', 'plb-ar-main plb-ar-main--off',
+            el('span', 'plb-code', bdi(entry.code)), el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''), entry.reason));
+          row.dataset.code = entry.code;
+          list.append(row);
+        }
+      }
+      nodes.push(el('div', 'plb-foldrow', fold2, list));
+    }
+    host.replaceChildren(...nodes);
+    const tickedEntries = lists.avail.filter((e) => state.pick.ticked.has(e.code));
+    const tickedCr = tickedEntries.reduce((sum, e) => sum + (e.credits || 0), 0);
+    $('plbAvailCount').textContent = ready ? T.availHead(lists.avail.length) : T.availHead(0);
+    $('plbAvailTicked').textContent = ready ? T.tickedLine(tickedEntries.length, tickedCr) : '';
+    return lists;
+  }
+  function planRowNode(item) {
+    const code = item.course_code;
+    const key = norm(code);
+    const pins = pinsOf(item);
     const opt = currentOption();
-
-    // Registered
-    const registered = registeredCourses();
-    const regCredits = registeredCredits();
-    const regBody = groupBody('registered', keep ? T.registeredFixed : T.registeredIgnored,
-      regCredits === null ? '' : T.credits(regCredits));
-    if (!registered.length) regBody.append(emptyRow(T.noRegistered));
-    for (const course of registered) {
-      const lock = el('td', 'plb-act');
-      const icon = el('span', 'plb-lock', svg(ICONS.lock, 14));
-      icon.setAttribute('role', 'img');
-      icon.setAttribute('aria-label', T.registeredLock);
-      lock.append(icon);
-      regBody.append(courseRow(course.code, course.name,
-        el('span', 'plb-sc', course.section ? bdi(`§${course.section}`) : T.unknown), [el('td'), lock]));
+    const box = el('input', 'plb-tick');
+    box.type = 'checkbox';
+    box.checked = state.pick.planTicked.has(key);
+    box.dataset.act = 'ptick';
+    box.dataset.code = key;
+    box.setAttribute('aria-label', T.tickPlanned(code));
+    // On an option's tab the line says what that option did with the course.
+    const parts = [];
+    let miss = false;
+    const chosen = opt ? mappingFor(opt, code) : null;
+    if (opt) {
+      if (chosen) {
+        parts.push(bdi(`§${String(chosen.section || '').trim() || '?'}`));
+        const section = findSection(chosen.term_section_id);
+        const cap = section ? sectionCapacity(section) : null;
+        if (cap && fewSeats(cap)) parts.push(' · ', el('span', 'plb-few', T.seatsLeft(cap.remaining)));
+        const used = String(chosen.term_section_id);
+        if (pins.length > 1 && pins.some((p) => String(p.term_section_id) === used)) {
+          const others = pins.filter((p) => String(p.term_section_id) !== used).map(pinLabel);
+          parts.push(el('span', 'plb-or', ...T.orOthers(others)));
+        }
+      } else if (!state.build.shortlist.some((c) => norm(c.course_code) === key)) {
+        parts.push(T.notInBuild);
+      } else { miss = true; parts.push(T.notScheduledHere); }
     }
-    table.append(regBody);
-
-    // New in this plan
-    const newBody = groupBody('new', `${T.newInPlan} · ${T.credits(planCredits())}`, T.mustTake);
-    newBody.append(resetRow());
-    if (!state.shortlist.length) newBody.append(emptyRow(T.nothingAdded));
+    const credits = el('span', 'plb-cr', T.credits(Number(item.credits) || 0));
+    const sub = el('span', 'plb-sl', credits, ...(opt ? [el('span', `plb-sc${miss ? ' plb-sc--miss' : ''}`, ...parts)] : []),
+      ...present(opt ? effectNode(code, 'new') : null));
+    const open = !!state.detail && state.detail.code === key;
+    const label = pins.length === 0 ? T.anySection : T.sectionsBtn(pins.map(pinLabel));
+    const secbtn = el('button', 'plb-secbtn', el('span', 'plb-secbtn-t', label), svg(ICONS.chev, 12));
+    secbtn.type = 'button';
+    secbtn.dataset.act = 'detail';
+    secbtn.dataset.code = key;
+    if (pins.length) secbtn.dataset.limited = 'true';
+    secbtn.setAttribute('aria-haspopup', 'dialog');
+    secbtn.setAttribute('aria-expanded', String(open));
+    secbtn.setAttribute('aria-controls', 'plbPop');
+    secbtn.setAttribute('aria-label', T.sectionsOfPlanned(code, label));
+    const req = el('button', 'plb-req', svg(ICONS.pin, 14), item.must_take ? el('span', 'plb-req-t', T.required) : null);
+    req.type = 'button';
+    req.dataset.act = 'must';
+    req.dataset.code = key;
+    req.setAttribute('aria-pressed', String(!!item.must_take));
+    req.setAttribute('aria-label', item.must_take ? T.requiredOn(code) : T.makeRequired(code));
+    req.title = item.must_take ? T.requiredOn(code) : T.makeRequired(code);
+    const remove = iconButton('x', T.removeCourse(code), 'remove', code);
+    const row = el('div', 'plb-prow', box, el('span', 'plb-code', swatch(code), bdi(code)),
+      el('span', 'plb-pmain', el('span', 'plb-nm plb-nm--wrap', item.course_name ? isolate(item.course_name) : ''), sub),
+      secbtn, req, remove);
+    row.dataset.code = key;
+    if (open) row.dataset.open = 'true';
+    return row;
+  }
+  function keptRowNode(course) {
+    const lock = el('span', 'plb-lock', svg(ICONS.lock, 14));
+    lock.setAttribute('role', 'img');
+    lock.setAttribute('aria-label', T.registeredLock);
+    const sub = [course.credits === null ? T.creditsUnknown : T.credits(course.credits)];
+    if (course.section) sub.push(`${IS_AR ? 'شعبة' : 'section'} ${course.section}`);
+    const row = el('div', 'plb-prow plb-prow--kept', lock, el('span', 'plb-code', bdi(course.code)),
+      el('span', 'plb-pmain', el('span', 'plb-nm plb-nm--wrap', course.name ? isolate(course.name) : ''), el('span', 'plb-sl', el('span', 'plb-cr', sub.join(' · ')))),
+      el('span', 'plb-flag plb-kept-tag', T.registeredKept));
+    row.dataset.code = course.code;
+    return row;
+  }
+  function renderPlanPane() {
+    const host = $('plbPlanList');
+    const ready = !!state.ctx;
+    const nodes = [];
+    // The popover follows its row in DOM order, so Tab goes from the button into it and back.
+    const pop = $('plbPop');
+    const hadFocus = pop.contains(document.activeElement) ? document.activeElement : null;
+    const open = state.detail ? state.detail.code : null;
+    let popPlaced = false;
     for (const item of state.shortlist) {
-      const code = item.course_code;
-      const pins = pinsOf(item);
-      const parts = [];
-      let miss = false;
-      const chosen = opt ? mappingFor(opt, code) : null;
-      if (opt) {
-        // On an option's tab the cell says what that option did with the course.
-        if (chosen) {
-          parts.push(bdi(`§${String(chosen.section || '').trim() || '?'}`));
-          const section = findSection(chosen.term_section_id);
-          const cap = section ? sectionCapacity(section) : null;
-          if (cap && fewSeats(cap)) parts.push(' · ', el('span', 'plb-few', T.seatsLeft(cap.remaining)));
-          // The other sections the adviser allowed, when the one this option used is among them.
-          const used = String(chosen.term_section_id);
-          if (pins.length > 1 && pins.some((p) => String(p.term_section_id) === used)) {
-            const others = pins.filter((p) => String(p.term_section_id) !== used).map(pinLabel);
-            parts.push(el('span', 'plb-or', ...T.orOthers(others)));
-          }
-        } else if (!state.build.shortlist.some((c) => norm(c.course_code) === norm(code))) {
-          parts.push(T.notInBuild);       // added after this build was made
-        } else { miss = true; parts.push(T.notScheduledHere); }
-      } else if (pins.length) parts.push(...T.onlyLine(pins.map(pinLabel)));
-      else parts.push(T.anySection);
-      const sectionCell = sectionButton(code, parts, miss);
-      const box = el('input', 'plb-tick');
-      box.type = 'checkbox';
-      box.checked = !!item.must_take;
-      box.setAttribute('aria-label', T.mustTakeFor(code));
-      box.dataset.act = 'must';
-      box.dataset.code = norm(code);
-      const remove = iconButton('x', T.removeCourse(code), 'remove', code);
-      const row = courseRow(code, item.course_name, sectionCell,
-        [el('td', 'plb-act', el('label', 'plb-tickwrap', box)), el('td', 'plb-act', remove)], false,
-        opt ? effectNode(code, 'new') : null);
-      if (state.detail && state.detail.code === norm(code)) row.dataset.open = 'true';
-      newBody.append(row);
+      nodes.push(planRowNode(item));
+      if (open && norm(item.course_code) === open) { nodes.push(pop); popPlaced = true; }
     }
-    table.append(newBody);
-
-    // Could be added
-    const pool = planPool();
-    const cap = state.rules.maxCredits;
-    const free = cap === null ? null : cap - usedCredits();
-    const couldLeft = free === null ? '' : (free >= 0 ? `${free} ${T.creditUnit(free)} ${T.free2}` : '');
-    if (state.planState === 'loading') {
-      const body = groupBody('could', T.couldAdd, '');
-      body.append(emptyRow(T.loadingPlan));
-      table.append(body);
-    } else if (pool.length) {
-      const body = groupBody('could', T.couldAdd, couldLeft);
-      for (const course of pool) {
-        const add = iconButton('plus', T.addCourse(course.code), 'add', course.code, 'plb-ib--add');
-        const row = courseRow(course.code, course.name,
-          sectionButton(course.code, sectionInfo(course.code)), [el('td'), el('td', 'plb-act', add)], false,
-          opt ? effectNode(course.code, 'could') : null);
-        if (state.detail && state.detail.code === course.code) row.dataset.open = 'true';
-        body.append(row);
-      }
-      table.append(body);
+    if (!popPlaced) nodes.push(pop);
+    if (ready && state.rules.mode === 'keep') for (const course of registeredCourses()) nodes.push(keptRowNode(course));
+    if (ready) {
+      const hint = el('p', 'plb-hint', T.hintA, svg(ICONS.next, 13), T.hintB);
+      hint.querySelector('svg').classList.add('plb-dir');
+      nodes.push(hint);
     }
-
-    // Blocked
-    const blocked = blockedRecs();
-    if (blocked.length) {
-      const body = groupBody('blocked', T.blocked, '');
-      for (const rec of blocked) {
-        body.append(courseRow(rec.course_code, rec.course_name, blockedReason(rec), [el('td'), el('td')], true));
-      }
-      table.append(body);
-    }
+    host.replaceChildren(...nodes);
+    if (hadFocus) hadFocus.focus({ preventScroll: true });
+    $('plbPlanCount').textContent = T.planHead(ready ? state.shortlist.length : 0);
     renderCreditsHeader();
+  }
+  function renderXfer(lists) {
+    const ready = !!state.ctx;
+    const shown = lists ? lists.avail : [];
+    const canAdd = ready && shown.some((e) => state.pick.ticked.has(e.code) && addable(e));
+    const canAll = ready && shown.some(addable);
+    const planned = state.shortlist.length;
+    const ticked = [...state.pick.planTicked].filter((k) => inShortlist(k));
+    // The glyphs are SVG chevrons: "towards the plan" is drawn pointing right, and the stylesheet
+    // flips every `.plb-dir` under right-to-left, where the plan is on the left.
+    const set = (id, enabled, label, left, all) => {
+      const b = $(id);
+      b.disabled = !enabled;
+      b.setAttribute('aria-label', label);
+      b.title = label;
+      if (!b.firstChild) {
+        b.replaceChildren(svg(all ? ICONS.nextAll : ICONS.next, 20));
+        b.firstChild.classList.add('plb-dir');
+        b.dataset.side = left ? 'plan-to-list' : 'list-to-plan';
+      }
+    };
+    set('plbXAdd', canAdd, T.xAdd, false, false);
+    set('plbXAddAll', canAll, T.xAddAll, false, true);
+    set('plbXRem', ready && ticked.length > 0, T.xRem, true, false);
+    set('plbXRemAll', ready && planned > 0, T.xRemAll, true, true);
+  }
+  // Phones: the two-tab switch above the panels. The choice is kept across every redraw.
+  function renderPickTabs(lists) {
+    const ready = !!state.ctx;
+    $('plbZoneCourses').dataset.tab = state.pickTab;
+    const set = (id, name, text) => {
+      const tab = $(id);
+      tab.textContent = text;
+      tab.setAttribute('aria-selected', String(state.pickTab === name));
+      tab.tabIndex = state.pickTab === name ? 0 : -1;
+    };
+    set('plbPickTabAvail', 'avail', T.tabAvail(ready && lists ? lists.avail.length : 0));
+    set('plbPickTabPlan', 'plan', T.tabPlan(ready ? state.shortlist.length : 0));
+  }
+  function setPickTab(name, focus) {
+    if (name !== 'avail' && name !== 'plan') return;
+    state.pickTab = name;
+    renderCourses();
+    if (focus) $(name === 'avail' ? 'plbPickTabAvail' : 'plbPickTabPlan').focus();
+  }
+  function renderCreditsHeader() {
+    renderReset();
+    const load = $('plbPlanLoad');
+    const line = $('plbMeterLine');
+    const meter = $('plbMeter');
+    delete load.dataset.over;                  // "over" is only ever said against a known cap
+    delete line.dataset.over;
+    const phoneSum = $('plbPhoneSum');
+    delete phoneSum.dataset.over;
+    if (!state.ctx) { load.textContent = ''; line.textContent = ''; meter.hidden = true; phoneSum.textContent = ''; return; }
+    const keep = state.rules.mode === 'keep';
+    const reg = keep ? registeredCredits() || 0 : 0;
+    const planned = planCredits();
+    const used = reg + planned;
+    const cap = state.rules.maxCredits;
+    load.replaceChildren(el('b', '', used), el('span', 'plb-pload-u', cap === null ? ` ${T.creditUnit(used)}` : ` / ${cap} ${T.creditUnit(cap)}`));
+    const parts = [T.plannedN(planned)];
+    if (keep) parts.push(T.registeredN(reg));
+    let text = parts.join(' + ');
+    if (cap !== null) {
+      const free = cap - used;
+      text += free >= 0 ? ` · ${free} ${T.creditUnit(free)} ${T.free2}` : ` · ${T.overLimitN(-free)}`;
+      load.dataset.over = free < 0 ? 'true' : 'false';
+      line.dataset.over = free < 0 ? 'true' : 'false';
+      const total = Math.max(cap, used) || 1;
+      meter.hidden = false;
+      meter.firstChild.style.width = `${(planned / total) * 100}%`;
+      meter.lastChild.style.width = `${(reg / total) * 100}%`;
+      meter.dataset.over = free < 0 ? 'true' : 'false';
+    } else meter.hidden = true;
+    line.textContent = text;
+    const sum = T.phoneSum(state.shortlist.length, cap === null ? T.loadOnly(used) : T.loadOf(used, cap));
+    phoneSum.textContent = cap !== null && used > cap ? `${sum} · ${T.overLimitN(used - cap)}` : sum;
+    if (cap !== null) phoneSum.dataset.over = used > cap ? 'true' : 'false';
+  }
+  // The courses zone, drawn again from the state. Keyboard focus is found again by its action,
+  // course and section; where that control has gone it falls to the search box.
+  // Ticked sections that the catalogue no longer lists (a rule or a reload changed it) are dropped;
+  // a course left with none of its ticked sections is no longer ticked. Only against a loaded list.
+  function pruneTicks() {
+    const all = state.pick.src === 'all';
+    const loaded = all ? state.allCatalog : state.catalog;
+    if (!loaded) return;
+    for (const [code, ids] of [...state.pick.secs]) {
+      const listed = new Set((all ? loaded.get(code) || [] : catalogSections(code)).map((x) => String(x.term_section_id)));
+      for (const id of [...ids]) if (!listed.has(id)) ids.delete(id);
+      if (!ids.size) { state.pick.secs.delete(code); state.pick.ticked.delete(code); }
+    }
+  }
+  function renderCourses() {
+    const pick = $('plbPick');
+    const was = document.activeElement;
+    const inPick = was && pick.contains(was) && !was.closest('#plbPop');
+    const mark = inPick ? { act: was.dataset.act, code: was.dataset.code, tsid: was.dataset.tsid, id: was.id } : null;
+    const ready = !!state.ctx;
+    $('plbFind').disabled = !ready;
+    if (!ready) { state.focus = null; state.detail = null; state.pick = newPick(); }
+    if (ready) pruneTicks();
+    const lists = renderAvailable();
+    renderSource();
+    renderPlanPane();
+    renderXfer(ready ? lists : null);
+    renderPickTabs(ready ? lists : null);
     renderDetail();
-    restoreFocus();
+    restoreFocus(mark);
   }
   // The list is the suggested one (every field the build reads, in the same order): nothing to reset.
   const isSuggested = () => JSON.stringify(state.shortlist) === JSON.stringify(state.suggested);
-  // "Reset to suggestions": a row of its own under the group's title, so the title stays the group's name.
-  function resetRow() {
-    const button = el('button', 'plb-lk', T.resetPlan);
-    button.type = 'button';
-    button.id = 'plbReset';
-    button.dataset.act = 'reset';
-    button.disabled = true;
-    const cell = el('td', 'plb-grp-act', button);
-    cell.colSpan = 4;
-    return el('tr', 'plb-grp-link', cell);
-  }
   function renderReset() {
     const button = $('plbReset');
-    if (button) button.disabled = !state.ctx || isSuggested();
+    const show = !!state.ctx && !isSuggested();
+    button.hidden = !show;
+    button.disabled = !show;
   }
   function resetToSuggestions() {
     if (!state.ctx || isSuggested()) return;
     state.shortlist = JSON.parse(JSON.stringify(state.suggested));
+    state.pick.planTicked.clear();
     if (state.detail) delete state.detail.only;
     planChanged();
     setStatus('ok', T.resetDone(state.shortlist.length));
+    state.focus = { kind: 'find' };
     renderCourses();
     if (state.build) renderWeek();
-    const reset = $('plbReset');
-    if (reset && reset.disabled && !$('plbAdd').disabled) $('plbAdd').focus();
   }
-  function renderCreditsHeader() {
-    renderReset();
-    const header = $('plbCredits');
-    delete header.dataset.over;                // "over" is only ever said against a known cap
-    if (!state.ctx) { header.textContent = ''; return; }
-    const used = usedCredits();
-    const cap = state.rules.maxCredits;
-    if (cap === null) { header.textContent = T.credits(used); return; }
-    const free = cap - used;
-    const lead = IS_AR ? `${used} من ${cap} ${T.creditUnit(cap)}` : `${used} of ${cap} ${T.creditUnit(cap)}`;
-    const tail = free >= 0 ? `${free} ${T.free2}` : `${-free} ${T.over}`;
-    header.textContent = `${lead} · ${tail}`;
-    header.dataset.over = free < 0 ? 'true' : 'false';
-  }
-  function restoreFocus() {
+  function restoreFocus(mark) {
     const want = state.focus;
     state.focus = null;
-    if (!want) return;
-    const code = norm(want.code);
-    let target = document.querySelector(`#plbTable [data-act="${want.kind}"][data-code="${CSS.escape(code)}"]`);
-    if (!target) target = $('plbAdd');
-    if (target && !target.disabled) target.focus();
+    let target = null;
+    const q = (a, c, t) => document.querySelector(`#plbPick [data-act="${CSS.escape(a)}"][data-code="${CSS.escape(c)}"]${t ? `[data-tsid="${CSS.escape(t)}"]` : ''}`);
+    if (want && want.kind !== 'find') target = q(want.kind, norm(want.code));
+    else if (!want && mark) {
+      if (mark.act && mark.code) target = q(mark.act, mark.code, mark.tsid);
+      else if (mark.id) target = document.getElementById(mark.id);
+    }
+    if (target && !target.disabled && !target.hidden) { target.focus({ preventScroll: true }); return; }
+    if ((want || mark) && !$('plbFind').disabled) $('plbFind').focus({ preventScroll: true });
   }
-  function addCourseToPlan(item, keepFocus) {
-    if (inShortlist(item.course_code)) return;
-    state.shortlist.push(item);
+  function addEntries(list, how) {
+    const added = [];
+    const unknown = [];
+    for (const { entry, pins } of list) {
+      if (inShortlist(entry.code)) continue;      // already planned: nothing to move
+      if (!addable(entry)) { unknown.push(entry.code); continue; }
+      const item = makeItem(entry);
+      if (pins && pins.length) item.pinned_sections = pins;
+      state.shortlist.push(item);
+      added.push(item);
+      state.pick.ticked.delete(entry.code);
+      state.pick.secs.delete(entry.code);
+    }
+    if (!added.length) {
+      if (unknown.length) setStatus('warn', ...T.skippedUnknown(unknown));
+      return;
+    }
     planChanged();
-    // From the detail panel focus stays in the panel (it lands on its heading), not on the row.
-    state.focus = keepFocus ? null : { kind: 'remove', code: item.course_code };
-    setStatus('ok', ...T.added(item.course_code));
+    setStatus('ok', ...(added.length === 1 ? T.added(added[0].course_code) : [T.addedMany(added.length)]));
+    state.focus = how === 'row' ? { kind: 'remove', code: added[0].course_code } : null;
     renderCourses();
+    if (unknown.length) setStatus('warn', ...T.skippedUnknown(unknown, added.length));
+    if (how !== 'row' && (document.activeElement === document.body || document.activeElement.disabled)) $('plbFind').focus({ preventScroll: true });
   }
-  function removeCourseFromPlan(code, keepFocus) {
-    const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
-    if (at < 0) return;
-    const [gone] = state.shortlist.splice(at, 1);
-    // "Only these" with nothing ticked belonged to the course that has just gone, not to the panel.
-    if (state.detail && state.detail.code === norm(code)) delete state.detail.only;
+  function removeCoursesFromPlan(codes, how) {
+    const gone = [];
+    for (const code of codes) {
+      const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
+      if (at < 0) continue;
+      gone.push(...state.shortlist.splice(at, 1));
+      state.pick.planTicked.delete(norm(code));
+      // "Only these" with nothing ticked belonged to the course that has just gone, not to the panel.
+      if (state.detail && state.detail.code === norm(code)) delete state.detail.only;
+    }
+    if (!gone.length) return;
     planChanged();
-    state.focus = keepFocus ? null : { kind: 'add', code: gone.course_code };
-    setStatus('ok', ...T.removed(gone.course_code));
+    setStatus('ok', ...(gone.length === 1 ? T.removed(gone[0].course_code) : [T.removedMany(gone.length)]));
+    state.focus = how === 'row' ? { kind: 'tick', code: gone[0].course_code } : null;
     if (state.build) renderWeek();
     renderCourses();
+    if (how !== 'row' && (document.activeElement === document.body || document.activeElement.disabled)) $('plbFind').focus({ preventScroll: true });
   }
-
-  /* ── "Add a course" ────────────────────────────────────────────────────── */
-  let activeOption = -1;
-  function closeList() {
-    $('plbAddList').hidden = true;
-    $('plbAdd').setAttribute('aria-expanded', 'false');
-    $('plbAdd').removeAttribute('aria-activedescendant');
-    activeOption = -1;
+  const shownEntries = () => listsFor(state.pick.src).avail;
+  function moveTicked() {
+    const list = shownEntries().filter((e) => state.pick.ticked.has(e.code)).map((entry) => ({ entry, pins: pinsFor(entry, state.pick.src) }));
+    addEntries(list, '');
   }
-  function matches(query) {
-    const needle = query.trim();
-    if (!needle) return [];
-    const code = norm(needle);
-    const lower = needle.toLowerCase();
-    return planPool().filter((c) => c.code.includes(code) || c.name.toLowerCase().includes(lower)).slice(0, 8);
+  function moveAll() {
+    addEntries(shownEntries().map((entry) => ({ entry, pins: [] })), '');
   }
-  function renderList() {
-    const query = $('plbAdd').value;
-    const list = $('plbAddList');
-    if (!query.trim() || !state.ctx) { closeList(); return; }
-    const found = matches(query);
-    list.replaceChildren();
-    if (!found.length) {
-      list.append(el('li', 'plb-opt plb-opt--none', T.noMatch));
-    }
-    found.forEach((course, i) => {
-      const item = el('li', 'plb-opt', bdi(course.code), ' ', course.name, ' · ', T.credits(course.credits));
-      item.id = `plbOpt${i}`;
-      item.setAttribute('role', 'option');
-      item.dataset.code = course.code;
-      list.append(item);
-    });
-    list.hidden = false;
-    $('plbAdd').setAttribute('aria-expanded', 'true');
-    activeOption = -1;
+  function moveOne(code, onlyPins, how) {
+    const entry = shownEntries().find((e) => e.code === code);
+    if (!entry) return;
+    addEntries([{ entry, pins: pinsFor(entry, state.pick.src) }], onlyPins ? '' : (how || 'row'));
   }
-  function pickOption(index) {
-    const nodes = [...$('plbAddList').querySelectorAll('[role="option"]')];
-    const node = nodes[index];
-    if (!node) return;
-    const course = planPool().find((c) => c.code === node.dataset.code);
-    $('plbAdd').value = '';
-    closeList();
-    if (course) addCourseToPlan(itemFromPlan(course));
+  function setSource(src) {
+    if (!SOURCES.includes(src) || src === state.pick.src) return;
+    state.pick.src = src;
+    state.pick.ticked.clear();
+    state.pick.secs.clear();
+    state.pick.opened.clear();
+    state.pick.blockedOpen = false;
+    if (src === 'all' && state.allState !== 'ready' && state.allState !== 'loading') loadAllCatalog(state.gen);
+    renderCourses();
   }
-  function highlight(index) {
-    const nodes = [...$('plbAddList').querySelectorAll('[role="option"]')];
-    nodes.forEach((n, i) => n.setAttribute('aria-selected', i === index ? 'true' : 'false'));
-    activeOption = index;
-    if (nodes[index]) $('plbAdd').setAttribute('aria-activedescendant', nodes[index].id);
-    else $('plbAdd').removeAttribute('aria-activedescendant');
+  function tickCourse(code, on) {
+    if (on) state.pick.ticked.add(code);
+    else { state.pick.ticked.delete(code); state.pick.secs.delete(code); }
+    renderCourses();
+  }
+  function tickSection(code, tsid, on) {
+    const ids = state.pick.secs.get(code) || new Set();
+    if (on) { if (ids.size >= MAX_ONLY) { renderCourses(); return; } ids.add(tsid); state.pick.ticked.add(code); }
+    else ids.delete(tsid);
+    if (ids.size) state.pick.secs.set(code, ids); else state.pick.secs.delete(code);
+    renderCourses();
+  }
+  function planTick(code, on) {
+    if (on) state.pick.planTicked.add(code); else state.pick.planTicked.delete(code);
+    renderXfer(listsFor(state.pick.src));
+  }
+  function toggleRequired(code) {
+    const item = state.shortlist.find((c) => norm(c.course_code) === code);
+    if (!item) return;
+    item.must_take = !item.must_take;
+    if (state.build || state.inflight) planChanged();
+    state.focus = { kind: 'must', code };
+    renderCourses();
   }
 
   /* ── Data: plan and section catalogue ──────────────────────────────────── */
@@ -1895,6 +2485,8 @@
   async function loadPlan(run) {
     state.planState = 'loading';
     state.planCourses = null;
+    state.planCredits = null;
+    renderStudent();
     renderCourses();
     try {
       const url = `/report/student-plan/?student_id=${encodeURIComponent(state.ctx.studentId)}`
@@ -1904,8 +2496,14 @@
       if (run !== state.gen) return;
       if (!response.ok || !data || data.error) throw new Error('plan');
       const courses = [];
+      let creditsDone = 0;
+      let creditsAll = 0;
       for (const term of data.terms || []) {
         for (const c of term.courses || []) {
+          // Every row of the plan counts toward the total; the rows the student has passed toward the first number.
+          const hours = Number(c.credit_hours) || 0;
+          creditsAll += hours;
+          if (String(c.status || '') === 'passed') creditsDone += hours;
           const code = norm(c.course_code);
           if (!code) continue;
           courses.push({
@@ -1916,13 +2514,16 @@
         }
       }
       state.planCourses = courses;
+      state.planCredits = { done: creditsDone, total: creditsAll };
       state.planState = 'ready';
     } catch (err) {
       if (run !== state.gen) return;
       state.planCourses = [];
+      state.planCredits = null;
       state.planState = 'error';
       setStatus('warn', T.planFailed);
     }
+    renderStudent();
     renderCourses();
     loadCatalog(run);
     // A build that was forecast before these rows were known is asked once more, now naming them.
@@ -1938,7 +2539,10 @@
   async function loadCatalog(run) {
     if (!state.ctx) return;
     const mine = ++state.catGen;
-    const codes = [...new Set([...planPool().map((c) => c.code), ...state.shortlist.map((c) => norm(c.course_code))])];
+    const codes = [...new Set([
+      ...planPool().map((c) => c.code), ...state.shortlist.map((c) => norm(c.course_code)),
+      ...state.recs.map((r) => norm(r.course_code)).filter(Boolean),
+    ])];
     if (!codes.length) { state.catalog = new Map(); renderCourses(); return; }
     let result = null;
     try {
@@ -1964,6 +2568,39 @@
     if (state.build) keepingFocus(() => { renderStrip(); renderGuide(); });
   }
 
+  // Source 4 of the picker: every course offered this term, all programmes. One request, made the
+  // first time the source is chosen (and again for another student), grouped by course key.
+  async function loadAllCatalog(run) {
+    if (!state.ctx) return;
+    const mine = ++state.allGen;
+    state.allState = 'loading';
+    state.allCatalog = null;
+    renderCourses();
+    let result = null;
+    try {
+      result = await postJson('/ops/planner/sections-catalog/', {
+        student_id: state.ctx.studentId, academic_year: state.ctx.year, term: state.ctx.term,
+        program_sections_only: false,
+      });
+    } catch (err) { result = null; }
+    if (run !== state.gen || mine !== state.allGen) return;
+    if (!result || !result.response.ok || !result.data || !Array.isArray(result.data.sections)) {
+      state.allState = 'error';
+      setStatus('warn', T.allFailed);
+    } else {
+      const map = new Map();
+      for (const section of result.data.sections) {
+        const key = courseKeyOf(section);
+        if (!key) continue;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(section);
+      }
+      state.allCatalog = map;
+      state.allState = 'ready';
+    }
+    renderCourses();
+  }
+
   /* ── Loading a student ─────────────────────────────────────────────────── */
   // Disabling the button that has the keyboard drops the keyboard on the page: it comes back to
   // Fetch when the load ends, unless the user has moved on meanwhile.
@@ -1980,7 +2617,7 @@
     const year = reuse ? state.ctx.year : $('plbYear').value.trim();
     const term = reuse ? state.ctx.term : $('plbTerm').value;
     if (!/^\d+$/.test(studentId)) { setStatus('error', T.enterStudent); return; }
-    if (!/^\d{4}$/.test(year)) { setStatus('error', T.enterYear); return; }
+    if (!/^\d{4}$/.test(year)) { setStatus('error', T.enterYear); setTermPop(true); return; }
 
     const mine = ++state.ctxGen;
     const failed = (line) => {
@@ -2016,10 +2653,15 @@
     }
     $('plbRoot').removeAttribute('aria-busy');
     releaseFetch();
+    closeEligConfirm(false);
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
     const previousId = state.student ? String(state.student.student_id) : null;
+    // Course colours belong to the student: the same student reloaded keeps them, so a kept
+    // (out-of-date) build is still drawn in the colours it was shown in.
+    if (previousId !== String(data.student.student_id)) state.hues = {};
+    const previousCtx = state.ctx ? { ...state.ctx } : null;
     // Options belong to the student they were built for. The same student reloaded (a rule that
     // reloads the suggestions) keeps them, marked out of date; another student removes them.
     if (reuse && previousId === String(data.student.student_id)) planChanged();
@@ -2041,10 +2683,23 @@
     state.shortlist = shortlistFromRecs(state.recs);
     state.suggested = JSON.parse(JSON.stringify(state.shortlist));
     state.planCourses = null;
+    state.planCredits = null;
     state.catalog = null;
+    // The picker starts again on the same source; the whole-term list belongs to this student and term.
+    state.pick = { ...newPick(), src: state.pick ? state.pick.src : 'recommended', find: state.pick ? state.pick.find : '' };
+    // The whole-term list is kept for the same student and term (an eligibility switch reloads
+    // the student, not the term); another student or term fetches it again.
+    const sameTerm = !!previousCtx && previousCtx.studentId === state.ctx.studentId
+      && previousCtx.year === state.ctx.year && previousCtx.term === state.ctx.term;
+    if (!sameTerm) {
+      state.allCatalog = null;
+      state.allState = 'idle';
+      state.allGen += 1;
+    }
     $('plbRoot').dataset.loaded = 'true';
     $('plbYear').value = state.ctx.year;
     if ([...$('plbTerm').options].some((o) => o.value === state.ctx.term)) $('plbTerm').value = state.ctx.term;
+    renderTermBtn();
     setStatus('ok', T.loaded);
     renderContextChip();
     renderStudent();
@@ -2053,6 +2708,8 @@
     renderCourses();
     renderActions();
     loadPlan(run);
+    // A request still on its way belonged to the retired run: ask again; a loaded list stays.
+    if (state.pick.src === 'all' && state.allState !== 'ready') loadAllCatalog(run);
     return true;
   }
 
@@ -2136,11 +2793,11 @@
     if (document.activeElement && document.activeElement !== document.body) return;
     let again = id ? document.getElementById(id) : null;
     if (!again && act && code) {
-      again = document.querySelector(`#plbTable [data-act="${CSS.escape(act)}"][data-code="${CSS.escape(code)}"]`);
+      again = document.querySelector(`#plbPick [data-act="${CSS.escape(act)}"][data-code="${CSS.escape(code)}"]`);
     }
     if (!again && more) again = document.querySelector(`#plbMoreList [data-more="${CSS.escape(more)}"]`);
     if (!again && inWeek >= 0) again = weekBlocksOf(code)[inWeek] || weekBlocksOf(code)[0] || null;
-    if (again && !again.disabled) again.focus();
+    if (again && !again.disabled) again.focus({ preventScroll: true });  // a redraw never scrolls the page
   }
   // A build older than 30 minutes is out of date. Checked when Review and apply is pressed, when
   // the page becomes visible again, and once a minute: there is no other timer.
@@ -2221,6 +2878,9 @@
     else if (verdict.ok) { setTone(build, 'btn-neutral'); setTone($('plbReview'), 'btn-primary'); }
     else { setTone(build, 'btn-neutral'); setTone($('plbReview'), 'btn-neutral'); }
     $('plbReview').disabled = !verdict.ok || building || state.applying;
+    const reviewOpt = currentOption();
+    $('plbReview').replaceChildren(...(reviewOpt ? T.reviewOpt(reviewOpt.name) : [T.review]));
+    renderApplyStatus();
     const why = $('plbApplyWhy');
     why.textContent = verdict.why || '';
     why.hidden = !verdict.why;
@@ -2473,18 +3133,20 @@
     }
     const list = creditList(row);
     const count = row.terms_including_planning_term;
-    const land = el('div', 'plb-land',
-      result ? el('span', 'plb-won', result.text) : null,
-      el('b', '', ...completionParts(row)));
-    if (result) land.firstElementChild.dataset.result = result.kind;
-    land.style.setProperty('--plb-from', String(list.length + 2));
+    // The option's result (its completion term and how it compares) is the band's header; only
+    // the registered line ends with its term.
+    let land = null;
+    if (kind !== 'opt') {
+      land = el('div', 'plb-land', el('b', '', ...completionParts(row)));
+      land.style.setProperty('--plb-from', String(list.length + 2));
+    }
     line.append(
       el('div', 'plb-rl',
         el('span', 'plb-num', String(count)),
         el('span', 'plb-st', el('b', '', T.gradTermWord(count)), el('span', 'plb-mic', ...label()))),
       el('i', 'plb-brk'),
       ...tickNodes(list),
-      land,
+      ...(land ? [land] : []),
       gradSentence(label(), row, result, list));
     return line;
   }
@@ -2557,13 +3219,11 @@
     if (!runway) return;
     const band = grad.getBoundingClientRect();
     if (!band.width) return;                      // not laid out: nothing to measure
-    const won = runway.querySelector('.plb-rwl--opt .plb-won[data-result="sooner"]');
     const isRow = () => getComputedStyle(runway).display === 'grid';
     // Start from the stylesheet's own choice, with every label, the unit, and the result at
     // reading size.
     delete runway.dataset.fit;
     delete runway.dataset.unit;
-    if (won) delete won.dataset.size;
     labelAxis(runway, 1);
     if (isRow()) {
       // The row layout may drop the unit (the caption says it) and thin its labels to every
@@ -2591,19 +3251,28 @@
       }
       return;
     }
-    // The result is the page's largest teal text where its line has room for it on one line.
-    // Its size cannot undo what was fitted above: only a "sooner" result is enlarged, and that
-    // belongs to the shorter line, whose landing spans a free column and so sizes no column.
-    if (!won) return;
-    for (const size of ['xl', 'lg']) {
-      won.dataset.size = size;
-      const box = won.getBoundingClientRect();
-      if (box.height < parseFloat(getComputedStyle(won).lineHeight) * 1.5 && within(box, band)) return;
-    }
-    delete won.dataset.size;
   }
 
+  // The band's header: what the selected option graduates with, its completion term and how it
+  // compares to the registered week. Only from a complete forecast; otherwise the line above speaks.
+  function renderGradHead(ready) {
+    const top = $('plbGradTop');
+    const opt = currentOption();
+    const regRow = ready && isObj(ready.baseline) ? ready.baseline : null;
+    const row = ready ? (opt ? forecastFor(opt.name) : regRow) : null;
+    top.hidden = !isComplete(row);
+    if (top.hidden) { $('plbGradTerm').replaceChildren(); $('plbGradPill').hidden = true; return; }
+    $('plbGradMic').replaceChildren(...(opt ? T.gradWith(opt.name) : [T.gradAsRegistered]));
+    $('plbGradTerm').replaceChildren(...completionParts(row));
+    const pill = $('plbGradPill');
+    const result = opt && isComplete(regRow) ? resultOf(row.delta_terms) : null;
+    pill.hidden = !result;
+    pill.textContent = result ? result.text : '';
+    if (result) pill.dataset.result = result.kind;
+  }
   function renderGrad() {
+    // "Graduates as it stands" reads the same forecast; the band is drawn again only when its word changes.
+    if (state.student && bandEndsKey() !== state.bandEnds) renderStudent();
     const grad = $('plbGrad');
     const hadFocus = grad.contains(document.activeElement);
     const line = $('plbGradLine');
@@ -2667,7 +3336,9 @@
     const open = items.length > 0 && (disclosure ? state.gradWhy : true);
     why.hidden = !open;
     why.replaceChildren(...(open ? items.map((parts) => el('li', '', ...parts)) : []));
+    renderGradHead(ready);
     fitRunway();
+    holdBandHeight(false);
 
     // A control that was just hidden took the keyboard with it: keep it in the band.
     if (hadFocus) {
@@ -2681,14 +3352,13 @@
   // The tabs sit under the band and must not jump away from the pointer as the page changes
   // tab: the band is as tall as its tallest column, and the guidance and the runway differ from
   // one option to the next. So within one build, side by side, it never gets shorter than it has
-  // been (a change of width starts the count again). A phone stacks the columns: nothing is held.
+  // been (a change of width starts the count again).
   function holdBandHeight(reset) {
     const band = document.querySelector('.plb-band');
     if (!band) return;
     band.style.minHeight = '';
     const build = state.build;
-    const sideBySide = getComputedStyle(band).gridTemplateColumns.split(' ').length > 1;
-    if (!build || !sideBySide) return;
+    if (!build) return;
     if (reset) build.bandHeight = 0;
     build.bandHeight = Math.max(build.bandHeight || 0, band.getBoundingClientRect().height);
     band.style.minHeight = `${build.bandHeight}px`;
@@ -2777,7 +3447,7 @@
     state.whyOpen = false;
     state.gradWhy = false;
     const gen = ++state.buildGen;
-    const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly };
+    const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly, maxCredits: state.rules.maxCredits };
     const shortlist = JSON.parse(JSON.stringify(state.shortlist));
     const body = buildBody();
     setBuildLine('busy', T.building);
@@ -2957,10 +3627,6 @@
     if (!d) return null;
     const item = state.shortlist.find((c) => norm(c.course_code) === d.code);
     if (item) return { inPlan: true, item, name: String(item.course_name || ''), credits: Number(item.credits) || 0 };
-    const course = planPool().find((c) => c.code === d.code);
-    if (course) return { inPlan: false, course, name: course.name, credits: course.credits };
-    // While the plan reloads the pool is empty for a moment: the panel waits instead of closing.
-    if (state.planState === 'loading') return { inPlan: false, course: null, name: d.name, credits: d.credits };
     return null;
   }
   function sectionClashes(section) {
@@ -2998,8 +3664,7 @@
   const pinLabel = (pin) => String(pin.section || '').trim() || '?';
   // A course's sections as the panel lists them (and as a request keeps them).
   function sortedSections(code) {
-    const list = state.catalog ? state.catalog.get(code) || [] : [];
-    return list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
+    return catalogSections(code).slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
   }
   // `ticked`: this section is one of the allowed ones; `atMax`: six are ticked already.
   function sectionRow(model, mode, ticked, atMax) {
@@ -3043,8 +3708,7 @@
     return row;
   }
   function renderDetail() {
-    const aside = $('plbDetail');
-    const body = aside.parentElement;
+    const aside = $('plbPop');
     const inside = aside.contains(document.activeElement);
     const focusKey = inside ? (document.activeElement.dataset.fk || 'title') : null;
     const info = detailInfo();
@@ -3052,11 +3716,11 @@
       state.detail = null;
       aside.hidden = true;
       aside.replaceChildren();
-      body.classList.add('plb-body--nodetail');
+      markPlanRows();
       markOpenBlocks();
       syncAlt();
-      // Focus was inside a panel that has gone: put it on the field that adds a course.
-      if (inside && !$('plbAdd').disabled) $('plbAdd').focus();
+      // Focus was inside a popover that has gone: put it on the search box.
+      if (inside && !$('plbFind').disabled) $('plbFind').focus();
       return;
     }
     const code = state.detail.code;
@@ -3076,23 +3740,18 @@
     close.dataset.act = 'dt-close';
     close.dataset.fk = 'close';
     const parts = [el('div', 'plb-dt-head', title, close)];
-    const effect = effectNode(code, info.inPlan ? 'new' : 'could');
+    const effect = effectNode(code, 'new');
     if (effect) parts.push(el('p', 'plb-dt-fx', effect));
 
-    const list = (state.catalog ? state.catalog.get(code) || [] : null);
-    const group = el(info.inPlan ? 'fieldset' : 'div', 'plb-dt-group');
-    if (info.inPlan) group.append(el('legend', 'plb-mic', T.detailSections));
-    else group.append(el('p', 'plb-mic', T.detailSections));
-    if (info.inPlan) {
-      group.append(modeRow('any', T.anySectionOpt, T.anySectionHint, !only), modeRow('only', T.onlyOpt, null, only));
-    } else {
-      group.append(el('p', 'plb-dt-hint', T.readOnlyHint));
-    }
+    const list = (state.catalog || state.allCatalog ? catalogSections(code) : null);
+    const group = el('fieldset', 'plb-dt-group');
+    group.append(el('legend', 'plb-mic', T.detailSections));
+    group.append(modeRow('any', T.anySectionOpt, T.anySectionHint, !only), modeRow('only', T.onlyOpt, null, only));
     if (list === null) group.append(el('p', 'plb-dt-hint', T.noCatalog));
     else if (!list.length) group.append(el('p', 'plb-dt-hint', T.noSections));
     else {
       for (const section of sortedSections(code)) {
-        group.append(sectionRow(sectionModel(section), info.inPlan ? 'pick' : 'read', tickedIds.has(String(section.term_section_id)), atMax));
+        group.append(sectionRow(sectionModel(section), 'pick', tickedIds.has(String(section.term_section_id)), atMax));
       }
     }
     // A ticked section that is not in the list any more is flagged, never silently dropped.
@@ -3129,30 +3788,10 @@
     }
     parts.push(group);
 
-    const foot = el('div', 'plb-dt-foot');
-    if (info.inPlan) {
-      const box = el('input', 'plb-tick');
-      box.type = 'checkbox';
-      box.checked = !!item.must_take;
-      box.dataset.act = 'dt-must';
-      box.dataset.fk = 'must';
-      const remove = el('button', 'btn btn-sm btn-neutral', T.removeFromPlan);
-      remove.type = 'button';
-      remove.dataset.act = 'dt-remove';
-      remove.dataset.fk = 'remove';
-      foot.append(el('label', 'plb-dt-must', box, ' ', T.mustTake), remove);
-    } else {
-      const add = el('button', 'btn btn-sm btn-primary', T.addToPlan);
-      add.type = 'button';
-      add.dataset.act = 'dt-add';
-      add.dataset.fk = 'add';
-      add.disabled = !info.course;
-      foot.append(add);
-    }
-    parts.push(foot);
     aside.replaceChildren(...parts);
     aside.hidden = false;
-    body.classList.remove('plb-body--nodetail');
+    placePop();
+    markPlanRows();
     markOpenBlocks();
     syncAlt();
     if (focusKey) {
@@ -3167,27 +3806,81 @@
   function openDetail(code, fromBlock) {
     const key = norm(code);
     const item = state.shortlist.find((c) => norm(c.course_code) === key);
-    const course = item ? null : planPool().find((c) => c.code === key);
-    if (!item && !course) return;
+    if (!item) return;
     state.detail = {
       code: key,
-      name: item ? String(item.course_name || '') : course.name,
-      credits: item ? Number(item.credits) || 0 : course.credits,
+      name: String(item.course_name || ''),
+      credits: Number(item.credits) || 0,
       weekAt: fromBlock ? weekBlocksOf(fromBlock.dataset.code).indexOf(fromBlock) : -1,
       weekCode: fromBlock ? fromBlock.dataset.code : '',
     };
-    renderCourses();
-    $('plbDetailTitle').focus();
+    // From the week the planned row is brought into view first: the popover hangs under its button.
+    const row = document.querySelector(`#plbPlanList .plb-prow[data-code="${CSS.escape(key)}"]`);
+    if (fromBlock && row) row.scrollIntoView({ block: 'nearest' });
+    renderDetail();
+    $('plbDetailTitle').focus({ preventScroll: true });
   }
+  // Closing redraws the popover and the open marks only: a click that closes it by landing elsewhere
+  // must find the node it hit still in place.
   function closeDetail(returnFocus) {
     const was = state.detail;
     state.detail = null;
-    renderCourses();
+    renderDetail();
     if (!returnFocus || !was) return;
     // Back to where it was opened from: the week block, else the row's button.
     const block = was.weekAt >= 0 ? weekBlocksOf(was.weekCode)[was.weekAt] : null;
-    const button = block || document.querySelector(`#plbTable [data-act="detail"][data-code="${CSS.escape(was.code)}"]`);
+    const button = block || document.querySelector(`#plbPlanList [data-act="detail"][data-code="${CSS.escape(was.code)}"]`);
     if (button) button.focus();
+  }
+  function markPlanRows() {
+    const open = state.detail ? state.detail.code : null;
+    for (const row of document.querySelectorAll('#plbPlanList .plb-prow[data-code]')) {
+      const on = open !== null && row.dataset.code === open;
+      if (on) row.dataset.open = 'true'; else delete row.dataset.open;
+      const button = row.querySelector('.plb-secbtn');
+      if (button) button.setAttribute('aria-expanded', String(on));
+    }
+  }
+  // The popover hangs under its course's section button, inside the plan's panel, and stays inside it.
+  // The popover hangs under its course's section button, or above it when the room below (inside
+  // the courses zone, above its Build row) is too small; failing both it takes the larger side and
+  // scrolls inside. It stays inside the plan's panel sideways.
+  function placePop() {
+    const pop = $('plbPop');
+    const plan = $('plbPlan');
+    const row = state.detail ? document.querySelector(`#plbPlanList .plb-prow[data-code="${CSS.escape(state.detail.code)}"]`) : null;
+    const button = row ? row.querySelector('.plb-secbtn') : null;
+    if (!button) { pop.style.top = '0px'; return; }
+    if (pop.previousElementSibling !== row) row.after(pop);
+    // A phone shows it as a full-width sheet in the flow, directly under its row.
+    if (PHONE.matches) { pop.removeAttribute('style'); return; }
+    const pr = plan.getBoundingClientRect();
+    const br = button.getBoundingClientRect();
+    const zone = $('plbZoneCourses').getBoundingClientRect();
+    const build = document.querySelector('#plbZoneCourses .plb-buildrow');
+    const floor = build ? build.getBoundingClientRect().top - 8 : zone.bottom;
+    const gap = 4;
+    const width = Math.min(380, pr.width);
+    const rtl = document.documentElement.dir === 'rtl';
+    const left = rtl ? br.left - pr.left : br.right - pr.left - width;
+    pop.style.width = `${width}px`;
+    pop.style.left = `${Math.max(0, Math.min(left, pr.width - width))}px`;
+    pop.style.maxHeight = 'none';
+    const natural = pop.scrollHeight;
+    const below = floor - br.bottom - gap;
+    const above = br.top - zone.top - gap;
+    let top;
+    if (natural <= below) top = br.bottom - pr.top + gap;
+    else if (natural <= above) top = br.top - pr.top - gap - natural;
+    else if (below >= above) {
+      pop.style.maxHeight = `${Math.max(120, below)}px`;
+      top = br.bottom - pr.top + gap;
+    } else {
+      const h = Math.max(120, above);
+      pop.style.maxHeight = `${h}px`;
+      top = br.top - pr.top - gap - Math.min(natural, h);
+    }
+    pop.style.top = `${top}px`;
   }
   // Write the allowed sections of a course: the shape the build endpoint takes (`pinned_sections`,
   // one to six {term_section_id, section}, in the list's section order). None: the key goes.
@@ -3231,88 +3924,104 @@
   /* ── Wiring ────────────────────────────────────────────────────────────── */
   function wire() {
     $('plbLoad').addEventListener('submit', (event) => { event.preventDefault(); loadStudent(); });
+    $('plbTermBtn').addEventListener('click', () => setTermPop($('plbTermPop').hidden, false));
+    $('plbYear').addEventListener('input', renderTermBtn);
+    $('plbTerm').addEventListener('change', renderTermBtn);
+    $('plbTermPop').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); setTermPop(false, true); }
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!$('plbTermPop').hidden && !event.target.closest('.plb-termwrap')) setTermPop(false, false);
+    });
     // A click anywhere during a load means the user has moved on: Fetch does not take the keyboard back.
     document.addEventListener('pointerdown', () => { state.fetchKeyboard = false; }, true);
-    $('plbEditRules').addEventListener('click', () => openRulesDialog());
     for (const [id, key, value] of [
       ['plbRegKeep', 'mode', 'keep'], ['plbRegIgnore', 'mode', 'ignore'],
       ['plbEligStrict', 'eligibility', 'strict'], ['plbEligRelaxed', 'eligibility', 'relaxed'],
+      ['plbProgOnly', 'programOnly', true], ['plbProgAny', 'programOnly', false],
     ]) $(id).addEventListener('change', (event) => { if (event.target.checked) changeRuleInPlace(key, value); });
+    $('plbFullIn').addEventListener('change', (event) => changeRuleInPlace('allowFull', event.target.checked));
+    $('plbRulesReset').addEventListener('click', resetRules);
+    $('plbEligGo').addEventListener('click', goEligConfirm);
+    $('plbEligKeep').addEventListener('click', () => closeEligConfirm(true));
+    $('plbCurTT').addEventListener('toggle', renderCurTT);
     $('plbMaxIn').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); commitMaxInPlace(); }
     });
     // Typed in: a load leaves the field alone until it is committed or left.
     $('plbMaxIn').addEventListener('input', () => { state.maxDirty = true; });
     $('plbMaxIn').addEventListener('blur', () => { commitMaxInPlace(); state.maxDirty = false; });
-    $('plbRulesCancel').addEventListener('click', closeRulesDialog);
-    // A dialog opened by the Eligibility switch hands the keyboard back to it, however it closes.
-    $('plbRulesDialog').addEventListener('close', () => {
-      const dialog = $('plbRulesDialog');
-      if (dialog.dataset.from !== 'eligibility') return;
-      delete dialog.dataset.from;
-      const on = document.querySelector('input[name="plbEligIn"]:checked');
-      if (on) on.focus();
-    });
-    $('plbRulesReset').addEventListener('click', () => fillRulesDialog(state.defaults));
-    $('plbRulesForm').addEventListener('submit', (event) => { event.preventDefault(); applyRulesDialog(); });
 
-    $('plbTable').addEventListener('click', (event) => {
+    // The picker: one delegated listener per kind of event on the whole zone.
+    const pick = $('plbPick');
+    pick.addEventListener('click', (event) => {
       const target = event.target.closest('[data-act]');
       if (!target || target.tagName !== 'BUTTON') return;
       const code = target.dataset.code;
-      if (target.dataset.act === 'detail') {
+      const act = target.dataset.act;
+      if (act === 'detail') {
         if (state.detail && state.detail.code === code) closeDetail(true);
         else openDetail(code);
-      } else if (target.dataset.act === 'reset') resetToSuggestions();
-      else if (target.dataset.act === 'remove') removeCourseFromPlan(code);
-      else if (target.dataset.act === 'add') {
-        const course = planPool().find((c) => c.code === code);
-        if (course) addCourseToPlan(itemFromPlan(course));
-      }
-    });
-    $('plbTable').addEventListener('change', (event) => {
-      const target = event.target;
-      if (!target || target.dataset.act !== 'must') return;
-      const item = state.shortlist.find((c) => norm(c.course_code) === target.dataset.code);
-      if (!item) return;
-      item.must_take = target.checked;
-      renderReset();
-      if (state.build || state.inflight) {
-        planChanged();
-        state.focus = { kind: 'must', code: item.course_code };
+      } else if (act === 'dt-close') closeDetail(true);
+      else if (act === 'reset') resetToSuggestions();
+      else if (act === 'remove') removeCoursesFromPlan([code], 'row');
+      else if (act === 'must') toggleRequired(code);
+      else if (act === 'open') {
+        if (state.pick.opened.has(code)) state.pick.opened.delete(code); else state.pick.opened.add(code);
         renderCourses();
-      }
+      } else if (act === 'fold') { state.pick.blockedOpen = !state.pick.blockedOpen; renderCourses(); }
+      else if (act === 'only') moveOne(code, true);
+      else if (act === 'add') moveOne(code, false, 'plus');
     });
-
-    // The detail panel: one delegated listener per kind of event.
-    const detail = $('plbDetail');
-    detail.addEventListener('click', (event) => {
-      const target = event.target.closest('[data-act]');
-      if (!target || !state.detail) return;
-      const code = state.detail.code;
-      if (target.dataset.act === 'dt-close') closeDetail(true);
-      else if (target.dataset.act === 'dt-remove') removeCourseFromPlan(code, true);
-      else if (target.dataset.act === 'dt-add') {
-        const course = planPool().find((c) => c.code === code);
-        if (course) addCourseToPlan(itemFromPlan(course), true);
-      }
-    });
-    detail.addEventListener('change', (event) => {
+    pick.addEventListener('change', (event) => {
       const target = event.target;
-      if (!state.detail || !target) return;
-      const code = state.detail.code;
-      if (target.dataset.act === 'dt-must') {
-        const item = state.shortlist.find((c) => norm(c.course_code) === code);
-        if (!item) return;
-        item.must_take = target.checked;
-        planChanged();
-        renderCourses();
-      } else if (target.name === 'plbMode') {
-        if (target.value === 'any') chooseAny(code);
-        else { state.detail.only = true; renderCourses(); }
-      } else if (target.name === 'plbOnly') {
-        toggleSection(code, String(target.value), target.checked);
+      if (!target || !target.dataset) return;
+      if (target.dataset.act === 'tick') tickCourse(target.dataset.code, target.checked);
+      else if (target.dataset.act === 'sectick') tickSection(target.dataset.code, target.dataset.tsid, target.checked);
+      else if (target.dataset.act === 'ptick') planTick(target.dataset.code, target.checked);
+      else if (state.detail) {
+        const code = state.detail.code;
+        if (target.name === 'plbMode') {
+          if (target.value === 'any') chooseAny(code);
+          else { state.detail.only = true; renderCourses(); }
+        } else if (target.name === 'plbOnly') toggleSection(code, String(target.value), target.checked);
       }
+    });
+    // Double-click on a row moves it (the same as ticking it and pressing the arrow).
+    pick.addEventListener('dblclick', (event) => {
+      if (event.target.closest('button, input, label, .plb-secs, .plb-blocked')) return;
+      const row = event.target.closest('#plbAvailList .plb-arow:not(.plb-arow--off)');
+      if (row) moveOne(row.dataset.code, false);
+    });
+    for (const button of document.querySelectorAll('[data-xfer]')) {
+      button.addEventListener('click', () => {
+        const kind = button.dataset.xfer;
+        if (kind === 'add') moveTicked();
+        else if (kind === 'addall') moveAll();
+        else if (kind === 'rem') removeCoursesFromPlan([...state.pick.planTicked], '');
+        else if (kind === 'remall') removeCoursesFromPlan(state.shortlist.map((c) => c.course_code), '');
+      });
+    }
+    window.addEventListener('resize', () => { if (state.detail) placePop(); });
+    PHONE.addEventListener('change', () => { if (state.detail) placePop(); });
+    const ptabs = $('plbPickTabs');
+    ptabs.addEventListener('click', (event) => {
+      const tab = event.target.closest('[role="tab"]');
+      if (tab) setPickTab(tab.id === 'plbPickTabPlan' ? 'plan' : 'avail', false);
+    });
+    ptabs.addEventListener('keydown', (event) => {
+      const keys = { ArrowLeft: 1, ArrowRight: 1, Home: 'avail', End: 'plan' };
+      if (!(event.key in keys)) return;
+      event.preventDefault();
+      const next = typeof keys[event.key] === 'string' ? keys[event.key] : (state.pickTab === 'avail' ? 'plan' : 'avail');
+      setPickTab(next, true);
+    });
+    $('plbSource').addEventListener('change', (event) => setSource(event.target.value));
+    $('plbFind').addEventListener('input', (event) => { state.pick.find = event.target.value; renderCourses(); });
+    // The popover closes on a click outside it, once that click has done its work: closing on the
+    // press could shift the page (the popover can reach below the plan) before the button is released.
+    document.addEventListener('click', (event) => {
+      if (state.detail && !event.target.closest('#plbPop, .plb-secbtn, #plbWeek [data-act="week-open"]')) closeDetail(false);
     });
     $('plbWeek').addEventListener('click', (event) => {
       const block = event.target.closest('[data-act="week-open"]');
@@ -3330,10 +4039,10 @@
     });
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
-      if (event.target.closest && event.target.closest('#plbDetail')) { event.preventDefault(); closeDetail(true); return; }
+      if (state.detail && event.target.closest && event.target.closest('#plbPop, .plb-secbtn')) { event.preventDefault(); closeDetail(true); return; }
       // Only from the disclosure's own corner: Escape in the course search or on a tab is not
       // a request to close this, and must not pull the keyboard away from where it is.
-      if (state.whyOpen && event.target.closest && event.target.closest('.plb-acts')) { event.preventDefault(); setWhy(false, true); }
+      if (state.whyOpen && event.target.closest && event.target.closest('#plbWhyBtn, #plbWhy')) { event.preventDefault(); setWhy(false, true); }
       // The reasons close on Escape only while their button is on screen: on a tab whose forecast
       // has none (or lists them without a button) there is nothing to close and Escape is left alone.
       if (state.gradWhy && !$('plbGradWhyBtn').hidden && event.target.closest && event.target.closest('#plbGrad')) {
@@ -3410,24 +4119,6 @@
     document.addEventListener('click', (event) => {
       if (state.moreOpen && !event.target.closest('#plbMore')) { state.moreOpen = false; renderStrip(); }
     });
-
-    const add = $('plbAdd');
-    add.addEventListener('input', renderList);
-    add.addEventListener('keydown', (event) => {
-      const options = $('plbAddList').querySelectorAll('[role="option"]').length;
-      if (event.key === 'ArrowDown' && options) { event.preventDefault(); highlight((activeOption + 1) % options); }
-      else if (event.key === 'ArrowUp' && options) { event.preventDefault(); highlight((activeOption - 1 + options) % options); }
-      else if (event.key === 'Enter') {
-        if (options) { event.preventDefault(); pickOption(activeOption < 0 ? 0 : activeOption); }
-      } else if (event.key === 'Escape') { closeList(); }
-    });
-    $('plbAddList').addEventListener('mousedown', (event) => {
-      const node = event.target.closest('[role="option"]');
-      if (!node) return;
-      event.preventDefault();
-      pickOption([...$('plbAddList').querySelectorAll('[role="option"]')].indexOf(node));
-    });
-    add.addEventListener('blur', closeList);
   }
 
   function init() {
@@ -3436,6 +4127,8 @@
     const term = root.dataset.defaultTerm;
     if ([...$('plbTerm').options].some((o) => o.value === term)) $('plbTerm').value = term;
     wire();
+    renderTermBtn();
+    state.pick = newPick();
     renderRules();
     renderStudent();
     renderWeek();
@@ -3450,6 +4143,7 @@
       const paramTerm = params.get('term');
       if (year) $('plbYear').value = year;
       if (paramTerm && [...$('plbTerm').options].some((o) => o.value === paramTerm)) $('plbTerm').value = paramTerm;
+      renderTermBtn();
       loadStudent();
     } else if (document.activeElement === document.body || !document.activeElement) {
       // An empty screen starts where the work starts. Once, here: nothing takes it back later.

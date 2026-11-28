@@ -7,6 +7,8 @@ from hashlib import sha256
 
 from django.contrib.auth.decorators import login_required
 from django.core import signing
+from django.db.models import TextField, Value
+from django.db.models.functions import Replace, Upper
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.cache import never_cache
@@ -750,10 +752,58 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                 "available_capacity": ts.available_capacity,
                 "registered_count": ts.registered_count,
                 "programs": sorted(link.program for link in ts.program_links.all()),
+                "credit_hours": None,
                 "meetings": [],
             }
 
         if grouped:
+            # Credit hours per section (one query each, never per section): the student's
+            # own programme row when it has one, else the course's, else unknown (null).
+            student_programme = ""
+            if student_id:
+                student_programme = str(
+                    Student.objects.filter(student_id=student_id)
+                    .values_list("program", flat=True)
+                    .first()
+                    or ""
+                ).strip()
+            programme_hours: dict[str, int] = {}
+            if student_programme:
+                for pr_code, pr_hours in ProgrammeRequirement.objects.filter(
+                    program__iexact=student_programme
+                ).values_list("course_code", "credit_hours"):
+                    if pr_hours and pr_hours > 0:
+                        programme_hours[normalize_code(pr_code)] = pr_hours
+
+            def hours_key(g: dict[str, object]) -> str:
+                # The course key as stored, else code + number (as the page derives it).
+                return normalize_code(g["course_key"]) or normalize_code(
+                    f"{g['course_code']}{g['course_number']}"
+                )
+
+            wanted_keys = {hours_key(g) for g in grouped.values()} - {""}
+            # Only the courses of this reply, matched on the code without its spaces. A code held
+            # by several rows that disagree on the hours is unknown, not an arbitrary one of them.
+            seen_hours: dict[str, set[int]] = {}
+            for c_code, c_hours in (
+                Course.objects.annotate(
+                    norm_code=Upper(
+                        Replace("course_code", Value(" "), Value(""), output_field=TextField())
+                    )
+                )
+                .filter(norm_code__in=wanted_keys)
+                .values_list("course_code", "credit_hours")
+            ):
+                seen_hours.setdefault(normalize_code(c_code), set()).add(
+                    c_hours if c_hours and c_hours > 0 else 0
+                )
+            course_hours = {
+                k: next(iter(v)) for k, v in seen_hours.items() if len(v) == 1 and 0 not in v
+            }
+            for g in grouped.values():
+                g_key = hours_key(g)
+                g["credit_hours"] = programme_hours.get(g_key) or course_hours.get(g_key)
+
             meetings_qs = TermSectionMeeting.objects.filter(
                 term_section_id__in=grouped.keys(),
             ).order_by("day", "start_time")

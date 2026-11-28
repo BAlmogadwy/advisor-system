@@ -67,23 +67,41 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         return self._open(fake, **kwargs), fake
 
     def _panel(self, page, code: str = "AI331") -> None:
-        page.click(f"#plbTable tr[data-code='{code}'] button[data-act='detail']")
-        expect(page.locator("#plbDetail")).to_be_visible()
+        self._code = code
+        self._sections_pop(page, code)
         expect(page.locator("#plbDetailTitle")).to_contain_text(code)
 
-    @staticmethod
-    def _box(page, tsid: int):
-        return page.locator(f"#plbDetail input[type='checkbox'][value='{tsid}']")
+    def _ensure(self, page) -> None:
+        """The popover closes on a click outside it (a tab, Build, a rule): open it again."""
+        if not page.locator("#plbPop").is_visible():
+            self._panel(page, getattr(self, "_code", "AI331"))
+
+    def _box(self, page, tsid: int):
+        self._ensure(page)
+        return page.locator(f"#plbPop input[type='checkbox'][value='{tsid}']")
 
     def _tick(self, page, *tsids: int) -> None:
         for tsid in tsids:
             self._box(page, tsid).check()
 
     def _build(self, page) -> None:
+        was_open = page.locator("#plbPop").is_visible()
+        if was_open:  # the popover can hang over the Build button: close it first
+            page.click("#plbPop [data-act='dt-close']")
         page.click("#plbBuild")
-        expect(page.locator("#plbBuild")).to_have_text(re.compile("Rebuild|أعد البناء"))
+        expect(page.locator("#plbBuild")).to_have_text(
+            re.compile("Rebuild options|أعد بناء الخيارات")
+        )
         expect(page.locator("#plbBuild")).to_be_enabled()
         expect(page.locator("#plbBuildLine")).to_have_text("")
+        if was_open:
+            self._ensure(page)
+
+    def _pick(self, page, name: str) -> None:
+        was_open = page.locator("#plbPop").is_visible()
+        PlannerBoardCase._pick(page, name)
+        if was_open:
+            self._ensure(page)
 
     @staticmethod
     def _pins(fake, n: int, code: str = "AI331"):
@@ -154,25 +172,21 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         page, fake = self._page()
         self._panel(page)
         any_, only = (
-            "#plbDetail input[type='radio'][value='any']",
-            "#plbDetail input[type='radio'][value='only']",
+            "#plbPop input[type='radio'][value='any']",
+            "#plbPop input[type='radio'][value='only']",
         )
-        self.assertEqual(page.locator("#plbDetail input[type='radio']").count(), 2)
-        self.assertEqual(
-            self._text(page, "#plbDetail label:has(input[value='only'])"), "Only these"
-        )
+        self.assertEqual(page.locator("#plbPop input[type='radio']").count(), 2)
+        self.assertEqual(self._text(page, "#plbPop label:has(input[value='only'])"), "Only these")
         self.assertTrue(self._checked(page, any_))
         self.assertFalse(self._checked(page, only))
         # Every row carries a box in either mode; nothing is ticked and no sentence is shown yet.
-        self.assertEqual(
-            page.locator("#plbDetail input[type='checkbox'][name='plbOnly']").count(), 9
-        )
-        self.assertEqual(page.locator("#plbDetail .plb-dt-note").count(), 0)
+        self.assertEqual(page.locator("#plbPop input[type='checkbox'][name='plbOnly']").count(), 9)
+        self.assertEqual(page.locator("#plbPop .plb-dt-note").count(), 0)
         # Choosing "Only these" with nothing ticked says in words what that means; nothing changes.
         page.locator(only).check()
         self.assertTrue(self._checked(page, only))
         self.assertEqual(
-            self._text(page, "#plbDetail .plb-dt-note"),
+            self._text(page, "#plbPop .plb-dt-note"),
             "Tick the sections the build may use. Until one is ticked, any section may be used.",
         )
         self.assertEqual(self._line(page), "Any section")
@@ -181,26 +195,26 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self.assertTrue(self._checked(page, only))
         self.assertFalse(self._checked(page, any_))
         self.assertEqual(
-            self._text(page, "#plbDetail .plb-dt-note"),
+            self._text(page, "#plbPop .plb-dt-note"),
             "The build picks one of the ticked sections.",
         )
-        self.assertEqual(page.locator("#plbDetail .plb-dt-note").count(), 1)
+        self.assertEqual(page.locator("#plbPop .plb-dt-note").count(), 1)
         # From "Any section" a tick selects "Only these" too (a reopened panel is "Only these" while ticked).
-        page.click("#plbDetail [data-act='dt-close']")
+        page.click("#plbPop [data-act='dt-close']")
         self._panel(page)
         self.assertTrue(self._checked(page, only))
         self.assertTrue(self._box(page, 22).is_checked())
         # "Any section" clears every tick.
         page.locator(any_).check()
-        self.assertEqual(page.locator("#plbDetail input[name='plbOnly']:checked").count(), 0)
+        self.assertEqual(page.locator("#plbPop input[name='plbOnly']:checked").count(), 0)
         self.assertTrue(self._checked(page, any_))
-        self.assertEqual(page.locator("#plbDetail .plb-dt-note").count(), 0)
+        self.assertEqual(page.locator("#plbPop .plb-dt-note").count(), 0)
         self.assertEqual(self._line(page), "Any section")
         self._build(page)
         self.assertEqual(self._pins(fake, 0), "absent")
         # A panel opened on a course with no ticks starts on "Any section", whatever it did before.
         page.locator(only).check()
-        page.click("#plbDetail [data-act='dt-close']")
+        page.click("#plbPop [data-act='dt-close']")
         self._panel(page)
         self.assertTrue(self._checked(page, any_))
 
@@ -208,25 +222,25 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         page, fake = self._page()
         self._panel(page)
         self._tick(page, *ONE_TO_SIX[:5])
-        self.assertEqual(page.locator("#plbDetail .plb-dt-note").count(), 1)
-        self.assertEqual(page.locator("#plbDetail input[name='plbOnly']:disabled").count(), 0)
+        self.assertEqual(page.locator("#plbPop .plb-dt-note").count(), 1)
+        self.assertEqual(page.locator("#plbPop input[name='plbOnly']:disabled").count(), 0)
         self._tick(page, 26)
         for tsid in (27, 28, 29):
             self.assertTrue(self._box(page, tsid).is_disabled(), tsid)
         for tsid in ONE_TO_SIX:
             self.assertTrue(self._box(page, tsid).is_enabled(), tsid)
         self.assertEqual(
-            self._text(page, "#plbDetail .plb-dt-note:last-of-type"), "Six sections at most."
+            self._text(page, "#plbPop .plb-dt-note:last-of-type"), "Six sections at most."
         )
         # Even a change event that gets past the disabled box changes nothing.
         page.evaluate(
             """() => {
-              const box = document.querySelector("#plbDetail input[value='27']");
+              const box = document.querySelector("#plbPop input[value='27']");
               box.disabled = false; box.checked = true;
               box.dispatchEvent(new Event('change', { bubbles: true }));
             }"""
         )
-        self.assertEqual(page.locator("#plbDetail input[name='plbOnly']:checked").count(), 6)
+        self.assertEqual(page.locator("#plbPop input[name='plbOnly']:checked").count(), 6)
         self.assertFalse(self._box(page, 27).is_checked())
         self._build(page)
         self.assertEqual(len(self._pins(fake, 0)), 6)
@@ -234,7 +248,7 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self._box(page, 23).uncheck()
         for tsid in (27, 28, 29):
             self.assertTrue(self._box(page, tsid).is_enabled(), tsid)
-        self.assertNotIn("Six sections", self._text(page, "#plbDetail"))
+        self.assertNotIn("Six sections", self._text(page, "#plbPop"))
 
     # ── sections that cannot be used ─────────────────────────────────────────
     def test_a_section_that_cannot_be_used_cannot_be_ticked_and_a_tick_that_became_so_stays(
@@ -254,35 +268,37 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self.assertTrue(self._box(page, 32).is_disabled())
         self.assertFalse(self._box(page, 33).is_disabled())
         self.assertIn(
-            "clashes with a registered class", self._text(page, "#plbDetail [data-tsid='31']")
+            "clashes with a registered class", self._text(page, "#plbPop [data-tsid='31']")
         )
-        self.assertIn("full sections are off", self._text(page, "#plbDetail [data-tsid='32']"))
+        self.assertIn("full sections are off", self._text(page, "#plbPop [data-tsid='32']"))
         # A change that gets past the disabled box changes nothing.
         page.evaluate(
             """() => {
-              const box = document.querySelector("#plbDetail input[value='31']");
+              const box = document.querySelector("#plbPop input[value='31']");
               box.disabled = false; box.checked = true;
               box.dispatchEvent(new Event('change', { bubbles: true }));
             }"""
         )
         self.assertEqual(self._line(page), "Any section")
-        self.assertEqual(page.locator("#plbDetail input[name='plbOnly']:checked").count(), 0)
+        self.assertEqual(page.locator("#plbPop input[name='plbOnly']:checked").count(), 0)
         # Allow both, tick both; then take the allowance away: the ticks stay, flagged, and can go.
         self._rules(page, full=True, mode="ignore")
+        self._ensure(page)
         self._tick(page, 31, 32)
         self._rules(page, full=False, mode="keep")
+        self._ensure(page)
         for tsid in (31, 32):
             self.assertTrue(self._box(page, tsid).is_checked())
             self.assertTrue(self._box(page, tsid).is_enabled())
             self.assertIn(
                 "Ticked, but it can no longer be used.",
-                self._text(page, f"#plbDetail [data-tsid='{tsid}']"),
+                self._text(page, f"#plbPop [data-tsid='{tsid}']"),
             )
-        self.assertEqual(self._line(page), "Only §M1 or §M2")
+        self.assertEqual(self._line(page), "Sections M1, M2")
         self._box(page, 31).uncheck()
         self.assertFalse(self._box(page, 31).is_checked())
         self.assertTrue(self._box(page, 31).is_disabled())
-        self.assertEqual(self._line(page), "Only §M2")
+        self.assertEqual(self._line(page), "Section M2")
         self._build(page)
         self.assertEqual(self._pins(fake, 0), [{"term_section_id": 32, "section": "M2"}])
 
@@ -295,12 +311,13 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
             "sections": [s for s in SECTIONS if s["term_section_id"] != 22],
         }
         self._rules(page, prog=False)  # reloads the catalogue
-        gone = "#plbDetail [data-tsid='22']"
+        self._ensure(page)
+        gone = "#plbPop [data-tsid='22']"
         expect(page.locator(gone)).to_contain_text(
             "Ticked, but it is not in the current section list."
         )
         self.assertTrue(self._box(page, 22).is_checked())
-        self.assertEqual(self._line(page), "Only §M2 or §M3")
+        self.assertEqual(self._line(page), "Sections M2, M3")
         self._build(page)
         self.assertEqual(
             self._pins(fake, 0),
@@ -309,7 +326,7 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self._box(page, 22).click()
         self.assertEqual(page.locator(gone).count(), 0)
         page.click("#plbTabRegistered")
-        self.assertEqual(self._line(page), "Only §M3")
+        self.assertEqual(self._line(page), "Section M3")
 
     # ── what the table and the status line say ───────────────────────────────
     def test_the_table_line_and_the_status_line_on_the_registered_tab(self) -> None:
@@ -317,21 +334,21 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self._panel(page)
         self.assertEqual(self._line(page), "Any section")
         self._tick(page, 21)
-        self.assertEqual(self._line(page), "Only §M1")
+        self.assertEqual(self._line(page), "Section M1")
         self.assertIn("AI331: only §M1 may be used.", self._status(page))
         self._tick(page, 22)
-        self.assertEqual(self._line(page), "Only §M1 or §M2")
+        self.assertEqual(self._line(page), "Sections M1, M2")
         self.assertIn("AI331: only §M1 or §M2 may be used.", self._status(page))
         self._tick(page, 23)
-        self.assertEqual(self._line(page), "Only 3 sections")
+        self.assertEqual(self._line(page), "Sections M1, M2, M3")
         self.assertIn("AI331: only 3 sections may be used.", self._status(page))
         self._tick(page, 24)
-        self.assertEqual(self._line(page), "Only 4 sections")
+        self.assertEqual(self._line(page), "Sections M1, M2, M3, M4")
         for tsid in (21, 22, 23, 24):
             self._box(page, tsid).uncheck()
         self.assertEqual(self._line(page), "Any section")
         self.assertIn("AI331: any section may be used.", self._status(page))
-        self.assertNotIn("Pinned", self._text(page, "#plbTable"))
+        self.assertNotIn("Pinned", self._text(page, "#plbPick"))
 
     def test_the_table_line_on_an_options_tab_says_what_it_did_and_what_else_was_allowed(
         self,
@@ -344,19 +361,23 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self.assertEqual(self._line(page), "§M2")  # the only tick, which is the one it used
         self._tick(page, 21)
         self.assertEqual(self._line(page), "§M2 · or §M1")
-        self.assertEqual(page.locator("#plbTable tr[data-code='AI331'] .plb-or").count(), 1)
+        self.assertEqual(
+            page.locator("#plbPlanList .plb-prow[data-code='AI331'] .plb-or").count(), 1
+        )
         self._tick(page, 24)
         self.assertEqual(self._line(page), "§M2 · or 2 others")
         # B2 used M3, which is not ticked: it says what it did and adds nothing.
         self._pick(page, "B2")
         self.assertEqual(self._line(page), "§M3")
-        self.assertEqual(page.locator("#plbTable tr[data-code='AI331'] .plb-or").count(), 0)
+        self.assertEqual(
+            page.locator("#plbPlanList .plb-prow[data-code='AI331'] .plb-or").count(), 0
+        )
         # Ticked with others: "or" names the others.
         self._tick(page, 23)
         self.assertEqual(self._line(page), "§M3 · or 3 others")
         # The Registered tab reads the allowance again.
         page.click("#plbTabRegistered")
-        self.assertEqual(self._line(page), "Only 4 sections")
+        self.assertEqual(self._line(page), "Sections M1, M2, M3, M4")
 
     # ── the week ─────────────────────────────────────────────────────────────
     def test_dashed_blocks_for_the_open_course_only_and_only_what_is_not_solid(self) -> None:
@@ -383,21 +404,19 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         # Gone with the tick, and gone with the panel.
         self._box(page, 21).uncheck()
         self.assertEqual(len(self._alts(page)), 2)
-        page.click("#plbDetail [data-act='dt-close']")
+        page.click("#plbPop [data-act='dt-close']")
         self.assertEqual(self._alts(page), [])
         self.assertNotIn("Alternative", self._text(page, "#plbLegend"))
         # Another course's panel draws that course's ticks, none here.
         self._panel(page, "AI342")
         self.assertEqual(self._alts(page), [])
-        page.click("#plbDetail [data-act='dt-close']")
+        page.click("#plbPop [data-act='dt-close']")
         self._panel(page)
         self.assertEqual(len(self._alts(page)), 2)
-        # A course that is not in the plan has no allowance to draw.
-        self._panel(page, "CS351")
+        # A course that is not in the plan has no popover, so no allowance to draw.
+        page.click("#plbPop [data-act='dt-close']")
+        self.assertEqual(page.locator("#plbPlanList [data-code='CS351']").count(), 0)
         self.assertEqual(self._alts(page), [])
-        self.assertEqual(
-            page.locator("#plbDetail input[type='checkbox'][name='plbOnly']").count(), 0
-        )
 
     def test_on_an_options_tab_the_section_it_used_stays_solid_and_the_rest_are_dashed(
         self,
@@ -432,7 +451,8 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
                     self._pick(page, tab)
                 else:
                     page.click("#plbTabRegistered")
-                page.click("#plbDetail [data-act='dt-close']")
+                    self._ensure(page)
+                page.click("#plbPop [data-act='dt-close']")
                 without = page.evaluate(SNAPSHOT)
                 self.assertEqual(self._alts(page), [])
                 self._panel(page)
@@ -484,6 +504,9 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self._build(page)
         self._pick(page, "B1")
         self.assertEqual(self._alts(page), ["AI331|alt §M9|10:00-11:15"])
+        page.locator(
+            "#plbWeek .plb-b[data-kind='new'][data-code='AI331']"
+        ).scroll_into_view_if_needed()
         top = page.evaluate(
             """() => {
               const solid = document.querySelector("#plbWeek .plb-b[data-kind='new'][data-code='AI331']");
@@ -518,7 +541,7 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
                 elif change == "untick":
                     self._box(page, 21).uncheck()
                 else:
-                    page.locator("#plbDetail input[type='radio'][value='any']").check()
+                    page.locator("#plbPop input[type='radio'][value='any']").check()
                 expect(page.locator("#plbBuildLine")).to_have_text(STALE)
                 self.assertEqual(page.get_attribute("#plbStrip", "data-stale"), "changed")
                 self.assertTrue(page.locator("#plbReview").is_disabled())
@@ -527,7 +550,7 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         page, _ = self._page()
         self._panel(page)
         self._build(page)
-        page.locator("#plbDetail input[type='radio'][value='only']").check()
+        page.locator("#plbPop input[type='radio'][value='only']").check()
         expect(page.locator("#plbBuildLine")).to_have_text("")
         self.assertIsNone(page.get_attribute("#plbStrip", "data-stale"))
 
@@ -543,22 +566,22 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         expect(self._box(page, 22)).not_to_be_checked()
         expect(self._box(page, 22)).to_be_focused()
         # The radios keep it too.
-        only = page.locator("#plbDetail input[type='radio'][value='only']")
+        only = page.locator("#plbPop input[type='radio'][value='only']")
         only.focus()
         page.keyboard.press("Space")
-        expect(page.locator("#plbDetail input[type='radio'][value='only']")).to_be_focused()
+        expect(page.locator("#plbPop input[type='radio'][value='only']")).to_be_focused()
         # The box with the keyboard becomes disabled (six others were ticked): the mode radio has it.
         self._box(page, 29).focus()
         page.evaluate(
             """() => { for (const t of [21, 22, 23, 24, 25, 26])
-              document.querySelector(`#plbDetail input[value='${t}']`).click(); }"""
+              document.querySelector(`#plbPop input[value='${t}']`).click(); }"""
         )
         self.assertTrue(self._box(page, 29).is_disabled())
-        expect(page.locator("#plbDetail input[type='radio'][value='only']")).to_be_focused()
+        expect(page.locator("#plbPop input[type='radio'][value='only']")).to_be_focused()
 
     # ── Arabic ───────────────────────────────────────────────────────────────
-    def test_removing_the_course_ends_only_these_for_the_panel_left_open(self) -> None:
-        only = "#plbDetail input[name='plbMode'][value='only']"
+    def test_removing_the_course_ends_only_these_and_closes_its_popover(self) -> None:
+        only = "#plbPop input[name='plbMode'][value='only']"
         for tick in (False, True):
             with self.subTest(tick=tick):
                 page, _fake = self._page()
@@ -568,21 +591,18 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
                 else:
                     page.check(only)
                 self.assertTrue(self._checked(page, only))
-                page.click("#plbDetail [data-act='dt-remove']")
-                expect(page.locator("#plbDetail [data-act='dt-add']")).to_be_visible()
-                page.click("#plbDetail [data-act='dt-add']")
-                expect(
-                    page.locator("#plbDetail input[name='plbMode'][value='any']")
-                ).to_be_checked()
-                self.assertEqual(
-                    page.locator("#plbDetail input[name='plbOnly']:checked").count(), 0
-                )
-                self.assertEqual(page.locator("#plbDetail .plb-dt-note").count(), 0)
+                self._remove(page, "AI331")
+                expect(page.locator("#plbPop")).to_be_hidden()  # the popover goes with its course
+                self._add(page, "AI331")
+                self._sections_pop(page, "AI331")
+                expect(page.locator("#plbPop input[name='plbMode'][value='any']")).to_be_checked()
+                self.assertEqual(page.locator("#plbPop input[name='plbOnly']:checked").count(), 0)
+                self.assertEqual(page.locator("#plbPop .plb-dt-note").count(), 0)
 
     def test_the_only_these_radio_says_what_it_means_right_now(self) -> None:
         page, _fake = self._page()
         self._panel(page)
-        only = page.locator("#plbDetail input[name='plbMode'][value='only']")
+        only = page.locator("#plbPop input[name='plbMode'][value='only']")
         self.assertIsNone(only.get_attribute("aria-describedby"))
         only.check()
         self.assertEqual(only.get_attribute("aria-describedby"), "plbOnlyNote")
@@ -610,31 +630,31 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
     def test_arabic_for_every_text(self) -> None:
         page, _ = self._page(language="ar")
         self._panel(page)
-        text = self._text(page, "#plbDetail")
+        text = self._text(page, "#plbPop")
         self.assertIn("أي شعبة", text)
         self.assertIn("هذه فقط", text)
-        page.locator("#plbDetail input[type='radio'][value='only']").check()
+        page.locator("#plbPop input[type='radio'][value='only']").check()
         self.assertEqual(
-            self._text(page, "#plbDetail .plb-dt-note"),
+            self._text(page, "#plbPop .plb-dt-note"),
             "حدِّد الشُعب التي يجوز للبناء استخدامها. ما لم تُحدَّد شعبة، تُستخدم أي شعبة.",
         )
         self._tick(page, 21)
         self.assertEqual(
-            self._text(page, "#plbDetail .plb-dt-note"), "يختار البناء إحدى الشُعب المحدَّدة."
+            self._text(page, "#plbPop .plb-dt-note"), "يختار البناء إحدى الشُعب المحدَّدة."
         )
-        self.assertEqual(self._line(page), "فقط §M1")
+        self.assertEqual(self._line(page), "الشعبة M1")
         self.assertIn("AI331: يجوز استخدام §M1 فقط.", self._status(page))
         self.assertEqual(self._alts(page), ["AI331|بديل §M1|08:00-09:15"])
         self.assertIn("بديل", self._text(page, "#plbLegend"))
         self._tick(page, 22)
-        self.assertEqual(self._line(page), "فقط §M1 أو §M2")
+        self.assertEqual(self._line(page), "الشعب M1، M2")
         self.assertIn("AI331: يجوز استخدام §M1 أو §M2 فقط.", self._status(page))
         self._tick(page, 23)
-        self.assertEqual(self._line(page), "فقط 3 شعب")
+        self.assertEqual(self._line(page), "الشعب M1، M2، M3")
         self.assertIn("AI331: يجوز استخدام 3 شعب فقط.", self._status(page))
         self._tick(page, 24, 25, 26)
         self.assertEqual(
-            self._text(page, "#plbDetail .plb-dt-note:last-of-type"), "ست شُعب على الأكثر."
+            self._text(page, "#plbPop .plb-dt-note:last-of-type"), "ست شُعب على الأكثر."
         )
         self._build(page)
         self._pick(page, "B1")
@@ -649,7 +669,7 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
         self._box(page, 22).uncheck()
         self.assertIn("AI331: يجوز استخدام أي شعبة.", self._status(page))
         self.assertEqual(self._line(page), "§M2")
-        self.assertNotIn("مثبّت", self._text(page, "#plbTable") + self._text(page, "#plbDetail"))
+        self.assertNotIn("مثبّت", self._text(page, "#plbPick") + self._text(page, "#plbPop"))
         self.assertEqual(page.evaluate("document.documentElement.dir"), "rtl")
 
     # ── size ─────────────────────────────────────────────────────────────────
@@ -661,15 +681,14 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
                     page, _ = self._page(language=language, width=width, height=height, font=font)
                     self._panel(page)
                     found = list(page.evaluate(OVERFLOWS))
-                    page.locator("#plbDetail input[type='radio'][value='only']").check()
+                    page.locator("#plbPop input[type='radio'][value='only']").check()
                     found += page.evaluate(OVERFLOWS)
                     self._tick(
                         page, *ONE_TO_SIX
                     )  # six ticks: the "at most" line and the dashed blocks
                     found += page.evaluate(OVERFLOWS)
                     self.assertEqual(len(self._alts(page)), 7)
-                    page.click("#plbBuild")
-                    expect(page.locator("#plbBuild")).to_be_enabled()
+                    self._build(page)
                     self._pick(page, "B1")
                     found += page.evaluate(OVERFLOWS)
                     if found:
@@ -683,9 +702,9 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
     def test_the_new_texts_wrap_in_a_wide_font_and_never_say_pinned(self) -> None:
         page, _ = self._page(font="wide", width=390, height=844)
         self._panel(page)
-        page.locator("#plbDetail input[type='radio'][value='only']").check()
-        note = page.locator("#plbDetail .plb-dt-note")
+        page.locator("#plbPop input[type='radio'][value='only']").check()
+        note = page.locator("#plbPop .plb-dt-note")
         box = note.bounding_box()
-        panel = page.locator("#plbDetail").bounding_box()
+        panel = page.locator("#plbPop").bounding_box()
         self.assertLessEqual(box["x"] + box["width"], panel["x"] + panel["width"] + 1)
-        self.assertIsNone(re.search(r"(?i)pinned", self._text(page, "#plbDetail")))
+        self.assertIsNone(re.search(r"(?i)pinned", self._text(page, "#plbPop")))
