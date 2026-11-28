@@ -44,6 +44,7 @@
   {% if filters.term %}<input type="hidden" name="term" value="{{ filters.term }}">{% endif %}
   {% if filters.window %}<input type="hidden" name="window" value="{{ filters.window }}">{% endif %}
   {% if filters.sent_programme %}<input type="hidden" name="sent_programme" value="{{ filters.sent_programme }}">{% endif %}
+  {% if filters.report %}<input type="hidden" name="from" value="report">{% endif %}
   <div class="ttfs-filter-grid">
     <div class="ttfs-filter">
       <label class="ttf-label" for="ttfsSearch">{{ t.filter_search }}</label>

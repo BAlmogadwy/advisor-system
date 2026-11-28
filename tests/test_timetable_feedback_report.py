@@ -263,6 +263,10 @@ def test_the_queue_opened_from_the_report_sets_withdrawn_feedback_aside_too(peop
         page, listed = _listed(_as(people["admin"]), link)
         assert listed == {standing.reference}, wanted
         assert 'id="ttfsReportFilter"' in page
+    # Filtering again from that page keeps the mark, so nothing comes back.
+    page = _as(people["admin"]).get(_link_with(html, reason="TIME_CLASH")).content.decode()
+    form = page.split('id="ttfsFilters"')[1].split("</form>")[0]
+    assert '<input type="hidden" name="from" value="report">' in form
     # Without the report's mark, the queue lists both, as it always did.
     plain = _as(people["admin"]).get(QUEUE, {"tab": "all", "reason": "TIME_CLASH"})
     assert {withdrawn.reference, standing.reference} <= set(
