@@ -45,6 +45,7 @@ STAFF_LINKS = (
     ("/#student", None),
     ("/virtual-advisor/", None),
     ("/ops/timetable-feedback/", "can_timetable_feedback_staff"),
+    ("/ops/advisor-cases/", "can_advisor_inbox"),
     ("/#batch", "can_db_admin"),
     ("/#debug", "can_db_admin"),
     ("/#plan", None),
@@ -155,10 +156,12 @@ def _render(partial: Template, **flags) -> str:
         "user": request.user,
         "timetable_feedback_unread": 0,
         "timetable_feedback_staff_count": 0,
+        "advisor_inbox_waiting": 0,
     }
     context.update({flag: False for flag in STAFF_FLAGS})
     context["can_timetable_feedback"] = False
     context["can_timetable_feedback_staff"] = False
+    context["can_advisor_inbox"] = False
     context.update(flags)
     return partial.render(Context(context))
 
@@ -173,13 +176,17 @@ def _expected(links, flags) -> list[str]:
 
 @pytest.mark.parametrize("role", ["SUPER_ADMIN", "GENERAL_ACADEMIC_ADVISOR", "ADVISOR"])
 @pytest.mark.parametrize("feedback", [False, True])
-def test_a_staff_role_sees_exactly_the_links_its_flags_allow(partial, role, feedback) -> None:
+@pytest.mark.parametrize("inbox", [False, True])
+def test_a_staff_role_sees_exactly_the_links_its_flags_allow(
+    partial, role, feedback, inbox
+) -> None:
     """Every combination of the six flags the staff branch branches on — not
     only the ones core/sidebar_context.py produces today, so granting a flag to
     another role later cannot silently drop a link."""
     for bits in itertools.product((False, True), repeat=len(STAFF_FLAGS)):
         flags = dict(zip(STAFF_FLAGS, bits, strict=True))
         flags["can_timetable_feedback_staff"] = feedback
+        flags["can_advisor_inbox"] = inbox
         html = _render(partial, role=role, **flags)
         assert _hrefs(html) == _expected(STAFF_LINKS, flags), (role, flags)
 
@@ -203,7 +210,13 @@ def test_a_student_sees_only_the_student_portal(partial, feedback) -> None:
 
 def test_the_exam_committee_sees_only_the_exam_timetable(partial) -> None:
     flags = {flag: True for flag in STAFF_FLAGS}
-    html = _render(partial, role="EXAM_COMMITTEE", can_timetable_feedback_staff=True, **flags)
+    html = _render(
+        partial,
+        role="EXAM_COMMITTEE",
+        can_timetable_feedback_staff=True,
+        can_advisor_inbox=True,
+        **flags,
+    )
     assert _hrefs(html) == ["/exam-timetable/"]
 
 
@@ -216,7 +229,12 @@ def test_every_link_sits_in_a_named_group(partial, role) -> None:
     no separator."""
     flags = {flag: True for flag in STAFF_FLAGS}
     html = _render(
-        partial, role=role, can_timetable_feedback=True, can_timetable_feedback_staff=True, **flags
+        partial,
+        role=role,
+        can_timetable_feedback=True,
+        can_timetable_feedback_staff=True,
+        can_advisor_inbox=True,
+        **flags,
     )
     seen = _nesting(html)
     assert len(seen.links) == len(_hrefs(html)) > 0
@@ -238,6 +256,8 @@ def test_the_partial_leaves_no_template_syntax_in_the_page(partial, language) ->
             role="SUPER_ADMIN",
             can_timetable_feedback=True,
             can_timetable_feedback_staff=True,
+            can_advisor_inbox=True,
+            advisor_inbox_waiting=3,
             **flags,
         )
     for token in ("{%", "%}", "{{", "}}", "{#", "#}"):

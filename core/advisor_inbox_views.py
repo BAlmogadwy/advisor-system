@@ -158,6 +158,8 @@ def inbox_view(request: HttpRequest) -> HttpResponse:
             for value, _label in AdvisorEscalation.Reason.choices
         ],
         "filters": {"status": status, "reason": reason, "mine": mine, "program": program},
+        # An empty list says why: nothing yet, or the filters (which can be cleared).
+        "filtered": bool(status or reason or mine or program),
     }
     return render(request, "core/advisor_inbox.html", context)
 

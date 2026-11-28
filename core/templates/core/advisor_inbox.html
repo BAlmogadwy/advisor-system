@@ -70,7 +70,9 @@
             <td>{{ row.case.assigned_adviser_id|default:"—" }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="8" class="ai-empty">{% if LANGUAGE_CODE == 'ar' %}لا توجد حالات تطابق عوامل التصفية هذه.{% else %}No cases match these filters.{% endif %}</td></tr>
+          {% comment %}Why it is empty: the filters, which can be cleared from here, or
+          nothing passed to this person yet.{% endcomment %}
+          <tr><td colspan="8" class="ai-empty">{% if filtered %}{% if LANGUAGE_CODE == 'ar' %}لا توجد حالات تطابق عوامل التصفية هذه.{% else %}No cases match these filters.{% endif %} <a href="{% url 'advisor_inbox' %}">{% if LANGUAGE_CODE == 'ar' %}مسح عوامل التصفية{% else %}Clear the filters{% endif %}</a>{% else %}{% if LANGUAGE_CODE == 'ar' %}لم تُحَل إليك أي حالة بعد.{% else %}No case has been escalated to you yet.{% endif %}{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>
