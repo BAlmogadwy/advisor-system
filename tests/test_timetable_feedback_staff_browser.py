@@ -4,7 +4,9 @@ accepts the answer. The student is on a phone and the advisor at a desk, each in
 their own browser, each seeing the other's work arrive as something new.
 
 Then the staff pages on a phone, in Arabic: right to left, nothing wider than the
-screen, and focus taken to what the page says went wrong.
+screen, and focus taken to what the page says went wrong. And the queue at every
+width: a table while its columns fit, else a card per case, never scrolling
+sideways.
 
 Set TTF_SCREENSHOTS to a directory to keep a picture of every step.
 """
@@ -17,6 +19,7 @@ import os
 # an async context and refuse ORM calls in.
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "1")
 
+from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -280,13 +283,15 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
 
     def _waiting_case(self, **fields):
         case = TimetableFeedback.objects.create(
-            student_id=SID,
-            academic_year="1448",
-            term="1",
-            status="SUBMITTED",
-            submitted_language="en",
-            last_student_activity_at=timezone.now(),
-            **fields,
+            **{
+                "student_id": SID,
+                "academic_year": "1448",
+                "term": "1",
+                "status": "SUBMITTED",
+                "submitted_language": "en",
+                "last_student_activity_at": timezone.now(),
+                **fields,
+            }
         )
         TimetableFeedbackPoint.objects.create(
             case=case,
@@ -344,6 +349,89 @@ class StaffTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         self.assertEqual(bulk.evaluate("el => getComputedStyle(el).position"), "sticky")
         page.get_by_label(f"Select {case.reference}").uncheck()
         expect(bulk).to_be_hidden()
+
+    def test_the_queue_never_scrolls_sideways_and_takes_the_shape_its_width_allows(self):
+        # The widest rows there are: the longest status, every tag, a long user name.
+        self._waiting_case(
+            status="NEEDS_INFORMATION",
+            has_registration_at_submission=True,
+            handled_by_username="registrar_office_timetable_advisor_account_01",
+        )
+        # One open case a term: the untouched one is another term's.
+        untouched = self._waiting_case(
+            academic_year="1447", term="2", has_registration_at_submission=True
+        )
+        TimetableFeedback.objects.filter(pk=untouched.pk).update(
+            created_at=timezone.now() - timedelta(days=3)
+        )
+        # Sideways scroll inside the queue, the table's and a row's display, and
+        # how far below the reference the first row's days open start.
+        shape = (
+            "() => { const wrap = document.querySelector('.ttfs-queue-wrap');"
+            " const table = document.querySelector('#ttfsQueue');"
+            " const row = table.querySelector('tbody tr');"
+            " const top = (sel) => row.querySelector(sel).getBoundingClientRect().top;"
+            " return [wrap.scrollWidth - wrap.clientWidth, getComputedStyle(table).display,"
+            " getComputedStyle(row).display,"
+            " Math.abs(top('.ttfs-days-cell bdi') - top('.ttfs-ref-cell a'))]; }"
+        )
+        narrowest = (
+            "() => { const table = document.querySelector('#ttfsQueue');"
+            " table.style.width = 'min-content';"
+            " const width = table.getBoundingClientRect().width;"
+            " table.style.width = ''; return width; }"
+        )
+        # A table while every column fits, a card on a grid when they do not,
+        # a card of stacked lines on a phone.
+        widths = (
+            (1440, "table", "table-row"),
+            (1280, "table", "table-row"),
+            (1024, "block", "grid"),
+            (700, "block", "grid"),
+            (375, "block", "flex"),
+        )
+        for language in ("en", "ar"):
+            page = self._page(self.advisor, language, DESK)
+            for width, table, row in widths:
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto(f"{self.live_server_url}/ops/timetable-feedback/?tab=all")
+                expect(page.locator('#ttfsQueue [data-status="NEEDS_INFORMATION"]')).to_be_visible()
+                expect(page.locator("#ttfsQueue .ttfs-untouched")).to_be_visible()
+                overflow, shown, cells, below = page.evaluate(shape)
+                self.assertLessEqual(overflow, 1, (language, width))
+                self.assertEqual((shown, cells), (table, row), (language, width))
+                if shown == "table":
+                    # Every cell starts at the row's top, so a row reads along a line.
+                    self.assertLessEqual(below, 4, (language, width))
+                if width == 1280:
+                    # Short of the full width, a long status, tag, user name or
+                    # column name takes two lines: the table narrows to well inside
+                    # the 960 pixels from which it is drawn at all, with room left
+                    # for a wider font (Verdana measures 811 here).
+                    self.assertLessEqual(page.evaluate(narrowest), 850, language)
+                self._check(page, f"10-queue-{language}-{width}")
+
+    def test_on_a_phone_the_queue_is_cards_and_its_filters_fold_away(self):
+        case = self._waiting_case()
+        page = self._page(self.advisor, "ar", PHONE)
+        page.goto(f"{self.live_server_url}/ops/timetable-feedback/?tab=all")
+        # Nothing scrolls sideways, not even inside the table's own box.
+        overflow = page.evaluate(
+            "() => { const w = document.querySelector('.ttfs-queue-wrap');"
+            " return w.scrollWidth - w.clientWidth; }"
+        )
+        self.assertLessEqual(overflow, 1)
+        expect(page.get_by_role("link", name=case.reference)).to_be_visible()
+        # With no filter on, the filters fold into their heading.
+        box = page.locator("#ttfsFiltersBox")
+        self.assertFalse(box.evaluate("el => el.open"))
+        expect(page.locator("#ttfsSearch")).to_be_hidden()
+        page.locator("#ttfsFiltersTitle").click()
+        expect(page.locator("#ttfsSearch")).to_be_visible()
+        self._check(page, "9-queue-cards-ar")
+        # With one on, they stay open, so the person sees what narrows the list.
+        page.goto(f"{self.live_server_url}/ops/timetable-feedback/?tab=all&reason=TIME_UNSUITABLE")
+        self.assertTrue(page.locator("#ttfsFiltersBox").evaluate("el => el.open"))
 
     def test_on_a_phone_the_bulk_actions_follow_the_list_and_tabs_read_right_to_left(self):
         case = self._waiting_case()

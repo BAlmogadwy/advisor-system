@@ -11,6 +11,7 @@
       tabs (the ARIA tabs pattern, arrows following the page's direction),
       opening on a form that was refused or holds typed text. Without JavaScript
       the three forms stand one under another.
+   4. On a phone, the queue's filters fold into their heading unless one is on.
 
    Nothing here writes HTML: elements are made with createElement and filled
    with textContent. */
@@ -152,6 +153,20 @@
     });
   };
 
+  // 4. On a phone the queue's filters fold into their heading, so the cases come
+  //    first, unless one of them is on. Drawn open, so nothing hides without
+  //    JavaScript or at a desk.
+  var foldFilters = function () {
+    var box = document.getElementById('ttfsFiltersBox');
+    if (!box || box.hasAttribute('data-active') || !window.matchMedia) {
+      return;
+    }
+    if (window.matchMedia('(max-width: 640px)').matches) {
+      box.open = false;
+    }
+  };
+
   selectAll();
   composer();
+  foldFilters();
 })();

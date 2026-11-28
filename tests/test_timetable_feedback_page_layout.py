@@ -210,7 +210,7 @@ def _as(user):
 
 
 def _row(html, reference):
-    for row in re.findall(r"<tr>(.*?)</tr>", html, flags=re.S):
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", html, flags=re.S):
         if f"/ops/timetable-feedback/{reference}/" in row:
             return row
     raise AssertionError(f"{reference} is not in the queue")
@@ -246,6 +246,40 @@ def test_the_queue_scrolls_with_the_page_and_offers_the_bulk_count(world, adviso
     html = _html(_as(advisor).get(QUEUE, {"tab": "all"}))
     assert 'class="table-wrap ttfs-queue-wrap"' in html
     assert 'id="ttfsBulkCount" hidden' in html
+
+
+def test_every_queue_cell_is_labelled_for_the_phones_cards(world, advisor):
+    _student, case = _sent(world)
+    html = _html(_as(advisor).get(QUEUE, {"tab": "all"}))
+    row = _row(html, case.reference)
+    words = scopy.strings("en")
+    for key in (
+        "col_days",
+        "col_student",
+        "col_points",
+        "col_status",
+        "col_handler",
+        "col_activity",
+    ):
+        assert f'data-label="{escape(words[key])}"' in row, key
+    # Still a table to a screen reader once the cells are laid out as a card.
+    assert 'id="ttfsQueue" role="table"' in html
+    assert row.count('role="cell"') == 7 and 'role="rowheader"' in row
+
+
+def _filters_box(html):
+    return html.split('id="ttfsFiltersBox"')[1].split(">")[0]
+
+
+def test_the_filters_are_drawn_open_and_say_how_many_are_on(world, advisor):
+    _sent(world)
+    client = _as(advisor)
+    plain = _html(client.get(QUEUE))
+    assert " open" in _filters_box(plain) and "data-active" not in _filters_box(plain)
+    narrowed = _html(client.get(QUEUE, {"reason": "TIME_CLASH", "new": "1"}))
+    assert 'data-active="2"' in _filters_box(narrowed)
+    title = narrowed.split('id="ttfsFiltersTitle"')[1].split("</h2>")[0]
+    assert '(<bdi dir="ltr">2</bdi>)' in title
 
 
 def _case_page(client, case, **data):

@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.queue_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=4"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=5">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=4"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=6">{% endblock %}
 
 {% block page_heading %}{{ t.queue_title }}{% endblock %}
 
@@ -37,8 +37,12 @@
   </ul>
 </nav>
 
+{% comment %}The filters fold into their heading on a phone (by the page script, and
+only while none is on), so the cases come first there. Drawn open, so without
+JavaScript, or at a desk, nothing is hidden.{% endcomment %}
 <form method="get" class="card p-3 mb-3 ttfs-filters" aria-labelledby="ttfsFiltersTitle" id="ttfsFilters">
-  <h2 class="ttfs-section-title" id="ttfsFiltersTitle">{{ t.filters_title }}</h2>
+  <details class="ttfs-filters-box" id="ttfsFiltersBox" open{% if filters_active %} data-active="{{ filters_active }}"{% endif %}>
+  <summary class="ttfs-filters-summary"><h2 class="ttfs-section-title" id="ttfsFiltersTitle">{{ t.filters_title }}{% if filters_active %} <span class="ttfs-count">(<bdi dir="ltr">{{ filters_active }}</bdi>)</span>{% endif %}</h2></summary>
   <input type="hidden" name="tab" value="{{ filters.tab }}">
   {% if filters.course %}<input type="hidden" name="course" value="{{ filters.course }}"><input type="hidden" name="section" value="{{ filters.section }}">{% endif %}
   {% if filters.term %}<input type="hidden" name="term" value="{{ filters.term }}">{% endif %}
@@ -82,6 +86,7 @@
     <button class="btn btn-primary" type="submit">{{ t.filter_apply }}</button>
     <a class="btn btn-outline-secondary" href="?tab={{ filters.tab }}">{{ t.filter_clear }}</a>
   </div>
+  </details>
 </form>
 
 <form method="post" action="{% url 'staff_timetable_feedback_bulk' %}" id="ttfsBulkForm">
@@ -90,38 +95,41 @@
     {% comment %}No height of its own: a page of cases scrolls with the page, never
     inside it.{% endcomment %}
     <div class="table-wrap ttfs-queue-wrap">
-      <table class="table ttfs-queue" id="ttfsQueue">
+      {% comment %}On a phone each row becomes a card (the stylesheet), every value
+      under its column's name; the explicit roles keep it a table to a screen
+      reader once `display` changes.{% endcomment %}
+      <table class="table ttfs-queue" id="ttfsQueue" role="table">
         <caption class="visually-hidden">{{ t.queue_title }}</caption>
-        <thead>
-          <tr>
-            <th scope="col" class="ttfs-select"><span class="visually-hidden">{{ t.col_select }}</span><input type="checkbox" id="ttfsSelectAll" aria-label="{{ t.select_all }}" hidden></th>
-            <th scope="col">{{ t.col_reference }}</th>
-            <th scope="col">{{ t.col_days }}</th>
-            <th scope="col">{{ t.col_student }}</th>
-            <th scope="col">{{ t.col_points }}</th>
-            <th scope="col">{{ t.col_status }}</th>
-            <th scope="col">{{ t.col_handler }}</th>
-            <th scope="col">{{ t.col_activity }}</th>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader" scope="col" class="ttfs-select"><span class="visually-hidden">{{ t.col_select }}</span><input type="checkbox" id="ttfsSelectAll" aria-label="{{ t.select_all }}" hidden></th>
+            <th role="columnheader" scope="col">{{ t.col_reference }}</th>
+            <th role="columnheader" scope="col">{{ t.col_days }}</th>
+            <th role="columnheader" scope="col">{{ t.col_student }}</th>
+            <th role="columnheader" scope="col">{{ t.col_points }}</th>
+            <th role="columnheader" scope="col">{{ t.col_status }}</th>
+            <th role="columnheader" scope="col">{{ t.col_handler }}</th>
+            <th role="columnheader" scope="col">{{ t.col_activity }}</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup">
           {% for row in rows %}
-          <tr>
-            <td class="ttfs-select"><input type="checkbox" name="pick" value="{{ row.reference }}@{{ row.version }}" aria-label="{{ row.select_label }}"></td>
-            <th scope="row"><a href="{% url 'staff_timetable_feedback_case' row.reference %}"><bdi dir="ltr" class="ttf-ref">{{ row.reference }}</bdi></a></th>
-            <td><bdi dir="ltr">{{ row.days }}</bdi></td>
-            <td>
+          <tr role="row">
+            <td role="cell" class="ttfs-select"><input type="checkbox" name="pick" value="{{ row.reference }}@{{ row.version }}" aria-label="{{ row.select_label }}"></td>
+            <th role="rowheader" scope="row" class="ttfs-ref-cell"><a href="{% url 'staff_timetable_feedback_case' row.reference %}"><bdi dir="ltr" class="ttf-ref">{{ row.reference }}</bdi></a></th>
+            <td role="cell" class="ttfs-days-cell" data-label="{{ t.col_days }}"><bdi dir="ltr">{{ row.days }}</bdi></td>
+            <td role="cell" class="ttfs-student-cell" data-label="{{ t.col_student }}">
               {% if row.student_missing %}<span>{{ t.student_unavailable }}</span>{% else %}<span dir="auto">{{ row.student_name }}</span>{% endif %}
               <br><small class="ttf-small"><bdi dir="ltr">{{ row.student_id }}</bdi>{% if row.programme %} · <bdi dir="ltr">{{ row.programme }}</bdi>{% endif %}</small>
               <span class="ttfs-markers">{% if row.untouched %}<span class="ttf-tag ttfs-untouched">{{ t.kpi_untouched }}</span>{% endif %}{% if row.new %}<span class="ttf-tag ttfs-new">{{ t.marker_new }}</span>{% endif %}{% if row.unrouted %}<span class="ttf-tag ttfs-unrouted">{{ t.marker_unrouted }}</span>{% endif %}{% if row.registered %}<span class="ttf-tag">{{ t.marker_registered }}</span>{% endif %}{% if row.graduating %}<span class="ttf-tag">{{ t.marker_graduating }}</span>{% endif %}</span>
             </td>
-            <td>{% for point in row.points %}<span dir="auto">{{ point }}</span>{% endfor %}{% if row.more %} <span class="ttf-small">{{ row.more }}</span>{% endif %}</td>
-            <td><span class="ttf-status" data-status="{{ row.status_code }}">{{ row.status }}</span></td>
-            <td>{% if row.handler %}<bdi dir="ltr">{{ row.handler }}</bdi>{% else %}{{ t.nobody }}{% endif %}</td>
-            <td><bdi dir="ltr">{{ row.activity }}</bdi></td>
+            <td role="cell" class="ttfs-points-cell" data-label="{{ t.col_points }}">{% for point in row.points %}<span dir="auto">{{ point }}</span>{% endfor %}{% if row.more %} <span class="ttf-small">{{ row.more }}</span>{% endif %}</td>
+            <td role="cell" class="ttfs-status-cell" data-label="{{ t.col_status }}"><span class="ttf-status" data-status="{{ row.status_code }}">{{ row.status }}</span></td>
+            <td role="cell" class="ttfs-handler-cell" data-label="{{ t.col_handler }}">{% if row.handler %}<bdi dir="ltr">{{ row.handler }}</bdi>{% else %}{{ t.nobody }}{% endif %}</td>
+            <td role="cell" class="ttfs-activity-cell" data-label="{{ t.col_activity }}"><bdi dir="ltr">{{ row.activity }}</bdi></td>
           </tr>
           {% empty %}
-          <tr><td colspan="8" class="ttfs-empty" id="ttfsEmpty">{{ t.empty_tab }}</td></tr>
+          <tr role="row"><td role="cell" colspan="8" class="ttfs-empty" id="ttfsEmpty">{{ t.empty_tab }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -163,4 +171,4 @@
 </form>
 {% endblock %}
 
-{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=2" defer></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=3" defer></script>{% endblock %}

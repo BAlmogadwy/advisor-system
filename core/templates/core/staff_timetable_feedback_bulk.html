@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.bulk_result_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=4"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=5">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=4"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=6">{% endblock %}
 
 {% block page_heading %}{{ t.bulk_result_title }}{% endblock %}
 
@@ -41,4 +41,4 @@
 <p><a class="btn btn-outline-secondary" href="{% url 'staff_timetable_feedback_queue' %}">{{ t.back_to_queue }}</a></p>
 {% endblock %}
 
-{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=2" defer></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=3" defer></script>{% endblock %}
