@@ -220,16 +220,15 @@ def send_transactional_email(to_email: str, subject: str, body: str) -> str:
             except _BrevoRejected:
                 if not has_fallback:
                     raise EmailDeliveryError("provider_rejected") from None
-                # No recipient, code or key in the line: only that the fallback was taken.
-                logger.warning(
-                    "student OTP email: Brevo declined the submission; sending through SES"
-                )
+                why = "Brevo declined the submission"
         elif not has_fallback:
             raise EmailDeliveryError("provider_budget_exhausted")
         else:
-            logger.warning("student OTP email: Brevo daily cap reached; sending through SES")
+            why = "Brevo daily cap reached"
 
         _charge_shared_budget()
     except DatabaseError:
         raise EmailDeliveryError("provider_unavailable") from None
+    # Logged only once the fallback is really going ahead. No recipient, code or key.
+    logger.warning("student OTP email: %s; sending through SES", why)
     return _send_via_ses(to_email, subject, body, timeout=timeout)
