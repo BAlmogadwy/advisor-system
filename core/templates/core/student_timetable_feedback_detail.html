@@ -3,7 +3,7 @@
 
 {% block title %}{{ case.page_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=5">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=6">{% endblock %}
 
 {% block page_heading %}{{ case.title }}{% endblock %}
 
@@ -33,7 +33,7 @@
 {% endif %}
 
 <section class="card p-3 mb-3" aria-labelledby="ttfCaseTitle">
-  <div class="student-home-section-head mb-2">
+  <div class="student-home-section-head ttf-case-title-head mb-2">
     <h2 class="student-section-title mb-0" id="ttfCaseTitle"><bdi dir="ltr" class="ttf-ref">{{ case.reference }}</bdi></h2>
     <span class="ttf-status" data-status="{{ case.status_code }}">{{ case.status }}</span>
   </div>

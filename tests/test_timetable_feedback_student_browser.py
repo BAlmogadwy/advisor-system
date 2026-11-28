@@ -449,3 +449,13 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
             self.assertEqual(
                 meetings.evaluate_all(f"(all) => all.map({ONE_LINE})"), [True, True], rem
             )
+
+    def test_with_a_wider_font_the_case_header_takes_two_lines_not_more_room(self):
+        """CI's fonts are wider than a desk's, and pushed the longest status past
+        the card on a phone; Verdana stands in for them here."""
+        case = self._case("NEEDS_INFORMATION")
+        page = self._page("en")
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
+        page.add_style_tag(content="*, *::before, *::after { font-family: Verdana !important; }")
+        expect(page.locator(".ttf-case-title-head .ttf-status")).to_be_visible()
+        self._check(page, "16-wide-font-en")
