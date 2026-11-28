@@ -3972,7 +3972,15 @@
       else if (act === 'open') {
         if (state.pick.opened.has(code)) state.pick.opened.delete(code); else state.pick.opened.add(code);
         renderCourses();
-      } else if (act === 'showall') { state.pick.showAll = true; renderCourses(); }
+      } else if (act === 'showall') {
+        // The button goes away: the keyboard lands on the first row it revealed, not in Find.
+        const before = document.querySelectorAll('#plbAvailList .plb-arow').length;
+        state.pick.showAll = true;
+        renderCourses();
+        const next = document.querySelectorAll('#plbAvailList .plb-arow')[before];
+        const box = next && next.querySelector('[data-act="tick"]');
+        if (box && !box.disabled) box.focus();
+      }
       else if (act === 'fold') { state.pick.blockedOpen = !state.pick.blockedOpen; renderCourses(); }
       else if (act === 'only') moveOne(code, true);
       else if (act === 'add') moveOne(code, false, 'plus');

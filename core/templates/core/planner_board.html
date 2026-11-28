@@ -80,8 +80,7 @@
             </div>
             <div class="plb-rc-row plb-rc-row--max">
               <label class="plb-rc-l" for="plbMaxIn">{% if LANGUAGE_CODE == 'ar' %}أقصى عدد للساعات{% else %}Most credits{% endif %}</label>
-              <input id="plbMaxIn" class="plb-rc-in" type="text" inputmode="numeric" autocomplete="off" dir="ltr" aria-describedby="plbMaxInHint plbMaxInErr">
-              <p class="plb-rc-hint" id="plbMaxInHint"></p>
+              <input id="plbMaxIn" class="plb-rc-in" type="text" inputmode="numeric" autocomplete="off" dir="ltr" aria-describedby="plbMaxInErr">
               <p class="plb-err" id="plbMaxInErr" role="alert" hidden></p>
             </div>
             <div class="plb-rc-row">
@@ -149,7 +148,7 @@
           <p class="plb-phsum" id="plbPhoneSum"></p>
           <div class="plb-buildrow">
             <div class="plb-buildnotes">
-              <p class="plb-bstate" id="plbBuildState" hidden></p>
+              <p class="plb-bstate" id="plbBuildState" aria-live="polite" hidden></p>
               <p class="plb-acts-note" id="plbBuildLine" role="status" aria-live="polite"></p>
               <p class="plb-acts-note" id="plbLastBuild" hidden></p>
             </div>

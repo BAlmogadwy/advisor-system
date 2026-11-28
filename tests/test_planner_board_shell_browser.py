@@ -181,7 +181,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertTrue(page.locator("#plbRulesChanged").is_hidden())
         # Max credits comes from the student's cap: the old page's 17 was a bug.
         # The cap is the field's value; no "advisory / regulatory" hint line under it any more.
-        self.assertEqual(self._text(page, "#plbMaxInHint"), "")
+        self.assertEqual(page.locator("#plbMaxInHint").count(), 0)  # no hint line at all
         self.assertIn("not available yet", self._text(page, "#plbZoneRules"))
         self.assertEqual(page.locator("#plbRulesDialog, #plbEditRules, #plbRules2").count(), 0)
 
@@ -203,7 +203,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbMaxIn")).to_have_value("")
         self.assertEqual(self._load(page), ("15 cr", "6 planned + 9 registered"))
-        self.assertEqual(self._text(page, "#plbMaxInHint"), "")
+        self.assertEqual(page.locator("#plbMaxInHint").count(), 0)  # no hint line at all
         self.assertNotIn("Credit cap 0", self._text(page, "#plbStudent"))
         # The student's cap is back when the next student has one.
         fake.context_answer = lambda body: (

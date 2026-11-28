@@ -51,8 +51,13 @@ class PlannerBoardParityBrowserTests(PlannerBoardCase):
                 self.assertEqual(page.locator("#plbAvailList .plb-arow").count(), 40)
                 expect(page.locator("#plbAvailList .plb-showall")).to_have_text(label)
                 self.assertEqual(page.evaluate(OVERFLOWS), [])
-                page.click("#plbAvailList .plb-showall")
+                page.focus("#plbAvailList .plb-showall")
+                page.keyboard.press("Enter")
                 self.assertEqual(page.locator("#plbAvailList .plb-arow").count(), 52)
+                # the keyboard lands on the first revealed row (the 41st), not in Find
+                expect(
+                    page.locator("#plbAvailList .plb-arow").nth(40).locator('[data-act="tick"]')
+                ).to_be_focused()
                 self.assertEqual(page.locator("#plbAvailList .plb-showall").count(), 0)
                 page.context.close()
 
