@@ -3978,8 +3978,10 @@
         state.pick.showAll = true;
         renderCourses();
         const next = document.querySelectorAll('#plbAvailList .plb-arow')[before];
-        const box = next && next.querySelector('[data-act="tick"]');
-        if (box && !box.disabled) box.focus();
+        // The tick, or on phones (where the tick is hidden) the row's + button.
+        const target = next && [...next.querySelectorAll('[data-act="tick"], [data-act="add"]')]
+          .find((n) => !n.disabled && n.getClientRects().length);
+        if (target) target.focus();
       }
       else if (act === 'fold') { state.pick.blockedOpen = !state.pick.blockedOpen; renderCourses(); }
       else if (act === 'only') moveOne(code, true);
