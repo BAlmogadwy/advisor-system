@@ -5,7 +5,9 @@ a student registered in 18 credits (six courses, two of them general-studies cou
 was shown "Your plan · 3 courses" (every eligible recommendation, prefilled) and "8 cr over the
 limit", while the source said "Recommended for this student (0)". Now Your plan is the registered
 courses only, the recommendations wait in Available, and a course the adviser adds where there is
-no room is said to have none. Answered by the board fakes (tests/planner_board_support.py).
+no room is said to have none. The two elective rows its general-studies courses are likely posted
+under carry a muted tag in keep mode (the server side: tests/test_planner_context_elective_rows.py).
+Answered by the board fakes (tests/planner_board_support.py).
 """
 
 from __future__ import annotations
@@ -51,14 +53,19 @@ FILLED = {
 }
 
 
-def owner_context(body, recs=OWNER_RECS, filled=FILLED):
+def owner_context(body, recs=OWNER_RECS, filled=FILLED, tag_recs=True):
+    """The owner's case; `tag_recs=False` sends the map by row code only, no rec's own tag."""
     payload = context_for(str(body["student_id"]), eligibility_mode=body["eligibility_mode"])
     payload["baseline"] = FULL_LOAD
     payload["baseline_totals"] = {"courses": 6, "credits": 18}
     payload["recommendations"] = [
         {
             **rec,
-            **({"filled_by": filled[rec["course_code"]]} if rec["course_code"] in filled else {}),
+            **(
+                {"filled_by": filled[rec["course_code"]]}
+                if tag_recs and rec["course_code"] in filled
+                else {}
+            ),
         }
         for rec in copy.deepcopy(recs)
     ]
@@ -66,9 +73,9 @@ def owner_context(body, recs=OWNER_RECS, filled=FILLED):
     return 200, payload
 
 
-def owner_fake(recs=OWNER_RECS, filled=FILLED):
+def owner_fake(recs=OWNER_RECS, filled=FILLED, tag_recs=True):
     fake = BuildFake()
-    fake.context_answer = lambda body: owner_context(body, recs, filled)
+    fake.context_answer = lambda body: owner_context(body, recs, filled, tag_recs)
     plan = copy.deepcopy(STUDENT_PLAN)
     plan["terms"][0]["courses"] = [
         {
@@ -214,6 +221,61 @@ class PlannerBoardFetchTests(PlannerBoardCase):
                 page.click("#plbBuild")
                 expect(page.locator("#plbBuildNote .plb-buildnote-lead")).to_have_text(lead)
                 page.context.close()
+
+    # ── B. A registered course outside the plan meets an open elective row ──────────────────
+    @staticmethod
+    def _tags(page) -> dict:
+        return page.evaluate(
+            """() => Object.fromEntries([...document.querySelectorAll('#plbAvailList .plb-arow')]
+              .map((r) => { const t = r.querySelector('.plb-flag--filled');
+                return [r.dataset.code, t ? t.textContent.replace(/\\s+/g, ' ').trim() : null]; }))"""
+        )
+
+    def test_keep_mode_tags_the_rows_a_registered_course_likely_counts_for(self) -> None:
+        for language, fe1, gse1 in (
+            (
+                "en",
+                "GS311 (registered) likely counts for it",
+                "GS333 (registered) likely counts for it",
+            ),
+            ("ar", "GS311 (مسجّل) يُحتسب له على الأرجح", "GS333 (مسجّل) يُحتسب له على الأرجح"),
+        ):
+            with self.subTest(language=language):
+                page = self._owner(language)
+                self.assertEqual(self._tags(page), {"ENG101": None, "FE1": fe1, "GSE1": gse1})
+                # The code is a left-to-right island inside the sentence.
+                self.assertEqual(
+                    page.locator(
+                        "#plbAvailList .plb-arow[data-code='FE1'] .plb-flag--filled bdi[dir='ltr']"
+                    ).text_content(),
+                    "GS311",
+                )
+                # An assumption, not a rule: the row stays addable.
+                row = "#plbAvailList .plb-arow[data-code='FE1']"
+                expect(page.locator(f"{row} input[data-act='tick']")).to_be_enabled()
+                expect(page.locator(f"{row} button[data-act='add']")).to_be_enabled()
+                # The plan's own row says the same (the reply's map, by row code).
+                page.select_option("#plbSource", "plan")
+                self.assertEqual(self._tags(page), {"FE1": fe1})
+                self._add(page, "FE1", source="plan")
+                self.assertIn("FE1", self._rows(page, "new"))
+                page.context.close()
+
+    def test_the_map_by_row_code_tags_a_row_on_its_own(self) -> None:
+        # The plan's rows and the eligible list are tagged from the reply's map, not only from a
+        # recommendation's own `filled_by`.
+        page = self._owner(fake=owner_fake(tag_recs=False))
+        self.assertEqual(self._tags(page)["FE1"], "GS311 (registered) likely counts for it")
+        page.select_option("#plbSource", "plan")
+        self.assertEqual(self._tags(page), {"FE1": "GS311 (registered) likely counts for it"})
+
+    def test_ignore_mode_draws_the_rows_without_the_tag(self) -> None:
+        page = self._owner()
+        self._rules(page, mode="ignore")
+        page.select_option("#plbSource", "recommended")
+        self.assertEqual(self._tags(page), {"ENG101": None, "FE1": None, "GSE1": None})
+        self._rules(page, mode="keep")
+        self.assertEqual(self._tags(page)["FE1"], "GS311 (registered) likely counts for it")
 
     @staticmethod
     def _wait(page, predicate) -> None:

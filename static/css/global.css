@@ -8209,6 +8209,9 @@ div.plb-dt-sec { cursor: default; }
 .plb-flag { padding: 0 6px; border-radius: var(--radius-sm); font-size: var(--text-micro); font-weight: 700; line-height: 16px; background: var(--brand-soft); color: var(--text-brand); }
 .plb-flag--warn { background: var(--sev-warning-bg); color: var(--sev-warning-ink); }
 .plb-flag--bad { background: var(--sev-critical-bg); color: var(--sev-critical); }
+/* "GS311 (registered) likely counts for it": a muted hint on an elective row, never a warning */
+.plb-flag--filled { background: var(--surface); color: var(--t2); }
+.plb-meta .plb-flag--filled { font-weight: 500; }
 .plb-dt-why { font-size: var(--text-xs); font-weight: 600; line-height: 16px; color: var(--sev-warning-ink); }
 .plb-dt-hint { margin: 0 0 4px; font-size: var(--text-xs); line-height: 16px; color: var(--t3); }
 .plb-tabs[data-stale] { border-bottom-style: dashed; }

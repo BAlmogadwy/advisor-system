@@ -37,6 +37,7 @@ from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.recommender import recommend_next_courses
 from core.services.section_programmes import filter_sections_for_program
+from core.services.student_graduation import registered_elective_rows_filled
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
 from core.services.student_sections import (
     UnknownStudentGender,
@@ -182,6 +183,29 @@ def _registered_load(rows: list[dict[str, object]]) -> tuple[int, int]:
             seen.add(key)
             credits_total += int(row.get("credits", 0) or 0)  # type: ignore[call-overload]
     return len(seen), credits_total
+
+
+def _elective_rows_filled_by(
+    student_id: int, year: str, term: str, baseline: list[dict[str, object]]
+) -> dict[str, dict[str, str]]:
+    """Elective row code -> the registered course the forecast counts for it, and on what basis.
+
+    The term's courses are the ones the page shows as registered (``baseline``). The policy is
+    ``elective_row_filling``'s, with the arguments the graduation report builds; a failure only
+    costs the hint, never the student.
+    """
+    try:
+        filling = registered_elective_rows_filled(
+            student_id, int(year), int(term), baseline_rows=baseline
+        )
+    except Exception:
+        logger.warning("elective row filling failed for student=%s", student_id, exc_info=True)
+        return {}
+    # A course is CODE::NAME where its section says so; the page names it by the code.
+    return {
+        row.row_code: {"course_code": row.course_code.partition("::")[0], "basis": row.basis}
+        for row in filling.filled
+    }
 
 
 def _kept_timetable_digest(rows: list[dict[str, object]]) -> str:
@@ -450,6 +474,17 @@ def _planner_context_inner(
             }
         )
 
+    # A registered course outside the plan is posted under an open elective row once its grade
+    # lands (FE1 "Free Elective", GSE1 "University Elective"). The recommender knows nothing of it
+    # and proposes the row again; the forecast's own policy says which row the course is counted
+    # for, and the page says so beside the row ("GS311 (registered) likely counts for it"). An
+    # assumption, never a record: the row stays addable.
+    filled_by = _elective_rows_filled_by(student_id_int, year, term, baseline)
+    for rec in recommendations:
+        filled = filled_by.get(normalize_code(str(rec["course_code"])))
+        if filled:
+            rec["filled_by"] = filled
+
     courses_total, credits_total = _registered_load(baseline)
 
     return _ok(
@@ -461,6 +496,8 @@ def _planner_context_inner(
                 "credits": credits_total,
             },
             "recommendations": recommendations,
+            # Row code -> {course_code, basis}: the same answer for the plan's own rows.
+            "elective_rows_filled": filled_by,
             "eligibility_mode": eligibility_mode,
             "strict_passed_only": eligibility_mode == "strict",
             "year": year,

@@ -117,6 +117,10 @@
     overLimitN: (n) => (IS_AR ? `${n} ${T.creditUnit(n)} فوق الحد` : `${n} cr over the limit`),
     tagRecommended: IS_AR ? 'مقترح' : 'Recommended',
     tagCompare: IS_AR ? 'للمقارنة فقط' : 'Compare only',
+    // An open elective row a registered course outside the plan is counted for (an assumption).
+    filledBy: (code) => (IS_AR
+      ? [bdi(code), ' (مسجّل) يُحتسب له على الأرجح']
+      : [bdi(code), ' (registered) likely counts for it']),
     compareWhy: IS_AR
       ? 'لا شعبة من برنامج هذا الطالب: يمكن بناؤه فقط مع «الشُعب من: أي برنامج».'
       : "No section of this student's programme: it can be built only with Sections from: Any programme.",
@@ -503,6 +507,7 @@
     student: null,
     baseline: [],
     recs: [],
+    filledBy: {},      // elective row code -> {course_code, basis}: the registered course it likely counts for
     planCourses: null, // null = not loaded / failed; [] = loaded, nothing
     planState: 'idle', // idle | loading | ready | error
     curTT: { digest: null, drawn: null }, // the registered week the disclosure last drew
@@ -1987,6 +1992,18 @@
     [...select.options].forEach((o) => { o.textContent = names[o.value]; });
     select.value = state.pick.src;
   }
+  // The context reply's elective rows filled by a registered course (the forecast's policy,
+  // elective_row_filling): the map by row code, and each recommendation's own `filled_by`.
+  function filledRows(data) {
+    const out = {};
+    const take = (code, filled) => {
+      if (code && isObj(filled) && String(filled.course_code || '').trim()) out[norm(code)] = { course_code: String(filled.course_code).trim(), basis: String(filled.basis || '') };
+    };
+    if (isObj(data.elective_rows_filled)) for (const [code, filled] of Object.entries(data.elective_rows_filled)) take(code, filled);
+    for (const rec of Array.isArray(data.recommendations) ? data.recommendations : []) take(rec.course_code, rec.filled_by);
+    return out;
+  }
+  const filledByOf = (code) => state.filledBy[norm(code)] || null;
   function tagNode(text, kind, title) {
     const node = el('span', `plb-flag${kind ? ` plb-flag--${kind}` : ''}`, text);
     if (title) node.title = title;
@@ -2051,6 +2068,15 @@
     if (known) metaText.push(sections.length ? T.sectionWord(sections.length) : T.noSections);
     const tags = [];
     if (entry.rec) tags.push(tagNode(T.tagRecommended, ''));
+    // Keep mode: an open elective row a registered course outside the plan likely counts for says
+    // so. It stays addable (an assumption; the adviser may know better). Ignoring the registered
+    // courses, there is nothing to count.
+    const filled = state.rules.mode === 'keep' ? filledByOf(code) : null;
+    if (filled) {
+      const tag = el('span', 'plb-flag plb-flag--filled', ...T.filledBy(filled.course_code));
+      tag.dataset.filledBy = norm(filled.course_code);
+      tags.push(tag);
+    }
     if (src === 'all' && entry.compareOnly) tags.push(tagNode(T.tagCompare, 'warn', T.compareWhy));
     if (known && sections.length && caps.every((c) => c.known && c.full)) tags.push(tagNode(T.allFull, 'bad'));
     else if (openCaps.length && openCaps.every(fewSeats)) tags.push(tagNode(T.tagFewSeats, 'warn'));
@@ -2671,6 +2697,7 @@
     state.student = data.student;
     state.baseline = Array.isArray(data.baseline) ? data.baseline : [];
     state.recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+    state.filledBy = filledRows(data);
     if (data.eligibility_mode === 'strict' || data.eligibility_mode === 'relaxed') {
       state.rules.eligibility = data.eligibility_mode;
     }
