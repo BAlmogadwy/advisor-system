@@ -217,3 +217,27 @@ class PortfolioPremiumBrowserTests(StaticLiveServerTestCase):
         )
         assert heights == ["100%", "0%", "100%", "0%"], heights
         assert "below 2: 1" in (page.get_attribute("#apGpaChart", "aria-label") or "")
+
+    def test_a_search_narrows_the_tiles_as_it_narrows_the_list(self):
+        """Review finding: the tiles ignored the search box, so with a search
+        for a low-GPA student "High Risk 1" opened an empty list."""
+        page = self._page(roster=_roster(STUDENTS, [1, 0, 1, 0]))
+        self._loaded(page)
+        page.fill("#apSearch", "LOW GPA")
+        page.wait_for_function(
+            "() => document.querySelectorAll('#apTable tbody tr.cr-row').length === 1"
+        )
+        assert page.inner_text("#mHighRisk").strip() == "0"
+        assert page.inner_text('#apFilters [data-focus="highrisk"] .fb-dd-count').strip() == "0"
+        assert page.inner_text("#mStudents").strip() == "1"
+
+    def test_a_pressed_tile_unpresses_back_to_all(self):
+        page = self._page(roster=_roster(STUDENTS, [1, 0, 1, 0]))
+        self._loaded(page)
+        tile = '#apMetrics .mc-drill[data-focus="highrisk"]'
+        page.click(tile)
+        assert self._row_ids(page) == [990001]
+        page.click(tile)
+        assert sorted(self._row_ids(page)) == [990001, 990002, 990003]
+        assert page.get_attribute(tile, "aria-pressed") == "false"
+        assert page.get_attribute('#apFilters [data-focus="all"]', "aria-pressed") == "true"

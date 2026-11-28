@@ -418,12 +418,22 @@ function clearPortfolio() {
    ═══════════════════════════════════════════════════════════════ */
 function updateMetrics() {
   const program = selectedProgram();
-  const scopedStudents = program
+  const search = (q('apSearch')?.value || '').trim().toLowerCase();
+  let scopedStudents = program
     ? allStudents.filter(student => normalizeProgram(student.program) === program)
     : allStudents;
-  const serverProgramSummary = program ? summaryCache.program_summaries?.[program] : null;
-  const s = program ? (serverProgramSummary || summarizeStudents(scopedStudents)) : summaryCache;
-  const scopedTotal = program ? Number(s.student_count ?? scopedStudents.length) : rosterTotal;
+  /* A search narrows the tiles too: they open the list they count, and the
+     chips and rows already honour it ("High Risk 3" opened 1 row). */
+  if (search) {
+    scopedStudents = scopedStudents.filter(student =>
+      String(student.student_id || '').toLowerCase().includes(search)
+      || String(student.name || '').toLowerCase().includes(search));
+  }
+  const serverProgramSummary = program && !search ? summaryCache.program_summaries?.[program] : null;
+  const s = search ? summarizeStudents(scopedStudents)
+    : program ? (serverProgramSummary || summarizeStudents(scopedStudents)) : summaryCache;
+  const scopedTotal = search ? scopedStudents.length
+    : program ? Number(s.student_count ?? scopedStudents.length) : rosterTotal;
 
   q('mAttention').textContent = s.needs_attention_count || 0;
   q('mHighRisk').textContent = s.very_high_risk_count || 0;
@@ -549,9 +559,11 @@ function setFocus(btn) {
 q('apMetrics')?.addEventListener('click', event => {
   const tile = event.target.closest('.mc-drill');
   if (!tile) return;
-  const chip = document.querySelector(`#apFilters .fb-dd[data-focus="${tile.dataset.focus}"]`);
+  /* A pressed tile un-presses back to All, as aria-pressed promises. */
+  const focus = tile.classList.contains('active') ? 'all' : tile.dataset.focus;
+  const chip = document.querySelector(`#apFilters .fb-dd[data-focus="${focus}"]`);
   if (chip) setFocus(chip);
-  q('apTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (focus !== 'all') q('apTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
 function apFilter() {

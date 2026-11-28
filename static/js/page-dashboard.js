@@ -191,6 +191,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     // ── Advisor ──
     selectAdvisor: IS_AR ? 'اختر مرشداً' : 'Select advisor',
+    unnamedAdvisor: IS_AR ? 'بدون اسم' : 'No name on record',
     emailInvalid: IS_AR ? 'البريد الإلكتروني غير صالح أو مستخدم مسبقاً.' : 'Email is invalid or already used.',
     advisorIdInvalid: IS_AR ? 'رقم المرشد غير صالح أو موجود مسبقاً.' : 'Advisor ID is invalid or already exists.',
     deptRequired: IS_AR ? 'يرجى إدخال قسم واحد على الأقل.' : 'Please provide at least one department.',
@@ -2130,7 +2131,13 @@ const IS_AR = document.documentElement.lang === 'ar';
         q('advMeta').textContent = preciseError(res, data, T.failedLoadAdvisors);
         return;
       }
-      sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` + data.items.map((a) => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
+      sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` + data.items.map((a) => {
+        /* Escaped, and a blank name is said in words: the server sends "" for an
+           import placeholder such as "null" (advisor 40). */
+        const name = String(a.full_name || '').trim() || T.unnamedAdvisor;
+        const dept = String(a.department || '').trim();
+        return `<option value="${esc(a.advisor_id)}">${esc(`${a.advisor_id} — ${name}${dept ? ` (${dept})` : ''}`)}</option>`;
+      }).join('');
       if (selectAdvisorId) sel.value = selectAdvisorId;
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, T.networkRequestFailed, err);
