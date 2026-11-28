@@ -56,6 +56,7 @@ ADV = "ADV-7"  # make_world's advisor id for every student
 QUEUE = "/ops/timetable-feedback/"
 GUIDE = "/ops/timetable-feedback/guide/"
 BULK = "/ops/timetable-feedback/bulk/"
+REPORT = "/ops/timetable-feedback/report/"
 T = scopy.strings("en")
 TA = scopy.strings("ar")
 SENTINEL_NOTE = "INTERNAL-SENTINEL-7Q"
@@ -115,7 +116,7 @@ def _act(client, case, action, language="en", **fields):
     return client.post(_case_url(case, "action/"), data, headers={"accept-language": language})
 
 
-STAFF_URLS = [QUEUE, GUIDE, "/ops/timetable-feedback/TTF-2026-00001/"]
+STAFF_URLS = [QUEUE, GUIDE, REPORT, "/ops/timetable-feedback/TTF-2026-00001/"]
 
 
 # ---------------------------------------------------------------------------
@@ -127,11 +128,13 @@ def test_the_routes_are_where_the_pages_link_to():
     assert reverse("staff_timetable_feedback_queue") == QUEUE
     assert reverse("staff_timetable_feedback_guide") == GUIDE
     assert reverse("staff_timetable_feedback_bulk") == BULK
+    assert reverse("staff_timetable_feedback_report") == REPORT
     assert reverse("staff_timetable_feedback_case", args=["TTF-2026-00012"]) == (
         "/ops/timetable-feedback/TTF-2026-00012/"
     )
-    # A reference route takes only a reference, so guide/ and bulk/ never read as one.
-    for not_a_reference in ("guide", "bulk", "ttf-2026-00012", "TTF-2026-12"):
+    # A reference route takes only a reference, so guide/, bulk/ and report/ never
+    # read as one.
+    for not_a_reference in ("guide", "bulk", "report", "ttf-2026-00012", "TTF-2026-12"):
         with pytest.raises(NoReverseMatch):
             reverse("staff_timetable_feedback_case", args=[not_a_reference])
 
@@ -176,7 +179,7 @@ def test_with_the_feature_off_nothing_is_written(world, staff, settings):
     assert (case.version, case.status) == (start, "SUBMITTED")
 
 
-@pytest.mark.parametrize("url", [QUEUE, GUIDE])
+@pytest.mark.parametrize("url", [QUEUE, GUIDE, REPORT])
 def test_no_staff_page_is_ever_cached(staff, url):
     response = _as(staff["advisor"]).get(url)
     assert "no-cache" in response["Cache-Control"] and "no-store" in response["Cache-Control"]

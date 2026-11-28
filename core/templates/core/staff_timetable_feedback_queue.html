@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.queue_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=2">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=3">{% endblock %}
 
 {% block page_heading %}{{ t.queue_title }}{% endblock %}
 
@@ -19,8 +19,14 @@
   built by the view from the copy deck. The bulk form is a sibling of the filter
   form, never inside it.
 {% endcomment %}
+{% include "core/partials/ttfs_subnav.html" with current="cases" %}
+
 {% if empty %}
 <div class="ttf-notice ttfs-scope-empty" id="ttfsScopeEmpty" role="status"><span dir="auto">{{ empty }}</span></div>
+{% endif %}
+
+{% if report_filter %}
+<div class="ttf-notice ttfs-report-filter" id="ttfsReportFilter" role="status"><span dir="auto">{{ report_filter }}</span> <a href="?{{ report_clear_query }}">{{ t.filter_from_report_clear }}</a></div>
 {% endif %}
 
 <nav class="ttfs-tabs" aria-label="{{ t.tabs_label }}">
@@ -34,6 +40,11 @@
 <form method="get" class="card p-3 mb-3 ttfs-filters" aria-labelledby="ttfsFiltersTitle" id="ttfsFilters">
   <h2 class="ttfs-section-title" id="ttfsFiltersTitle">{{ t.filters_title }}</h2>
   <input type="hidden" name="tab" value="{{ filters.tab }}">
+  {% if filters.course %}<input type="hidden" name="course" value="{{ filters.course }}"><input type="hidden" name="section" value="{{ filters.section }}">{% endif %}
+  {% if filters.term %}<input type="hidden" name="term" value="{{ filters.term }}">{% endif %}
+  {% if filters.window %}<input type="hidden" name="window" value="{{ filters.window }}">{% endif %}
+  {% if filters.sent_programme %}<input type="hidden" name="sent_programme" value="{{ filters.sent_programme }}">{% endif %}
+  {% if filters.report %}<input type="hidden" name="from" value="report">{% endif %}
   <div class="ttfs-filter-grid">
     <div class="ttfs-filter">
       <label class="ttf-label" for="ttfsSearch">{{ t.filter_search }}</label>
