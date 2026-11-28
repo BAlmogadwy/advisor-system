@@ -443,7 +443,9 @@ def _ranked(counter: Mapping[str, set[int]]) -> list[tuple[str, int]]:
     return sorted(((key, len(ids)) for key, ids in counter.items()), key=lambda p: (-p[1], p[0]))
 
 
-def _sections(points: QuerySet[TimetableFeedbackPoint]) -> tuple[list[SectionRow], int]:
+def _sections(
+    points: QuerySet[TimetableFeedbackPoint], *, full: bool = False
+) -> tuple[list[SectionRow], int]:
     on_sections = points.filter(anchor_kind=TimetableFeedbackPoint.AnchorKind.SECTION)
     groups = list(
         on_sections.order_by()
@@ -458,7 +460,7 @@ def _sections(points: QuerySet[TimetableFeedbackPoint]) -> tuple[list[SectionRow
             g["section_label"],
         )
     )
-    shown = groups[:SECTION_ROWS]
+    shown = groups if full else groups[:SECTION_ROWS]
     wanted = Q(pk__in=[])
     for group in shown:
         wanted |= Q(
@@ -499,14 +501,14 @@ def _sections(points: QuerySet[TimetableFeedbackPoint]) -> tuple[list[SectionRow
                 students=group["students"],
                 points=group["points"],
                 reasons=_ranked(reasons[key]),
-                moves=_ranked(moves[key])[:3],
+                moves=_ranked(moves[key]) if full else _ranked(moves[key])[:3],
                 registered_students=len(registered[key]),
             )
         )
     return rows, max(0, len(groups) - len(shown))
 
 
-def _moves(points: QuerySet[TimetableFeedbackPoint]) -> list[MoveRow]:
+def _moves(points: QuerySet[TimetableFeedbackPoint], *, full: bool = False) -> list[MoveRow]:
     rows = (
         points.filter(reason_code=R.PREFER_OTHER_SECTION, requested_term_section_id__isnull=False)
         .order_by()
@@ -527,10 +529,10 @@ def _moves(points: QuerySet[TimetableFeedbackPoint]) -> list[MoveRow]:
             )
         )
     out.sort(key=lambda m: (-m.students, m.course_identity, m.section_from, m.section_to))
-    return out[:MOVE_ROWS]
+    return out if full else out[:MOVE_ROWS]
 
 
-def _missing(points: QuerySet[TimetableFeedbackPoint]) -> list[MissingRow]:
+def _missing(points: QuerySet[TimetableFeedbackPoint], *, full: bool = False) -> list[MissingRow]:
     students: dict[str, set[int]] = defaultdict(set)
     programmes: dict[str, set[str]] = defaultdict(set)
     for identity, code, student, programme in (
@@ -564,7 +566,7 @@ def _missing(points: QuerySet[TimetableFeedbackPoint]) -> list[MissingRow]:
             )
         )
     out.sort(key=lambda m: (-m.students, m.course_identity))
-    return out[:MISSING_ROWS]
+    return out if full else out[:MISSING_ROWS]
 
 
 def _plan_course_names(codes: set[str]) -> dict[str, str]:
@@ -647,16 +649,23 @@ def _timeline(
 
 
 def build(
-    staff: staff_service.Staff, query: Mapping[str, Any], *, now: datetime | None = None
+    staff: staff_service.Staff,
+    query: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    full: bool = False,
 ) -> Report:
-    """The report for ``staff``, narrowed by the filters ``query`` asks for."""
+    """The report for ``staff``, narrowed by the filters ``query`` asks for.
+
+    ``full`` lists every section, section change and missing course, and every
+    section asked for instead: the workbook keeps what the page only ranks."""
     now = now or timezone.now()
     visible = staff_service.visible_to(staff)
     terms = terms_of(visible)
     programmes = programmes_of(visible)
     filters = Filters.read(query, terms=terms, programmes=programmes)
     cases, live, points = _narrowed(staff, filters, now)
-    sections, sections_more = _sections(points)
+    sections, sections_more = _sections(points, full=full)
     anchors = {
         row["anchor_kind"]: row["n"]
         for row in points.order_by().values("anchor_kind").annotate(n=Count("pk"))
@@ -670,8 +679,8 @@ def build(
         reasons=_reasons(points),
         sections=sections,
         sections_more=sections_more,
-        moves=_moves(points),
-        missing=_missing(points),
+        moves=_moves(points, full=full),
+        missing=_missing(points, full=full),
         by_programme=_by_programme(live, points),
         timeline=_timeline(cases, filters, now),
         anchors=anchors,

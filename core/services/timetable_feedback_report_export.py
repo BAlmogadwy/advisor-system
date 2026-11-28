@@ -18,6 +18,7 @@ is pinned to text. An Arabic workbook reads right to left.
 from __future__ import annotations
 
 import io
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -47,7 +48,9 @@ def _course(code: str, name: str) -> str:
 
 def filename(filters: report.Filters, now: datetime) -> str:
     """timetable-feedback-report-1448-1-20261128.xlsx (or all-terms)."""
-    term = filters.term.replace("/", "-") if filters.term else "all-terms"
+    # The term comes from stored data: only letters, digits, dots and hyphens may
+    # reach the quoted file name in the response header.
+    term = re.sub(r"[^A-Za-z0-9.-]", "-", filters.term) if filters.term else "all-terms"
     return f"timetable-feedback-report-{term}-{timezone.localtime(now):%Y%m%d}.xlsx"
 
 
@@ -69,7 +72,13 @@ def point_rows(points: Any, language: str) -> tuple[list[str], list[list[object]
         t["case_sent"],
     ]
     rows: list[list[object]] = []
-    for point in points.select_related("case").order_by("case__reference", "created_at"):
+    # Streamed, a term's points need not all sit in memory as model rows; "pk"
+    # last, so two points sent at the same moment keep one order.
+    for point in (
+        points.select_related("case")
+        .order_by("case__reference", "created_at", "pk")
+        .iterator(chunk_size=2000)
+    ):
         case = point.case
         code, name = report.split_identity(point.section_course_identity)
         on_section = point.anchor_kind == TimetableFeedbackPoint.AnchorKind.SECTION
@@ -238,7 +247,8 @@ def build_workbook(
     from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 
     now = now or timezone.now()
-    data = report.build(staff, query, now=now)
+    # Every row, not the page's top ones: a file is kept as the record.
+    data = report.build(staff, query, now=now, full=True)
     _cases, _live, points = report.narrowed(staff, data.filters, now)
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="0A8E6E", end_color="0A8E6E", fill_type="solid")

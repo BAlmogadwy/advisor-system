@@ -180,7 +180,7 @@ def test_with_the_feature_off_nothing_is_written(world, staff, settings):
     assert (case.version, case.status) == (start, "SUBMITTED")
 
 
-@pytest.mark.parametrize("url", [QUEUE, GUIDE, REPORT])
+@pytest.mark.parametrize("url", [QUEUE, GUIDE, REPORT, EXPORT])
 def test_no_staff_page_is_ever_cached(staff, url):
     response = _as(staff["advisor"]).get(url)
     assert "no-cache" in response["Cache-Control"] and "no-store" in response["Cache-Control"]

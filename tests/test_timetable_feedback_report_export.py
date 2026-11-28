@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from django.test import Client
@@ -29,6 +30,8 @@ from tests.test_timetable_feedback_staff import (
     S_MESSY,
     S_MINE,
     S_OTHER_ADVISOR,
+    S_OTHER_PROG,
+    S_TABBED,
     make_students,
     staff_user,
 )
@@ -191,3 +194,102 @@ def test_the_file_is_named_after_its_term_and_day():
     assert export.filename(filters, day) == "timetable-feedback-report-1448-1-20261128.xlsx"
     every = report.Filters(term="", programme="", reason="", window="")
     assert export.filename(every, day) == "timetable-feedback-report-all-terms-20261128.xlsx"
+    # A term is stored text: nothing but letters, digits, dots and hyphens may
+    # reach the quoted name in the response header.
+    odd = report.Filters(term='14"8;x/1 é', programme="", reason="", window="")
+    assert export.filename(odd, day) == "timetable-feedback-report-14-8-x-1---20261128.xlsx"
+
+
+def test_the_workbook_keeps_every_row_the_page_only_ranks(people, monkeypatch):
+    monkeypatch.setattr(report, "SECTION_ROWS", 1)
+    monkeypatch.setattr(report, "MOVE_ROWS", 1)
+    monkeypatch.setattr(report, "MISSING_ROWS", 1)
+    case = _case(S_MINE)
+    for label, asked in (("M1", "M5"), ("M2", "M6"), ("M3", "M7")):
+        _point(case, "PREFER_OTHER_SECTION", section=label, asked=asked)
+    # Four different sections asked for instead of one: the page shows three.
+    for sid, asked in ((S_MESSY, "M8"), (S_OTHER_ADVISOR, "M9"), (S_MINE, "M10")):
+        target = case if sid == S_MINE else _case(sid)
+        _point(target, "PREFER_OTHER_SECTION", section="M1", asked=asked)
+    _point(case, "MISSING_COURSE", missing="MA201")
+    _point(_case(S_MESSY, term="2"), "MISSING_COURSE", missing="MA301")
+
+    staff = staff_service.staff_of(people["admin"])
+    page = report.build(staff, {"term": report.EVERY_TERM})
+    assert (len(page.sections), page.sections_more, len(page.moves), len(page.missing)) == (
+        1,
+        2,
+        1,
+        1,
+    )
+    assert len(page.sections[0].moves) == 3
+    _response, book = _book(people["admin"], term=report.EVERY_TERM)
+    t = scopy.strings("en")
+    sections = _rows(book[t["export_sheet_sections"]])[1:]
+    assert sorted(row[1] for row in sections) == ["M1", "M2", "M3"]
+    first = next(row for row in sections if row[1] == "M1")
+    assert all(label in first[5] for label in ("M5", "M8", "M9", "M10"))
+    assert len(_rows(book[t["export_sheet_moves"]])[1:]) == 6
+    assert len(_rows(book[t["export_sheet_missing"]])[1:]) == 2
+
+
+def test_the_page_link_carries_every_narrowing_and_the_file_honours_each(people):
+    _point(_case(S_MINE, programme="FBS"), "TIME_CLASH")
+    _point(_case(S_MESSY, programme="FBS"), "LOAD_TOO_HIGH")
+    _point(_case(S_TABBED, programme="FBS", ago=timedelta(days=20)), "TIME_CLASH")
+    _point(_case(S_OTHER_PROG, programme="FBX"), "TIME_CLASH")
+    client = Client()
+    client.force_login(people["admin"])
+    page = client.get(
+        REPORT, {"term": "1448/1", "programme": "FBS", "reason": "TIME_CLASH", "window": "7"}
+    ).content.decode()
+    link = page.split('id="ttfrExport" href="')[1].split('"')[0].replace("&amp;", "&")
+    query = parse_qs(urlsplit(link).query)
+    assert query == {
+        "term": ["1448/1"],
+        "programme": ["FBS"],
+        "reason": ["TIME_CLASH"],
+        "window": ["7"],
+    }
+    book = load_workbook(io.BytesIO(client.get(link).content))
+    points = _rows(book[scopy.strings("en")["export_sheet_points"]])[1:]
+    # Only S_MINE's clash: not the load, not the old case, not the other programme.
+    assert [(row[3], row[2]) for row in points] == [(S_MINE, "FBS")]
+
+
+def test_an_advisors_narrowed_workbook_still_holds_only_their_cases(people):
+    _point(_case(S_MINE), "TIME_CLASH")
+    _point(_case(S_OTHER_ADVISOR), "TIME_CLASH")
+    _response, book = _book(people["advisor"], reason="TIME_CLASH")
+    points = _rows(book[scopy.strings("en")["export_sheet_points"]])[1:]
+    assert [row[3] for row in points] == [S_MINE]
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_every_string_cell_on_every_sheet_is_text(people, language):
+    _point(_case(S_MINE), "TIME_CLASH", course="=CS113::=Name", section="=M1")
+    _response, book = _book(people["admin"], language)
+    for sheet in book.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str):
+                    assert cell.data_type == "s", (sheet.title, cell.coordinate, cell.value)
+                assert cell.data_type != "f", (sheet.title, cell.coordinate)
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_every_sheet_name_is_one_a_workbook_accepts(language):
+    names = [
+        value for key, value in scopy.strings(language).items() if key.startswith("export_sheet_")
+    ]
+    assert len(names) == len(set(names)) == 7
+    for name in names:
+        assert len(name) <= 31 and not set(name) & set("[]:*?/\\"), name
+
+
+def test_an_arabic_workbook_says_each_point_in_arabic(people):
+    _point(_case(S_MINE, "NEEDS_INFORMATION"), "TIME_CLASH")
+    _response, book = _book(people["admin"], "ar")
+    (row,) = _rows(book[scopy.strings("ar")["export_sheet_points"]])[1:]
+    assert row[4] == scopy.status_label("NEEDS_INFORMATION", "ar")
+    assert row[5] == scopy.reason_label("TIME_CLASH", "ar")
