@@ -42,15 +42,23 @@ NON_OUTCOME_LETTER_GRADES = frozenset(
         "IP",
         "IC",
         "W",
-        "E",
         "\u0645",
         "\u0644",
         "\u0639",
-        "\u0639\u0641",
     }
 )
+# The registrar's "exempt" (E, and its Arabic form in the portal): the requirement is met
+# without the course being sat. Owner, 2026-11-28: E means exempt. The registrar counts these
+# hours as earned: of the 22 students with an E who have earned hours posted, 21 have exactly
+# the E courses' plan hours on top of what they passed (the others are first-years with
+# nothing posted yet). So it is settled like a transfer (TRS): the row is met.
+EXEMPT_LETTER_GRADES = frozenset({"E", "\u0639\u0641"})
 RECOGNISED_LETTER_GRADES = (
-    PASSING_LETTER_GRADES | FAILING_LETTER_GRADES | NON_OUTCOME_LETTER_GRADES | {"TRS"}
+    PASSING_LETTER_GRADES
+    | FAILING_LETTER_GRADES
+    | NON_OUTCOME_LETTER_GRADES
+    | EXEMPT_LETTER_GRADES
+    | {"TRS"}
 )
 
 
@@ -92,7 +100,9 @@ def parse_course_result(course: dict) -> CourseResult:
     has_snapshot = bool(grade or has_mark)
 
     outcome: str | None = None
-    if grade == "TRS":
+    # A transfer or an exemption is an administrative settlement, not a sitting: no mark
+    # can overrule it.
+    if grade == "TRS" or grade in EXEMPT_LETTER_GRADES:
         outcome = "passed"
     elif mark is not None:
         outcome = "passed" if mark >= 60 else "failed"
