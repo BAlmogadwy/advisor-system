@@ -147,6 +147,14 @@
   overflow-wrap: anywhere;
 }
 
+/* A meeting, its day and its times, never breaks across lines ("13:00–" on one,
+   "14:15" on the next reads as two times); a list of them breaks between. Nor
+   does a date inside a sentence ("2026-" then "12-08"). */
+.ttf-when,
+.ttf-date {
+  white-space: nowrap;
+}
+
 .ttf-choice-flag {
   color: var(--sev-warning);
   font-size: var(--text-sm);
@@ -182,8 +190,20 @@
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   unicode-bidi: isolate;
+  /* A reference broken at its hyphens reads as two numbers. */
+  white-space: nowrap;
 }
 
+/* A case's reference and its status share a line, and take two rather than run
+   past the card where the status is long and the phone narrow (a wider font,
+   as on some systems, was enough to push "Waiting for your reply" out). */
+.ttf-case-title-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* A status: its words, after a dot in the status's colour. The words say it;
+   the dot and, where the student must act, the tint only repeat them. */
 .ttf-status {
   align-items: center;
   border: 1px solid var(--line-strong);
@@ -192,8 +212,121 @@
   display: inline-flex;
   font-size: var(--text-sm);
   font-weight: 600;
+  gap: 6px;
   min-height: 26px;
   padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.ttf-status::before {
+  background: var(--t3);
+  border-radius: var(--radius-full);
+  content: "";
+  flex: none;
+  height: 8px;
+  width: 8px;
+}
+
+.ttf-status[data-status="SUBMITTED"]::before { background: var(--sev-info); }
+.ttf-status[data-status="IN_REVIEW"]::before { background: var(--sev-info); }
+.ttf-status[data-status="FORWARDED"]::before { background: var(--royal); }
+.ttf-status[data-status="NEEDS_INFORMATION"]::before { background: var(--sev-warning); }
+.ttf-status[data-status="ANSWERED"]::before { background: var(--sev-ok); }
+.ttf-status[data-status="CLOSED"]::before { background: var(--t3); }
+.ttf-status[data-status="WITHDRAWN"]::before { background: var(--t4); }
+
+.ttf-status[data-status="NEEDS_INFORMATION"] {
+  background: var(--sev-warning-bg);
+  border-color: var(--sev-warning);
+  color: var(--sev-warning-ink);
+}
+
+.ttf-status[data-status="ANSWERED"] {
+  background: var(--sev-ok-bg);
+  border-color: var(--sev-ok);
+  color: var(--t0);
+}
+
+/* ── Where a case has got to ───────────────────────────────────── */
+
+/* Sent, being reviewed, answered, closed: a dot per step on one line. A step
+   done is a filled dot, the step it is at an outlined one with a halo, so the
+   shape says it as well as the colour; aria-current says it to a reader. */
+.ttf-steps {
+  display: flex;
+  list-style: none;
+  margin: 14px 0 4px;
+  padding: 0;
+}
+
+.ttf-step {
+  align-items: center;
+  color: var(--t2);
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  gap: 6px;
+  min-width: 0;
+  position: relative;
+  text-align: center;
+}
+
+/* The line from the step before, drawn behind the dots. */
+.ttf-step::before {
+  background: var(--line-strong);
+  block-size: 2px;
+  content: "";
+  inline-size: 100%;
+  inset-block-start: 7px;
+  inset-inline-end: 50%;
+  position: absolute;
+}
+
+.ttf-step:first-child::before {
+  display: none;
+}
+
+.ttf-step.is-done::before,
+.ttf-step.is-current::before {
+  background: var(--sev-ok);
+}
+
+.ttf-step-dot {
+  background: var(--card);
+  border: 2px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  box-sizing: border-box;
+  height: 16px;
+  position: relative;
+  width: 16px;
+  z-index: 1;
+}
+
+.ttf-step.is-done .ttf-step-dot {
+  background: var(--sev-ok);
+  border-color: var(--sev-ok);
+}
+
+.ttf-step.is-current {
+  color: var(--t0);
+  font-weight: 700;
+}
+
+.ttf-step.is-current .ttf-step-dot {
+  border-color: var(--sev-info);
+  box-shadow: 0 0 0 4px var(--sev-info-bg);
+}
+
+.ttf-step.is-current.is-waiting .ttf-step-dot {
+  border-color: var(--sev-warning);
+  box-shadow: 0 0 0 4px var(--sev-warning-bg);
+}
+
+.ttf-step-label {
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
 }
 
 .ttf-meta {
@@ -215,11 +348,20 @@
   overflow-wrap: anywhere;
 }
 
-.ttf-case-list,
 .ttf-points,
 .ttf-thread {
   display: grid;
   gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The list of cases: rows on the card itself, divided by a rule (below), not
+   boxes inside the card, so no gap between them. */
+.ttf-case-list {
+  display: grid;
+  gap: 0;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -238,7 +380,93 @@
 .ttf-case-link {
   display: inline-block;
   font-size: var(--text-md);
-  margin-block-end: 6px;
+}
+
+/* A row of the list (the template says what is in it). Positioned, so the
+   reference's link can stretch over it. */
+.ttf-case-list .ttf-case {
+  background: transparent;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  padding: 14px 2px;
+  position: relative;
+}
+
+/* Under the pointer or the keyboard's focus, the row is tinted as one. */
+.ttf-case-list .ttf-case:hover,
+.ttf-case-list .ttf-case:focus-within {
+  background: color-mix(in srgb, var(--teal) 5%, transparent);
+}
+
+/* The one that waits on the student draws the eye: an edge in its status's
+   colour, which the status's own words also say. It stands in the card's
+   margin beside the row, so the row's words line up with every other row's. */
+.ttf-case-list .ttf-case[data-status="NEEDS_INFORMATION"]::before {
+  background: var(--sev-warning);
+  border-radius: var(--radius-pill);
+  content: "";
+  inline-size: 3px;
+  inset-block: 12px;
+  inset-inline-start: -10px;
+  position: absolute;
+}
+
+/* The reference and its status share a line, the status at its end, and take
+   two lines rather than run past the row on a small phone. */
+.ttf-case-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  justify-content: space-between;
+}
+
+/* The whole row opens the feedback: the link's box, stretched over the row. */
+.ttf-case-list .ttf-case-link::after {
+  content: "";
+  inset: 0;
+  position: absolute;
+}
+
+/* The term, the date and the number of points: one quiet line, each value
+   after its name, wrapping between them, never inside one. */
+.ttf-case-meta {
+  color: var(--t2);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  gap: 2px 16px;
+  margin: 6px 0 0;
+}
+
+.ttf-case-meta > div {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ttf-case-meta dt {
+  font-weight: 600;
+}
+
+.ttf-case-meta dd {
+  color: var(--t0);
+  margin: 0;
+}
+
+.ttf-case-list .ttf-case:last-child {
+  border-block-end-width: 0;
+}
+
+.ttf-case-list .ttf-case-link {
+  color: var(--text-brand);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ttf-case-list .ttf-case-link:hover,
+.ttf-case-list .ttf-case-link:focus-visible {
+  text-decoration: underline;
 }
 
 .ttf-point-about {
@@ -268,8 +496,27 @@
   overflow-wrap: anywhere;
 }
 
+/* The conversation: each message a bubble at most a comfortable line long, the
+   reader's own messages on the far side, so who said what reads at a glance.
+   Each bubble also names its author in words. */
+.ttf-thread {
+  justify-items: start;
+}
+
+.ttf-message {
+  box-sizing: border-box;
+  max-inline-size: min(100%, 44rem);
+}
+
 .ttf-message.is-mine {
-  border-inline-start: 4px solid var(--line-strong);
+  background: var(--sev-info-bg);
+  border-color: transparent;
+  border-end-end-radius: var(--radius-xs);
+  justify-self: end;
+}
+
+.ttf-message:not(.is-mine) {
+  border-end-start-radius: var(--radius-xs);
 }
 
 .ttf-message-meta {
@@ -288,11 +535,19 @@
 /* A point's own action: a text link at the point's foot, its 44px target
    from the padding, never from a larger font. */
 .ttf-point-action {
+  /* Quiet: taking a point back is the rare action, so it reads as the point's
+     footnote, not as its call to action. */
+  color: var(--t2);
   display: inline-block;
   font-size: var(--text-sm);
   font-weight: 600;
   min-height: 44px;
   padding-block: 12px;
+}
+
+.ttf-point-action:hover,
+.ttf-point-action:focus-visible {
+  color: var(--t0);
 }
 
 /* ── Something the student has not seen ───────────────────────── */

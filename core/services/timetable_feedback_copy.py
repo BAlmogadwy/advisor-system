@@ -56,9 +56,8 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "list_new": ("Send new feedback", "إرسال ملاحظة جديدة"),
     "list_reference": ("Reference", "الرقم المرجعي"),
     "list_term": ("Term", "الفصل الدراسي"),
-    "list_status": ("Status", "الحالة"),
     "list_sent": ("Sent", "تاريخ الإرسال"),
-    "list_points": ("Points: {count}", "عدد النقاط: {count}"),
+    "list_points": ("Points", "عدد النقاط"),
     "list_open": ("View", "عرض"),
     # The home page
     "home_send": (
@@ -221,6 +220,11 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "detail_title": ("Feedback {reference}", "الملاحظة {reference}"),
     "detail_term": ("Term", "الفصل الدراسي"),
     "detail_status": ("Status", "الحالة"),
+    "detail_progress": ("Progress", "مراحل الملاحظة"),
+    # Read after each step's name, for a screen reader; the dots show it to the eye.
+    "detail_step_done": ("done", "مكتملة"),
+    "detail_step_current": ("current step", "المرحلة الحالية"),
+    "detail_step_next": ("to come", "قادمة"),
     "detail_sent": ("Sent", "تاريخ الإرسال"),
     "detail_points_title": ("What you sent", "ما أرسلته"),
     "detail_whole_timetable": ("Your expected timetable as a whole", "الجدول المتوقع كاملًا"),
@@ -687,6 +691,13 @@ def bdi(value: object) -> SafeString:
 def term_html(academic_year: object, term: object) -> SafeString:
     """A term as the portal writes it, ``1448/1``, isolated left-to-right."""
     return bdi(f"{academic_year}/{term}")
+
+
+def date_html(value: object) -> SafeString:
+    """A date inside a sentence: isolated left-to-right like `bdi`, and kept on one
+    line (``ttf-date``), as ``2026-`` at a line's end and ``12-08`` on the next
+    read as two numbers."""
+    return format_html('<bdi dir="ltr" class="ttf-date">{}</bdi>', value)
 
 
 def strings(language: str) -> dict[str, str]:

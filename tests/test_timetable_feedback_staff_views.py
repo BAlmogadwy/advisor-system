@@ -57,6 +57,7 @@ QUEUE = "/ops/timetable-feedback/"
 GUIDE = "/ops/timetable-feedback/guide/"
 BULK = "/ops/timetable-feedback/bulk/"
 REPORT = "/ops/timetable-feedback/report/"
+EXPORT = "/ops/timetable-feedback/report/export/"
 T = scopy.strings("en")
 TA = scopy.strings("ar")
 SENTINEL_NOTE = "INTERNAL-SENTINEL-7Q"
@@ -116,7 +117,7 @@ def _act(client, case, action, language="en", **fields):
     return client.post(_case_url(case, "action/"), data, headers={"accept-language": language})
 
 
-STAFF_URLS = [QUEUE, GUIDE, REPORT, "/ops/timetable-feedback/TTF-2026-00001/"]
+STAFF_URLS = [QUEUE, GUIDE, REPORT, EXPORT, "/ops/timetable-feedback/TTF-2026-00001/"]
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,7 @@ def test_with_the_feature_off_nothing_is_written(world, staff, settings):
     assert (case.version, case.status) == (start, "SUBMITTED")
 
 
-@pytest.mark.parametrize("url", [QUEUE, GUIDE, REPORT])
+@pytest.mark.parametrize("url", [QUEUE, GUIDE, REPORT, EXPORT])
 def test_no_staff_page_is_ever_cached(staff, url):
     response = _as(staff["advisor"]).get(url)
     assert "no-cache" in response["Cache-Control"] and "no-store" in response["Cache-Control"]
@@ -367,6 +368,15 @@ def test_the_queue_costs_the_same_however_many_cases_it_shows(world, staff):
 def test_an_empty_scope_says_why_instead_of_showing_an_empty_table(world, staff, who, key):
     html = _queue(_as(staff[who]))
     assert 'id="ttfsScopeEmpty"' in html and escape(T[key]) in html
+    # The list's own line says no more than the notice: no case can reach them,
+    # so "nothing is waiting on you" would be untrue.
+    row = html.split('id="ttfsEmpty">')[1].split("</td>")[0]
+    assert escape(T["empty_tab_unreachable"]) in row
+    assert escape(T["empty_tab_action"]) not in row
+    # Nor do filters explain it, so clearing them is not offered.
+    filtered = _queue(_as(staff[who]), reason="TIME_CLASH")
+    row = filtered.split('id="ttfsEmpty">')[1].split("</td>")[0]
+    assert escape(T["empty_tab_unreachable"]) in row and "<a " not in row
     assert 'id="ttfsScopeEmpty"' not in _queue(_as(staff["advisor"]))
 
 
@@ -719,7 +729,8 @@ def test_a_case_changed_since_the_page_was_drawn_says_who_changed_it(world, staf
     assert response.status_code == 409
     html = _html(response)
     assert str(scopy.refusal("CASE_CHANGED", "en")) in html
-    assert "Last changed by Adv-One-B Staff on" in html
+    # When, as a date and time kept on one line.
+    assert 'Last changed by Adv-One-B Staff on <bdi dir="ltr" class="ttf-date">' in html
     assert "My answer, kept." in html
     # The page drawn again names the case as it is now.
     assert f'name="version" value="{case.version + 1}"' in html

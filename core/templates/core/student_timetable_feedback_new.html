@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.new_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=6">{% endblock %}
 
 {% block page_heading %}{{ t.new_title }}{% endblock %}
 
@@ -49,7 +49,7 @@
           <input type="radio" name="about" value="{{ choice.anchor }}">
           <span class="ttf-choice-body">
             <span class="ttf-choice-title"><bdi dir="ltr">{{ choice.course_key }}</bdi>{% if choice.name %} <span dir="auto">{{ choice.name }}</span>{% endif %}</span>
-            <span class="ttf-choice-meta">{{ t.section_word }} <bdi dir="ltr">{{ choice.section }}</bdi>{% for m in choice.meetings %}{% if forloop.first %} — {% endif %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %} — {{ t.new_no_times }}{% endfor %}</span>
+            <span class="ttf-choice-meta">{{ t.section_word }} <bdi dir="ltr">{{ choice.section }}</bdi>{% for m in choice.meetings %}{% if forloop.first %} — {% endif %}<span class="ttf-when">{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi></span>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %} — {{ t.new_no_times }}{% endfor %}</span>
             {% if choice.clashes %}<span class="ttf-choice-flag">{{ t.new_clash_hint }}</span>{% endif %}
           </span>
         </label>
@@ -80,7 +80,7 @@
     <h2 class="student-section-title mb-0" id="ttfDescribeTitle" dir="auto">{{ heading }}</h2>
   </div>
   {% if about %}
-  <p class="ttf-small mb-3" dir="auto">{% if about.name %}<span dir="auto">{{ about.name }}</span> — {% endif %}{% for m in about.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %}{{ t.new_no_times }}{% endfor %}</p>
+  <p class="ttf-small mb-3" dir="auto">{% if about.name %}<span dir="auto">{{ about.name }}</span> — {% endif %}{% for m in about.meetings %}<span class="ttf-when">{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi></span>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %}{{ t.new_no_times }}{% endfor %}</p>
   {% endif %}
   <form method="post" action="{% url 'student_timetable_feedback_new' %}" class="ttf-form" data-ttf-describe novalidate>
     {% csrf_token %}
@@ -116,7 +116,7 @@
           <input type="radio" name="requested_section" value="{{ alt.id }}"{% if values.requested_section == alt.id|stringformat:"s" %} checked{% endif %}>
           <span class="ttf-choice-body">
             <span class="ttf-choice-title">{{ t.section_word }} <bdi dir="ltr">{{ alt.section }}</bdi></span>
-            <span class="ttf-choice-meta">{% for m in alt.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %}{{ t.new_no_times }}{% endfor %}</span>
+            <span class="ttf-choice-meta">{% for m in alt.meetings %}<span class="ttf-when">{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi></span>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %}{{ t.new_no_times }}{% endfor %}</span>
           </span>
         </label>
         {% endfor %}

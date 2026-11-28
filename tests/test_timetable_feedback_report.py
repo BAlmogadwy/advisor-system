@@ -314,6 +314,12 @@ def test_the_timeline_says_which_days_it_draws(people):
     assert "Over the last 7 days" in _page(people["admin"], window="7")
 
 
+def test_the_busiest_day_is_a_date_kept_on_one_line(people):
+    _point(_case(S_MINE))
+    today = timezone.localdate().isoformat()
+    assert f'busiest day <bdi dir="ltr" class="ttf-date">{today}</bdi>' in _page(people["admin"])
+
+
 def test_a_section_row_counts_students_already_registered(people):
     for sid, registered in ((S_MINE, True), (S_MESSY, False)):
         case = _case(sid, has_registration_at_submission=registered)

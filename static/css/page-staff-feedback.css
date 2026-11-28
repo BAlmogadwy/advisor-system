@@ -104,10 +104,60 @@
   min-height: 44px;
 }
 
+/* The filters' title is their disclosure: a chevron says which way it is. */
+.ttfs-filters-summary {
+  align-items: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  list-style: none;
+  min-height: 44px;
+}
+
+.ttfs-filters-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ttfs-filters-summary::after {
+  border-block-end: 2px solid var(--t2);
+  border-inline-end: 2px solid var(--t2);
+  content: "";
+  flex: none;
+  height: 8px;
+  margin-inline: auto 6px;
+  transform: rotate(45deg);
+  width: 8px;
+}
+
+.ttfs-filters-box[open] > .ttfs-filters-summary::after {
+  transform: rotate(-135deg);
+}
+
+.ttfs-filters-summary:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
+}
+
+.ttfs-filters-summary .ttfs-section-title {
+  margin: 0;
+}
+
+.ttfs-filters-box[open] > .ttfs-filters-summary {
+  margin-block-end: 8px;
+}
+
 /* ── The queue ─────────────────────────────────────────────────── */
 
-.ttfs-queue th,
-.ttfs-queue td {
+/* Select-all, above the list whichever shape it takes. */
+.ttfs-queue-tools {
+  border-block-end: 1px solid var(--line);
+  padding: 4px 14px;
+}
+
+/* Every cell starts at the row's top, so a row reads along one line. Named
+   through its wrap to outrank global.css's `.table-wrap tbody td`. */
+.ttfs-queue-wrap .ttfs-queue th,
+.ttfs-queue-wrap .ttfs-queue td {
   vertical-align: top;
 }
 
@@ -127,8 +177,11 @@
   margin-block-start: 4px;
 }
 
+/* A tag is one phrase: it stays on one line while the queue has the room (see
+   the narrower queue below). */
 .ttfs-markers .ttf-tag {
   margin-inline-start: 0;
+  white-space: nowrap;
 }
 
 .ttfs-new {
@@ -143,6 +196,221 @@
 
 .ttfs-empty {
   color: var(--t2);
+}
+
+/* Waiting on staff, untouched for over two days: the report's own rule, said in
+   words in the tag. */
+.ttfs-untouched {
+  background: var(--sev-warning-bg);
+  border-color: var(--sev-warning);
+  color: var(--sev-warning-ink);
+}
+
+/* A page of cases scrolls with the page, never inside it: global.css caps a
+   .table-wrap's height, with !important on a phone. The queue takes its shape
+   from its own width, not the screen's, since the sidebar may be open or
+   folded: a table while every column fits, else a card per case. Nothing ever
+   scrolls sideways. */
+.table-wrap.ttfs-queue-wrap {
+  container: ttfs-queue / inline-size;
+  max-height: none !important;
+}
+
+/* A column's name may take two lines, so no column is wider than what it
+   holds. A date still never breaks at its hyphens. */
+.ttfs-queue-wrap .ttfs-queue thead th {
+  text-wrap: balance;
+  white-space: normal;
+}
+
+.ttfs-queue .ttfs-activity-cell bdi {
+  white-space: nowrap;
+}
+
+/* A long user name breaks rather than widen its column. */
+.ttfs-queue .ttfs-handler-cell {
+  overflow-wrap: anywhere;
+}
+
+/* Short of the full width, a long status or tag takes two lines rather than
+   push the table sideways: its outline is a pill on one line, a soft box on
+   two. */
+@container ttfs-queue (max-width: 1119px) {
+  .ttfs-queue .ttf-status,
+  .ttfs-markers .ttf-tag {
+    border-radius: var(--radius-lg);
+    white-space: normal;
+  }
+}
+
+/* Each case a card, every card the same shape, in the table's own order: the
+   tick box, the reference and its days open; the student; what they raised;
+   the status; then who handles it and the last activity side by side. A value
+   sits under its column's name. The table keeps its roles (set in the
+   template). */
+@container ttfs-queue (max-width: 959px) {
+  .ttfs-queue thead {
+    block-size: 1px;
+    clip-path: inset(50%);
+    inline-size: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+  }
+
+  .ttfs-queue,
+  .ttfs-queue tbody {
+    display: block;
+    inline-size: 100%;
+  }
+
+  .ttfs-queue tbody tr {
+    align-items: center;
+    border-block-end: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 12px 14px;
+  }
+
+  .table-wrap.ttfs-queue-wrap .ttfs-queue tbody tr > * {
+    border: 0;
+    display: block;
+    padding: 0;
+    text-align: start;
+  }
+
+  /* One tint for the whole card, not a patch per value: global.css tints each
+     cell of a hovered or focused row. */
+  .table-wrap.ttfs-queue-wrap .ttfs-queue tbody tr:focus-within > *,
+  .table-wrap.ttfs-queue-wrap .ttfs-queue tbody tr:hover > * {
+    background: transparent;
+  }
+
+  .ttfs-queue tbody tr:focus-within {
+    background: color-mix(in srgb, var(--teal) 4%, transparent);
+  }
+
+  .ttfs-queue tbody tr:hover {
+    background: color-mix(in srgb, var(--teal) 7%, transparent);
+  }
+
+  .ttfs-queue .ttfs-select {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .ttfs-queue .ttfs-ref-cell {
+    flex: 1 1 auto;
+  }
+
+  .ttfs-queue .ttfs-days-cell {
+    flex: 0 0 auto;
+  }
+
+  .table-wrap.ttfs-queue-wrap .ttfs-queue tbody tr > .ttfs-days-cell {
+    text-align: end;
+  }
+
+  .ttfs-queue .ttfs-student-cell,
+  .ttfs-queue .ttfs-points-cell,
+  .ttfs-queue .ttfs-status-cell,
+  .ttfs-queue .ttfs-empty {
+    flex: 1 1 100%;
+  }
+
+  .ttfs-queue .ttfs-handler-cell,
+  .ttfs-queue .ttfs-activity-cell {
+    flex: 1 1 40%;
+    min-width: 0;
+  }
+
+  .ttfs-queue .ttfs-points-cell::before,
+  .ttfs-queue .ttfs-days-cell::before,
+  .ttfs-queue .ttfs-handler-cell::before,
+  .ttfs-queue .ttfs-activity-cell::before {
+    color: var(--t2);
+    content: attr(data-label);
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    margin-block-end: 2px;
+  }
+}
+
+/* Where the browser can, a card's names are for the eye only (the empty text
+   after the slash): a screen reader already says the column's name from the
+   table's roles. Elsewhere the names still show, read out twice. */
+@supports (content: "" / "") {
+  @container ttfs-queue (max-width: 959px) {
+    .ttfs-queue .ttfs-points-cell::before,
+    .ttfs-queue .ttfs-days-cell::before,
+    .ttfs-queue .ttfs-handler-cell::before,
+    .ttfs-queue .ttfs-activity-cell::before {
+      content: attr(data-label) / "";
+    }
+  }
+}
+
+/* A wide card (a tablet, a narrow window) uses its width, on a fixed grid so
+   every card lines up with the next: the reference with its days open above
+   the last activity; the student beside what they raised; the status, who
+   handles it and the last activity in three columns. */
+@container ttfs-queue (min-width: 560px) and (max-width: 959px) {
+  .ttfs-queue tbody tr {
+    align-items: start;
+    display: grid;
+    gap: 10px 16px;
+    grid-template-areas:
+      "select ref     ref     days"
+      ".      student points  points"
+      ".      status  handler activity";
+    grid-template-columns: auto minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .table-wrap.ttfs-queue-wrap .ttfs-queue tbody tr > .ttfs-days-cell {
+    text-align: start;
+  }
+
+  .ttfs-queue .ttfs-select { grid-area: select; }
+  .ttfs-queue .ttfs-ref-cell { grid-area: ref; }
+  .ttfs-queue .ttfs-days-cell { grid-area: days; }
+  .ttfs-queue .ttfs-student-cell { grid-area: student; }
+  .ttfs-queue .ttfs-points-cell { grid-area: points; }
+  .ttfs-queue .ttfs-status-cell { grid-area: status; }
+  .ttfs-queue .ttfs-handler-cell { grid-area: handler; }
+  .ttfs-queue .ttfs-activity-cell { grid-area: activity; }
+
+  .ttfs-queue .ttfs-empty {
+    grid-column: 1 / -1;
+  }
+}
+
+/* With the page script: the bulk actions wait until a case is ticked, then stay
+   in view at the foot of the page. */
+.ttfs-bulk.is-waiting {
+  display: none;
+}
+
+.ttfs-bulk.is-active {
+  border-color: var(--line-strong);
+}
+
+/* Kept in view only where the screen has room: on a phone the two forms stack
+   into a tall bar, which would sit over the very rows being ticked. */
+@media (min-width: 641px) {
+  .ttfs-bulk.is-active {
+    box-shadow: var(--shadow-lift);
+    inset-block-end: 12px;
+    position: sticky;
+    z-index: var(--z-sticky);
+  }
+}
+
+.ttfs-bulk-count {
+  color: var(--t0);
+  font-weight: 700;
+  margin: 0 0 6px;
 }
 
 .ttfs-pages {
@@ -195,9 +463,40 @@
   margin: 0 0 6px;
 }
 
+/* The student's expected timetable now: one course a line, its times under it. */
 .ttfs-current {
+  display: grid;
+  gap: 8px;
+  list-style: none;
   margin: 0;
-  padding-inline-start: 1.25rem;
+  padding: 0;
+}
+
+.ttfs-current li {
+  border-block-end: 1px solid var(--line);
+  display: grid;
+  gap: 2px;
+  padding-block-end: 8px;
+}
+
+.ttfs-current li:last-child {
+  border-block-end: 0;
+  padding-block-end: 0;
+}
+
+.ttfs-current-code {
+  color: var(--t0);
+  font-weight: 700;
+}
+
+.ttfs-current-name {
+  color: var(--t1);
+}
+
+.ttfs-current-times {
+  color: var(--t2);
+  display: block;
+  font-size: var(--text-sm);
 }
 
 .ttfs-action + .ttfs-action {
@@ -213,16 +512,198 @@
   margin: 0 0 8px;
 }
 
+/* The history as a timeline: a dot per entry on a line, its time above it. */
 .ttfs-history {
   color: var(--t1);
+  display: grid;
   font-size: var(--text-sm);
+  gap: 12px;
+  list-style: none;
   margin: 0;
-  padding-inline-start: 1.25rem;
+  padding: 0;
+}
+
+.ttfs-history li {
+  padding-inline-start: 20px;
+  position: relative;
+}
+
+.ttfs-history li::before {
+  background: var(--line-strong);
+  border-radius: var(--radius-full);
+  content: "";
+  height: 9px;
+  inset-block-start: 5px;
+  inset-inline-start: 3px;
+  position: absolute;
+  width: 9px;
+}
+
+.ttfs-history li::after {
+  background: var(--line);
+  content: "";
+  inset-block: 18px -10px;
+  inset-inline-start: 7px;
+  position: absolute;
+  width: 1px;
+}
+
+.ttfs-history li:last-child::after {
+  display: none;
+}
+
+.ttfs-history-when {
+  color: var(--t2);
+  display: block;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .ttfs-changed-by {
   display: block;
   margin-block-start: 4px;
+}
+
+/* Two columns on a wide screen: the work, and beside it the facts, the
+   timetable and the history. The side comes first in the page (who and what,
+   before the work), so the grid places it. Columns follow the page's direction. */
+.ttfs-case-layout {
+  display: grid;
+  gap: 0 20px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ttfs-case-main,
+.ttfs-case-side {
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  .ttfs-case-layout {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  }
+
+  .ttfs-case-main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .ttfs-case-side {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+/* In the narrow side column the facts sit two to a row, the student across. */
+.ttfs-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ttfs-fact-wide {
+  grid-column: 1 / -1;
+}
+
+/* Staff read the conversation from their side: the student's messages at the
+   start, the staff's at the far side, staff-only comments in their own dashed
+   amber (above). */
+.ttf-thread .ttf-message:not(.ttfs-from-student) {
+  /* On the far side, so the small corner, the bubble's tail, is at the end. */
+  border-end-end-radius: var(--radius-xs);
+  border-end-start-radius: var(--radius);
+  justify-self: end;
+}
+
+.ttf-thread .ttf-message:not(.ttfs-from-student):not(.ttfs-internal) {
+  background: var(--sev-info-bg);
+  border-color: transparent;
+}
+
+/* The composer's tabs, made by the page script from the forms' own headings. */
+.ttfs-compose-tabs {
+  border-block-end: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 14px;
+}
+
+.ttfs-compose-tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-block-end: 3px solid transparent;
+  color: var(--t1);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  margin-block-end: -1px;
+  min-height: 44px;
+  padding: 8px 14px;
+}
+
+.ttfs-compose-tab:hover {
+  color: var(--t0);
+}
+
+.ttfs-compose-tab[aria-selected="true"] {
+  border-block-end-color: var(--text-brand);
+  color: var(--t0);
+  font-weight: 700;
+}
+
+.ttfs-compose-tab:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--text-brand);
+  outline-offset: -2px;
+}
+
+/* Tabbed forms show one at a time, so the rule between forms goes. */
+.ttfs-action.is-tabbed + .ttfs-action.is-tabbed {
+  border-block-start: 0;
+  margin-block-start: 0;
+  padding-block-start: 0;
+}
+
+/* The rarer moves, each behind its own disclosure. */
+.ttfs-more {
+  border-block-start: 1px solid var(--line);
+  margin-block-start: 18px;
+  padding-block-start: 14px;
+}
+
+.ttfs-more-title {
+  color: var(--t1);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.ttfs-more-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-block-end: 8px;
+}
+
+.ttfs-more-item > summary {
+  box-sizing: border-box;
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.ttfs-more-item > summary:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
+}
+
+.ttfs-more-item[open] > summary {
+  border-block-end: 1px solid var(--line);
+}
+
+.ttfs-more-item > .ttfs-action {
+  padding: 12px;
 }
 
 .ttfs-redact-current {
@@ -313,6 +794,26 @@
   color: var(--t2);
   font-size: var(--text-sm);
   margin: 0 0 12px;
+}
+
+/* The workbook: the button, and what the file holds and leaves out beside it. */
+.ttfr-export {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: -8px 0 18px;
+}
+
+.ttfr-export .btn {
+  box-sizing: border-box;
+}
+
+.ttfr-export-hint {
+  color: var(--t2);
+  flex: 1 1 16rem;
+  font-size: var(--text-sm);
+  margin: 0;
 }
 
 .ttfr-filters {

@@ -87,7 +87,20 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "marker_graduating": ("Graduation expected", "تخرج متوقع"),
     "student_unavailable": ("Student record unavailable", "سجل الطالب غير متاح"),
     "more_points": ("and {count} more", "و{count} أخرى"),
-    "empty_tab": ("No cases here.", "لا توجد حالات هنا."),
+    # An empty list says what is empty, tab by tab, or that the filters left
+    # nothing (with a way to clear them).
+    "empty_tab_action": ("Nothing is waiting on you.", "لا شيء بانتظار إجرائك."),
+    "empty_tab_open": ("No case is open.", "لا توجد حالة مفتوحة."),
+    "empty_tab_student": ("No case is waiting for a student.", "لا توجد حالة بانتظار الطالب."),
+    "empty_tab_department": ("No case is with the department.", "لا توجد حالة لدى القسم."),
+    "empty_tab_closed": ("No case is closed yet.", "لا توجد حالة مغلقة بعد."),
+    "empty_tab_all": ("No case has been sent yet.", "لم تُرسل أي حالة بعد."),
+    "empty_filtered": (
+        "No case here matches these filters.",
+        "لا توجد هنا حالة تطابق عوامل التصفية.",
+    ),
+    # Beside a notice that no case can reach this person: says no more than it.
+    "empty_tab_unreachable": ("No cases here.", "لا توجد حالات هنا."),
     "empty_NO_ADVISOR_ID": (
         "Your account has no advisor id, so no student's case can reach you. Please contact"
         " the system administrator.",
@@ -111,6 +124,7 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         " وتُذكر في النتيجة. الحد الأقصى في المرة الواحدة: {max}.",
     ),
     "bulk_template": ("Ready-made answer", "الرد الجاهز"),
+    "bulk_selected_label": ("Selected:", "المحددة:"),
     "bulk_answer": ("Answer the selected cases", "الرد على الحالات المحددة"),
     "bulk_close_note": ("Comment for colleagues", "تعليق للزملاء"),
     "bulk_close": ("Close the selected cases as duplicates", "إغلاق الحالات المحددة لتكرارها"),
@@ -213,6 +227,11 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "history_system": ("The system", "النظام"),
     "history_empty": ("Nothing yet.", "لا شيء بعد."),
     "actions_title": ("What can be done", "الإجراءات المتاحة"),
+    "composer_label": (
+        "Write to the student or to colleagues",
+        "الكتابة إلى الطالب أو إلى الزملاء",
+    ),
+    "more_actions": ("Other actions", "إجراءات أخرى"),
     "actions_none": (
         "Nothing more can be done on this case.",
         "لا يوجد إجراء آخر متاح على هذه الحالة.",
@@ -445,6 +464,31 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "report_see_cases": ("See the cases", "عرض الحالات"),
     "report_see_cases_about": ("See the cases: {what}", "عرض الحالات: {what}"),
     "report_link": ("See the report", "عرض التقرير"),
+    # The report as a workbook
+    "export_button": ("Download as Excel", "تنزيل بصيغة إكسل"),
+    "export_hint": (
+        "Each part of the report on its own sheet, and one row per point. Students appear"
+        " by university ID only; what they wrote stays on each case.",
+        "كل جزء من التقرير في ورقة مستقلة، وصف لكل نقطة. يظهر الطلاب بأرقامهم الجامعية فقط،"
+        " وتبقى كتاباتهم في صفحة كل حالة.",
+    ),
+    "export_sheet_summary": ("Summary", "الملخص"),
+    "export_sheet_issues": ("Issues", "المشكلات"),
+    "export_sheet_sections": ("Sections", "الشعب"),
+    "export_sheet_moves": ("Section changes", "طلبات الانتقال"),
+    "export_sheet_missing": ("Missing courses", "المقررات الناقصة"),
+    "export_sheet_programmes": ("Programmes", "البرامج"),
+    "export_sheet_points": ("Points", "النقاط"),
+    "export_col_item": ("Item", "البند"),
+    "export_col_value": ("Value", "القيمة"),
+    "export_col_student_id": ("University ID", "الرقم الجامعي"),
+    "export_generated": ("Prepared at", "وقت الإعداد"),
+    "export_median_hours": ("Median hours to the first action", "الوسيط بالساعات لأول إجراء"),
+    "export_prompt": ("First action within two days", "أول إجراء خلال يومين"),
+    "export_acted_on": ("Cases acted on", "الحالات التي اتُّخذ فيها إجراء"),
+    "export_helpful_yes": ("Answers found helpful", "ردود عُدّت مفيدة"),
+    "export_helpful_no": ("Answers found not helpful", "ردود عُدّت غير مفيدة"),
+    "export_withdrawn": ("Withdrawn by the student", "سحبها الطالب"),
 }
 
 #: The guide's steps: (title, text) pairs in each language.

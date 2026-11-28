@@ -60,6 +60,18 @@ OVERFLOW = """() => {
   );
 }"""
 
+#: Whether an inline element sits on one line. In Arabic a meeting or a date is
+#: several pieces (right-to-left words, left-to-right figures), each its own
+#: rectangle on the same line. Overlap is no test: with a tight line height the
+#: boxes of two lines overlap too. Pieces of one line share a centre, within half
+#: a box; the next line's is a whole line away.
+ONE_LINE = """(el) => {
+  const rects = Array.from(el.getClientRects());
+  const centres = rects.map((r) => (r.top + r.bottom) / 2);
+  const height = Math.min(...rects.map((r) => r.height));
+  return rects.length > 0 && Math.max(...centres) - Math.min(...centres) < height / 2;
+}"""
+
 
 def _section(code, label, meetings, name):
     section = TermSection.objects.create(
@@ -264,7 +276,7 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         """A case as staff left it (PR 4 will put it there), with ``points`` live
         points about the student's own section."""
         case = TimetableFeedback.objects.create(
-            student_id=SID, academic_year="1448", term="1", status=status, **fields
+            **{"student_id": SID, "academic_year": "1448", "term": "1", "status": status, **fields}
         )
         for n in range(points):
             TimetableFeedbackPoint.objects.create(
@@ -350,3 +362,100 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         expect(page.get_by_role("button", name="إغلاق هذه الملاحظة")).to_be_visible()
         expect(page.get_by_role("button", name="إعادة فتح هذه الملاحظة")).to_be_visible()
         self._check(page, "13-answered-ar")
+
+    def test_a_date_in_a_sentence_never_breaks_at_its_hyphens(self):
+        case = self._case("ANSWERED", answered_at=timezone.now() - timedelta(days=2))
+        # English breaks "2026-12-08" after a hyphen where it can; Arabic text
+        # is broken by other rules, so both are tried.
+        for language in ("en", "ar"):
+            page = self._page(language)
+            page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
+            # "...can be reopened until <date>", however narrow its sentence.
+            date = page.locator("#ttfAnswer .ttf-date")
+            for rem in range(4, 13):
+                date.evaluate(f"(date) => {{ date.parentElement.style.inlineSize = '{rem}rem'; }}")
+                self.assertTrue(date.evaluate(ONE_LINE), (language, rem))
+
+    def test_the_list_fits_a_small_phone_and_a_whole_row_opens_its_feedback(self):
+        # The longest status there is, in English, beside last term's feedback.
+        case = self._case("NEEDS_INFORMATION", points=2)
+        self._case(
+            "CLOSED",
+            academic_year="1447",
+            term="2",
+            close_reason="ANSWER_ACCEPTED",
+            closed_at=timezone.now(),
+        )
+        for language in ("en", "ar"):
+            page = self._page(language)
+            page.set_viewport_size({"width": 360, "height": 800})
+            page.goto(f"{self.live_server_url}/student/timetable-feedback/")
+            row = page.locator('.ttf-case-list .ttf-case[data-status="NEEDS_INFORMATION"]')
+            # The status stays inside its row, on the reference's line or the next.
+            inside = row.evaluate(
+                "(row) => { const r = row.getBoundingClientRect();"
+                " const s = row.querySelector('.ttf-status').getBoundingClientRect();"
+                " return s.left >= r.left - 0.5 && s.right <= r.right + 0.5; }"
+            )
+            self.assertTrue(inside, language)
+            # The one waiting on the student has its edge in the status's colour,
+            # beside the row: every row's reference starts at the same place.
+            # (A pseudo-element is drawn only when it has content.)
+            edge = row.evaluate(
+                "(row) => { const s = getComputedStyle(row, '::before');"
+                " return [s.content, s.width, s.backgroundColor]; }"
+            )
+            self.assertNotIn(edge[0], ("none", "normal"))
+            self.assertEqual(edge[1], "3px")
+            self.assertNotEqual(edge[2], "rgba(0, 0, 0, 0)")
+            starts = page.locator(".ttf-case-list .ttf-case-link").evaluate_all(
+                "(links) => links.map((a) => { const r = a.getBoundingClientRect();"
+                " return Math.round(document.dir === 'rtl' ? r.right : r.left); })"
+            )
+            self.assertEqual(len(starts), 2)
+            self.assertEqual(len(set(starts)), 1, (language, starts))
+            # The keyboard's focus tints the row as the pointer does.
+            row.locator(".ttf-case-link").focus()
+            expect(row).not_to_have_css("background-color", "rgba(0, 0, 0, 0)")
+            # The stretched link covers its own row and nothing else: the button
+            # under the list is still the button.
+            send = page.locator(".ttf-actions .btn-primary")
+            self.assertTrue(
+                send.evaluate(
+                    "(button) => { const b = button.getBoundingClientRect();"
+                    " return button.contains(document.elementFromPoint("
+                    "b.left + b.width / 2, b.top + b.height / 2)); }"
+                ),
+                language,
+            )
+            self._check(page, f"14-list-{language}")
+            # Anywhere on the row opens the feedback, not only its reference: a
+            # tap on the line of dates lands on the link stretched over the row.
+            box = row.locator(".ttf-case-meta").bounding_box()
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.wait_for_url(f"**/student/timetable-feedback/{case.reference}/", timeout=5000)
+
+    def test_a_meeting_never_breaks_across_lines(self):
+        page = self._page("ar")
+        page.set_viewport_size({"width": 320, "height": 800})
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/new/")
+        self._check(page, "15-meetings-ar")
+        # Section M1 meets on Sunday and on Tuesday: two meetings, each on one
+        # line however narrow the line, so a break falls between them or nowhere.
+        meta = page.locator(".ttf-choice-meta").first
+        meetings = page.locator(".ttf-choice-meta .ttf-when")
+        for rem in range(6, 17):
+            meta.evaluate(f"(meta) => {{ meta.style.inlineSize = '{rem}rem'; }}")
+            self.assertEqual(
+                meetings.evaluate_all(f"(all) => all.map({ONE_LINE})"), [True, True], rem
+            )
+
+    def test_with_a_wider_font_the_case_header_takes_two_lines_not_more_room(self):
+        """CI's fonts are wider than a desk's, and pushed the longest status past
+        the card on a phone; Verdana stands in for them here."""
+        case = self._case("NEEDS_INFORMATION")
+        page = self._page("en")
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
+        page.add_style_tag(content="*, *::before, *::after { font-family: Verdana !important; }")
+        expect(page.locator(".ttf-case-title-head .ttf-status")).to_be_visible()
+        self._check(page, "16-wide-font-en")

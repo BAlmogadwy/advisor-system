@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.list_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=6">{% endblock %}
 
 {% block page_heading %}{{ t.list_title }}{% endblock %}
 
@@ -11,21 +11,26 @@
 
 {% block content %}
 <section class="card p-3 mb-3" aria-labelledby="ttfListTitle">
-  <div class="student-home-section-head mb-2">
-    <h2 class="student-section-title mb-0" id="ttfListTitle">{{ t.list_title }}</h2>
-  </div>
+  {% comment %}The page's own heading already says what this is: this one names the
+  section for a screen reader without saying it twice on the screen.{% endcomment %}
+  <h2 class="visually-hidden" id="ttfListTitle">{{ t.list_title }}</h2>
   {% if rows %}
-  <ul class="ttf-case-list">
+  <ul class="ttf-case-list" role="list">
     {% for row in rows %}
-    <li class="ttf-case">
-      {% comment %}"New" sits inside the link, so the link's own name says it too.{% endcomment %}
-      <a class="ttf-case-link" href="{{ row.url }}"><bdi dir="ltr" class="ttf-ref">{{ row.reference }}</bdi>{% if row.unread %} <span class="ttf-unread"><span class="ttf-unread-dot" aria-hidden="true"></span>{{ t.unread }}</span>{% endif %}</a>
-      <dl class="ttf-meta">
+    {% comment %}A row: the reference and its status on one line, then the term, the
+    date and the number of points. The reference is the row's link and is
+    stretched over the whole row, so the row opens wherever it is tapped. "New"
+    sits inside the link, so the link's own name says it too.{% endcomment %}
+    <li class="ttf-case" data-status="{{ row.status_code }}">
+      <div class="ttf-case-head">
+        <a class="ttf-case-link" href="{{ row.url }}"><bdi dir="ltr" class="ttf-ref">{{ row.reference }}</bdi>{% if row.unread %} <span class="ttf-unread"><span class="ttf-unread-dot" aria-hidden="true"></span>{{ t.unread }}</span>{% endif %}</a>
+        <span class="ttf-status" data-status="{{ row.status_code }}">{{ row.status }}</span>
+      </div>
+      <dl class="ttf-case-meta">
         <div><dt>{{ t.list_term }}</dt><dd>{{ row.term }}</dd></div>
-        <div><dt>{{ t.list_status }}</dt><dd dir="auto">{{ row.status }}</dd></div>
         <div><dt>{{ t.list_sent }}</dt><dd><bdi dir="ltr">{{ row.sent }}</bdi></dd></div>
+        <div><dt>{{ t.list_points }}</dt><dd><bdi dir="ltr">{{ row.points }}</bdi></dd></div>
       </dl>
-      <p class="ttf-small mb-0" dir="auto">{{ row.points }}</p>
     </li>
     {% endfor %}
   </ul>
