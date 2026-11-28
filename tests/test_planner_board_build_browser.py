@@ -438,7 +438,7 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         # The student arrives first: the options go, the save is left to finish and report.
         _body, route = fake.pending.pop()
         route.fulfill(json=context_for(OTHER_ID))
-        expect(page.locator("#plbStatus")).to_have_text("Student loaded.")
+        expect(page.locator("#plbStatus")).to_have_text("")
         expect(page.locator("#plbApplyDialog")).to_be_visible()
         fake.pending_save.pop().fulfill(
             status=409, json={"ok": False, "error": {"code": "X", "message": "Refused"}}

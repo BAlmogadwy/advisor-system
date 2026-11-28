@@ -211,10 +211,10 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self.assertFalse(body["allow_full_sections"])
 
     # ── max credits ─────────────────────────────────────────────────────────
-    def test_max_credits_shows_the_cap_and_its_hint(self) -> None:
+    def test_max_credits_shows_the_cap_and_no_hint_line(self) -> None:
         page = self._open(BuildFake())
         self.assertEqual(page.input_value("#plbMaxIn"), "18")
-        self.assertEqual(self._text(page, "#plbMaxInHint"), "advisory 18 · regulatory 19")
+        self.assertEqual(self._text(page, "#plbMaxInHint"), "")
 
     def test_max_credits_applies_on_enter_and_when_the_field_loses_focus(self) -> None:
         page = self._open(BuildFake())
@@ -307,7 +307,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         page.fill("#plbMaxIn", "99")
         page.press("#plbMaxIn", "Enter")
         expect(page.locator("#plbMaxInErr")).to_have_text("أدخل عددًا صحيحًا من 1 إلى 19.")
-        self.assertEqual(self._text(page, "#plbMaxInHint"), "إرشادي 18 · النظامي 19")
+        self.assertEqual(self._text(page, "#plbMaxInHint"), "")
 
     def test_the_other_rules_are_on_the_board_and_swaps_are_not_available(self) -> None:
         page = self._open(BuildFake())

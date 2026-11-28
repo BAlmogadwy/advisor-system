@@ -364,30 +364,34 @@ class PlannerBoardGapsTests(PlannerBoardCase):
     # ── 5. The advisor ───────────────────────────────────────────────────────
     def test_the_student_card_names_the_advisor(self) -> None:
         for language, text in (
-            ("en", "Sample Student · 4500000 · Advisor 90210"),
-            ("ar", "Sample Student · 4500000 · المرشد 90210"),
+            ("en", "Sample Student · 4500000 · Advisor Dr. Sample Advisor"),
+            ("ar", "Sample Student · 4500000 · المرشد Dr. Sample Advisor"),
         ):
             with self.subTest(language=language):
                 fake = _fake()
                 fake.context_answer = lambda body: (
                     200,
-                    context_for(str(body["student_id"]), advisor_id="90210"),
+                    context_for(
+                        str(body["student_id"]),
+                        advisor_id="90210",
+                        advisor_name="Dr. Sample Advisor",
+                    ),
                 )
                 page = self._open(fake, language=language)
                 self.assertEqual(self._text(page, "#plbStudent .plb-smeta"), text)
                 self.assertEqual(
                     page.locator("#plbStudent .plb-smeta bdi[dir='ltr']").all_inner_texts(),
-                    ["4500000", "90210"],
+                    ["4500000"],
                 )
                 page.context.close()
 
-    def test_no_advisor_no_word(self) -> None:
+    def test_no_advisor_name_no_word_and_never_the_number(self) -> None:
         for value in ("", None, "  "):
             with self.subTest(value=value):
                 fake = _fake()
                 fake.context_answer = lambda body, v=value: (
                     200,
-                    context_for(str(body["student_id"]), advisor_id=v),
+                    context_for(str(body["student_id"]), advisor_id="90210", advisor_name=v),
                 )
                 page = self._open(fake)
                 self.assertEqual(
@@ -410,7 +414,7 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self.assertEqual(len(fake.context_bodies), 1)
         _body, route = fake.pending.pop()
         route.fulfill(json=context_for(STUDENT_ID))
-        expect(page.locator("#plbStatus")).to_have_text("Student loaded.")
+        expect(page.locator("#plbStatus")).to_have_text("")
         expect(page.locator("#plbFetch")).to_be_enabled()
 
     def test_fetch_is_back_after_a_failed_load(self) -> None:

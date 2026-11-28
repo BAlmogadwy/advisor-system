@@ -135,11 +135,11 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         self._wait_until(page, lambda: len(fake.projection_bodies) == 1)
         self.assertEqual(fake.projection_bodies, [{"token": "token"}])
         self._start(page)
-        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 1 term later")
         fake.pending_plan.pop().fulfill(json=fake.plan_payload)
         self._wait_until(page, lambda: len(fake.projection_bodies) == 2)
         self.assertEqual(fake.projection_bodies[1], {"token": "token", "add": ["STAT305", "CS351"]})
-        expect(page.locator(COULD.format("CS351"))).to_have_text("3 terms, 1 sooner")
+        expect(page.locator(COULD.format("CS351"))).to_have_text("1 term sooner")
         page.wait_for_timeout(200)
         self.assertEqual(len(fake.projection_bodies), 2)
 
@@ -185,7 +185,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
                     self._open_panel(page, "AI331")
                 page.locator(selector).focus()
                 fake.pending_projection.pop().fulfill(json=STANDARD)
-                expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+                expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 1 term later")
                 expect(page.locator(selector)).to_be_focused()
 
     def _built_before_the_plan(self, fake):
@@ -205,17 +205,17 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         fake.projection_answer = lambda body: (200, first)
         page = self._built_before_the_plan(fake)
         self._start(page)
-        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 1 term later")
         fake.hold_projection = 1
         fake.pending_plan.pop().fulfill(json=fake.plan_payload)
         self._wait_until(page, lambda: len(fake.pending_projection) == 1)
         # Asked again, and the first answer is still what the page shows.
         expect(page.locator("#plbGrad")).to_have_attribute("data-state", "ready")
-        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 1 term later")
         fake.pending_projection.pop().fulfill(status=429, json={})
         page.wait_for_timeout(300)
         expect(page.locator("#plbGrad")).to_have_attribute("data-state", "ready")
-        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 1 term later")
         self.assertEqual(page.locator(COULD.format("CS351")).count(), 0)
 
     def test_a_quiet_request_that_finds_the_session_gone_says_so(self) -> None:
@@ -224,7 +224,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         fake.projection_answer = lambda body: (200, first)
         page = self._built_before_the_plan(fake)
         self._start(page)
-        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
+        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 1 term later")
         fake.hold_projection = 1
         fake.pending_plan.pop().fulfill(json=fake.plan_payload)
         self._wait_until(page, lambda: len(fake.pending_projection) == 1)
@@ -277,57 +277,59 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
     # ── the rows ─────────────────────────────────────────────────────────────
     def test_each_text_of_a_row_in_english(self) -> None:
         page, _fake = self._projected(STANDARD)
-        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
-        self.assertEqual(self._text(page, NEW.format("AI342")), "If postponed: still 4 terms")
-        self.assertEqual(self._text(page, COULD.format("STAT305")), "Still 4 terms")
-        self.assertEqual(self._text(page, COULD.format("CS351")), "3 terms, 1 sooner")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 1 term later")
+        self.assertEqual(self._text(page, COULD.format("CS351")), "1 term sooner")
+        # a course that leaves the graduation term where it is says nothing (no "still 4 terms")
+        self.assertEqual(page.locator(NEW.format("AI342")).count(), 0)
+        self.assertEqual(page.locator(COULD.format("STAT305")).count(), 0)
 
     def test_each_text_of_a_row_in_arabic(self) -> None:
         page, _fake = self._projected(STANDARD, language="ar")
-        self.assertEqual(self._text(page, NEW.format("AI331")), "إن أُجِّل: 5 فصول")
-        self.assertEqual(self._text(page, NEW.format("AI342")), "إن أُجِّل: 4 فصول، بلا تغيير")
-        self.assertEqual(self._text(page, COULD.format("STAT305")), "4 فصول، بلا تغيير")
-        self.assertEqual(self._text(page, COULD.format("CS351")), "3 فصول، أبكر بفصل واحد")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "إن أُجِّل: أبعد بفصل واحد")
+        self.assertEqual(self._text(page, COULD.format("CS351")), "أبكر بفصل واحد")
+        self.assertEqual(page.locator(NEW.format("AI342")).count(), 0)
+        self.assertEqual(page.locator(COULD.format("STAT305")).count(), 0)
 
     def test_arabic_counts_go_through_the_plural_forms(self) -> None:
         many = effects(
-            {"AI331": effect(11, 1), "AI342": effect(2, 0)},
-            {"STAT305": effect(1, -2), "CS351": effect(12, 3)},
+            {"AI331": effect(11, 1), "AI342": effect(2, 2)},
+            {"STAT305": effect(1, -2), "CS351": effect(12, 11)},
         )
         page, _fake = self._projected(with_effects(many), language="ar")
-        self.assertEqual(self._text(page, NEW.format("AI331")), "إن أُجِّل: 11 فصلًا")
-        self.assertEqual(self._text(page, NEW.format("AI342")), "إن أُجِّل: فصلان، بلا تغيير")
-        self.assertEqual(self._text(page, COULD.format("STAT305")), "فصل واحد، أبكر بفصلين")
-        self.assertEqual(self._text(page, COULD.format("CS351")), "12 فصلًا، أبعد بـ3 فصول")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "إن أُجِّل: أبعد بفصل واحد")
+        self.assertEqual(self._text(page, NEW.format("AI342")), "إن أُجِّل: أبعد بفصلين")
+        self.assertEqual(self._text(page, COULD.format("STAT305")), "أبكر بفصلين")
+        self.assertEqual(self._text(page, COULD.format("CS351")), "أبعد بـ11 فصلًا")
 
     def test_a_later_result_is_said_in_english_too(self) -> None:
         page, _fake = self._projected(with_effects(effects(added={"STAT305": effect(6, 2)})))
-        self.assertEqual(self._text(page, COULD.format("STAT305")), "6 terms, 2 later")
+        self.assertEqual(self._text(page, COULD.format("STAT305")), "2 terms later")
 
     def test_strong_ink_only_when_the_course_costs_terms(self) -> None:
         page, _fake = self._projected(STANDARD)
         classes = {
             code: page.locator(sel.format(code)).get_attribute("class")
-            for code, sel in (
-                ("AI331", NEW),
-                ("AI342", NEW),
-                ("STAT305", COULD),
-                ("CS351", COULD),
-            )
+            for code, sel in (("AI331", NEW), ("CS351", COULD))
         }
         self.assertIn("plb-fxt--strong", classes["AI331"])
-        self.assertIn("plb-fxt--muted", classes["AI342"])
-        self.assertIn("plb-fxt--muted", classes["STAT305"])
         self.assertIn("plb-fxt--brand", classes["CS351"])
-        self.assertNotIn("strong", classes["AI342"])
-        # the ink is real: strong is darker than muted
+        # a tag in the row's meta area (same line), tinted, not a bare grey line
+        for code, sel in (("AI331", NEW), ("CS351", COULD)):
+            self.assertIn("plb-flag", page.locator(sel.format(code)).get_attribute("class"))
         colours = page.evaluate(
             "[...document.querySelectorAll('#plbPick .plb-fxt')]"
             ".map(n => [n.className, getComputedStyle(n).color])"
         )
         by_class = {c.split()[1]: colour for c, colour in colours}
-        self.assertNotEqual(by_class["plb-fxt--strong"], by_class["plb-fxt--muted"])
-        self.assertNotEqual(by_class["plb-fxt--brand"], by_class["plb-fxt--muted"])
+        self.assertNotEqual(by_class["plb-fxt--strong"], by_class["plb-fxt--brand"])
+
+    def test_the_effect_of_an_available_row_sits_in_its_meta_area_not_on_a_line_of_its_own(
+        self,
+    ) -> None:
+        page, _fake = self._projected(STANDARD)
+        node = page.locator(COULD.format("CS351"))
+        self.assertEqual(node.evaluate("n => n.parentElement.className"), "plb-meta")
+        self.assertEqual(page.locator("#plbAvailList .plb-fxl").count(), 0)
 
     def test_the_effect_shares_the_section_line_and_is_plain_text_in_the_row(self) -> None:
         page, _fake = self._projected(STANDARD)
@@ -343,16 +345,16 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         page, _fake = self._projected(STANDARD)
         self.assertEqual(page.locator("#plbPlanList .plb-prow--kept .plb-fxt").count(), 0)
         self.assertEqual(page.locator("#plbBlocked .plb-fxt").count(), 0)
-        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 4)
+        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 2)
 
     def test_nothing_on_the_registered_tab(self) -> None:
         page, _fake = self._projected(EVERY)
-        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 4)
+        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 2)
         page.click("#plbTabRegistered")
         self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 0)
         self.assertEqual(page.locator("#plbGuide .plb-dep").count(), 0)
         page.click("#plbTabs [data-opt='B1']")
-        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 4)
+        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 2)
 
     def test_nothing_while_the_forecast_is_loading_then_it_appears(self) -> None:
         fake = BuildFake()
@@ -363,8 +365,8 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         self._start(page)
         self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 0)
         fake.pending_projection.pop().fulfill(json=STANDARD)
-        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 5 terms")
-        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 4)
+        expect(page.locator(NEW.format("AI331"))).to_have_text("If postponed: 1 term later")
+        self.assertEqual(page.locator("#plbPick .plb-fxt").count(), 2)
 
     def test_nothing_when_the_projection_is_unavailable(self) -> None:
         fake = BuildFake()
@@ -403,15 +405,15 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         page, _fake = self._projected(
             with_effects(B1_EFFECTS, B2=forecast([12, 18, 18, 18], delta=0, **other))
         )
-        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 1 term later")
         self._pick(page, "B2")
-        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: still 4 terms")
-        self.assertEqual(self._text(page, NEW.format("AI342")), "If postponed: 6 terms")
-        self.assertEqual(self._text(page, COULD.format("CS351")), "5 terms, 1 later")
+        self.assertEqual(page.locator(NEW.format("AI331")).count(), 0)
+        self.assertEqual(self._text(page, NEW.format("AI342")), "If postponed: 2 terms later")
+        self.assertEqual(self._text(page, COULD.format("CS351")), "1 term later")
         # STAT305 has no entry for B2: nothing is carried over from B1
         self.assertEqual(page.locator(COULD.format("STAT305")).count(), 0)
         self._pick(page, "B1")
-        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 1 term later")
 
     # ── "Depends on" ─────────────────────────────────────────────────────────
     def _depends(self, page) -> list[str]:
@@ -422,7 +424,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
 
     def test_depends_on_with_one_course_between_watch_and_status(self) -> None:
         page, _fake = self._projected(STANDARD)
-        self.assertEqual(self._depends(page), ["AI331 · if postponed: 5 terms"])
+        self.assertEqual(self._depends(page), ["AI331 · if postponed: 1 term later"])
         self.assertEqual(self._text(page, "#plbGuide .plb-fr--depends dt"), "Depends on")
         labels = page.eval_on_selector_all(
             "#plbGuide dt", "ns => ns.map(n => n.textContent.trim())"
@@ -433,7 +435,8 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         many = effects({"AI331": effect(5, 1), "AI342": effect(6, 2), "STAT305": effect(5, 1)})
         page, _fake = self._projected(with_effects(many))
         self.assertEqual(
-            self._depends(page), ["AI342 · if postponed: 6 terms", "AI331 · if postponed: 5 terms"]
+            self._depends(page),
+            ["AI342 · if postponed: 2 terms later", "AI331 · if postponed: 1 term later"],
         )
 
     def test_depends_on_never_lists_a_third_course(self) -> None:
@@ -449,7 +452,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbGuide .plb-fr--depends")).to_be_visible()
         self.assertEqual(
             self._depends(page),
-            ["STAT305 · if postponed: 7 terms", "AI342 · if postponed: 6 terms"],
+            ["STAT305 · if postponed: 3 terms later", "AI342 · if postponed: 2 terms later"],
         )
 
     def test_depends_on_is_absent_when_no_course_costs_a_term(self) -> None:
@@ -460,7 +463,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
 
     def test_depends_on_in_arabic(self) -> None:
         page, _fake = self._projected(STANDARD, language="ar")
-        self.assertEqual(self._depends(page), ["AI331 · إن أُجِّل: 5 فصول"])
+        self.assertEqual(self._depends(page), ["AI331 · إن أُجِّل: أبعد بفصل واحد"])
         self.assertEqual(self._text(page, "#plbGuide .plb-fr--depends dt"), "يعتمد على")
         self.assertEqual(page.locator("#plbGuide .plb-dep bdi").count(), 1)
 
@@ -468,7 +471,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
     def test_the_panel_repeats_the_courses_line(self) -> None:
         page, _fake = self._projected(STANDARD)
         self._open_panel(page, "AI331")
-        self.assertEqual(self._text(page, "#plbPop .plb-dt-fx"), "If postponed: 5 terms")
+        self.assertEqual(self._text(page, "#plbPop .plb-dt-fx"), "If postponed: 1 term later")
         # the line sits under the heading, above the sections
         order = page.eval_on_selector_all(
             "#plbPop > *", "ns => ns.map(n => n.className.split(' ')[0])"
@@ -476,12 +479,12 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         self.assertEqual(order[:2], ["plb-dt-head", "plb-dt-fx"])
         page.click("#plbPop [data-act='dt-close']")
         # a course that is not planned yet has no popover: its line is on its Available row
-        self.assertEqual(self._text(page, COULD.format("CS351")), "3 terms, 1 sooner")
+        self.assertEqual(self._text(page, COULD.format("CS351")), "1 term sooner")
 
     def test_the_panel_has_no_line_for_a_course_without_an_effect(self) -> None:
         page, _fake = self._projected(STANDARD)
         self._open_panel(page, "AI342")
-        self.assertEqual(self._text(page, "#plbPop .plb-dt-fx"), "If postponed: still 4 terms")
+        self.assertEqual(page.locator("#plbPop .plb-dt-fx").count(), 0)
         page.click("#plbTabRegistered")
         self.assertEqual(page.locator("#plbPop .plb-dt-fx").count(), 0)
 
@@ -494,17 +497,17 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         self._pick(page, "B2")  # a click outside the popover closes it
         expect(page.locator("#plbPop")).to_be_hidden()
         self._open_panel(page, "AI331")
-        self.assertEqual(self._text(page, "#plbPop .plb-dt-fx"), "If postponed: 9 terms")
+        self.assertEqual(self._text(page, "#plbPop .plb-dt-fx"), "If postponed: 5 terms later")
 
     # ── an out-of-date build ─────────────────────────────────────────────────
     def test_an_out_of_date_build_keeps_the_texts_and_marks_them(self) -> None:
         page, _fake = self._projected(STANDARD)
         self.assertIsNone(page.locator(NEW.format("AI331")).get_attribute("data-stale"))
         self._rules(page, full=True)
-        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 5 terms")
-        self.assertEqual(self._depends(page), ["AI331 · if postponed: 5 terms"])
+        self.assertEqual(self._text(page, NEW.format("AI331")), "If postponed: 1 term later")
+        self.assertEqual(self._depends(page), ["AI331 · if postponed: 1 term later"])
         self.assertEqual(page.locator(NEW.format("AI331")).get_attribute("data-stale"), "changed")
-        self.assertEqual(page.locator("#plbPick .plb-fxt[data-stale]").count(), 4)
+        self.assertEqual(page.locator("#plbPick .plb-fxt[data-stale]").count(), 2)
         # a fresh build clears the mark
         page.click("#plbBuild")
         expect(page.locator("#plbPick .plb-fxt[data-stale]")).to_have_count(0)

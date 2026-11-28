@@ -89,8 +89,8 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         self.assertFalse(page.evaluate("document.getElementById('plbCurTT').open"))
         expect(page.locator("#plbCurTTWeek .plb-b")).to_have_count(0)
         digest = self._text(page, "#plbCurTTDigest")
-        self.assertIn("CS301 Sun Tue 08:00-09:15", digest)
-        self.assertIn("CS330 Mon Wed 12:45-14:00", digest)
+        # codes only, never meetings or times
+        self.assertEqual(digest, "CS301 · CS322 · CS330")
         self.assertEqual(self._text(page, ".plb-curtt-t"), "Current timetable")
         expect(page.locator(".plb-curtt-show")).to_be_visible()
         expect(page.locator(".plb-curtt-hide")).to_be_hidden()
@@ -122,13 +122,13 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         expect(page.locator("#plbCurTTWeek .plb-b")).to_have_count(6)
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbCurTTWeek .plb-b")).to_have_count(1)
-        self.assertIn("AI499 Thu 09:00-10:00", self._text(page, "#plbCurTTDigest"))
+        self.assertEqual(self._text(page, "#plbCurTTDigest"), "AI499")
         self.assertTrue(page.evaluate("document.getElementById('plbCurTT').open"))
 
     def test_the_current_timetable_says_so_in_arabic_and_without_timed_classes(self) -> None:
         page = self._open(BuildFake(), language="ar")
         self.assertEqual(self._text(page, ".plb-curtt-t"), "الجدول الحالي")
-        self.assertIn("؛ ", self._text(page, "#plbCurTTDigest"))
+        self.assertEqual(self._text(page, "#plbCurTTDigest"), "CS301 · CS322 · CS330")
         self.assertEqual(page.locator("#plbCurTTDigest > bdi").count(), 3)
         expect(page.locator(".plb-curtt-show")).to_have_text("عرض")
         page.click("#plbCurTT > summary")
@@ -168,8 +168,10 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         self.assertEqual(
             page.eval_on_selector("#plbStudent .plb-bar > i", "n => n.style.inlineSize"), "20%"
         )
-        # this term's credits, the number of courses, then their codes
-        self.assertIn("registered now 9 3 courses cs301 cs322 cs330", facts[2].lower())
+        # this term's credits and the number of courses; the codes are NOT repeated here
+        # (the owner: they are on the Current timetable line just below)
+        self.assertEqual("registered now 9 3 courses", facts[2].lower())
+        self.assertIn("CS301", self._text(page, "#plbCurTTDigest"))
         # before a build: the muted line; after it: the projection's baseline completion term
         self.assertIn("After the first build", self._text(page, "#plbStudent .plb-sf:nth-child(4)"))
         page.click("#plbBuild")

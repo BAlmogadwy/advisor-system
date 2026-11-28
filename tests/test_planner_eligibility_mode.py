@@ -220,3 +220,26 @@ def test_planner_board_offers_strict_first_and_defaults_its_rules_to_strict() ->
     assert 'id="plbEligStrict"' in template
     assert template.index('id="plbEligStrict"') < template.index('id="plbEligRelaxed"')
     assert "mode: 'keep', eligibility: 'strict'" in script
+
+
+def test_context_carries_the_advisors_name_not_just_the_number(mode_student: Student) -> None:
+    from core.models import AcademicAdvisor
+
+    AcademicAdvisor.objects.create(
+        advisor_id="7001",
+        full_name="Dr. Sample Advisor",
+        email="adv7001@example.test",
+        department="CS",
+    )
+    Student.objects.filter(student_id=SID).update(advisor_id="7001")
+    summary = _post_context(_staff_client()).json()["student"]
+    assert summary["advisor_id"] == "7001"
+    assert summary["advisor_name"] == "Dr. Sample Advisor"
+
+
+def test_context_advisor_name_is_empty_when_the_advisor_is_unknown(mode_student: Student) -> None:
+    client = _staff_client()
+    Student.objects.filter(student_id=SID).update(advisor_id="no-such-advisor")
+    assert _post_context(client).json()["student"]["advisor_name"] == ""
+    Student.objects.filter(student_id=SID).update(advisor_id="")
+    assert _post_context(client).json()["student"]["advisor_name"] == ""
