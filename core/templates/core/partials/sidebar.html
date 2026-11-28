@@ -96,6 +96,16 @@
           {% if timetable_feedback_staff_count %}{% comment %}How many cases wait on this person: drawn for the eye, and said in words for a screen reader.{% endcomment %}<span class="nav-badge" aria-hidden="true">{{ timetable_feedback_staff_count }}</span><span class="visually-hidden"> ({% if LANGUAGE_CODE == 'ar' %}بانتظار إجرائك: {{ timetable_feedback_staff_count }}{% else %}Waiting on you: {{ timetable_feedback_staff_count }}{% endif %})</span>{% endif %}
         </a>
         {% endif %}
+        {% if can_advisor_inbox %}
+        {% comment %}The questions the virtual advisor passed to a person. Never drawn on
+        the MRI page (the flag is off there); its case pages are lit here, server-side,
+        like the feedback link.{% endcomment %}
+        <a class="nav-a nav-link{% if '/ops/advisor-cases/' in request.path %} active{% endif %}" href="{% url 'advisor_inbox' %}" tabindex="0"{% if '/ops/advisor-cases/' in request.path %} aria-current="page"{% endif %}>
+          <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span>
+          <span class="nav-t">{% if LANGUAGE_CODE == 'ar' %}الحالات المحالة{% else %}Escalated cases{% endif %}</span>
+          {% if advisor_inbox_waiting %}{% comment %}How many wait for an advisor: drawn for the eye, and said in words for a screen reader.{% endcomment %}<span class="nav-badge" aria-hidden="true">{{ advisor_inbox_waiting }}</span><span class="visually-hidden"> ({% if LANGUAGE_CODE == 'ar' %}بانتظار مرشد: {{ advisor_inbox_waiting }}{% else %}Waiting for an advisor: {{ advisor_inbox_waiting }}{% endif %})</span>{% endif %}
+        </a>
+        {% endif %}
         {% if can_db_admin %}
         <a class="nav-a nav-link" data-target="batch" href="/#batch" tabindex="0">
           <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>

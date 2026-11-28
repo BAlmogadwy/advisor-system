@@ -38,6 +38,8 @@ INBOX_ENGLISH = (
     "Questions the virtual adviser could not safely resolve",
     "Assigned to me",
     "No cases match these filters.",
+    "No case has been escalated to you yet.",
+    "Clear the filters",
     ">Filter<",
     ">Any<",
 )
@@ -189,9 +191,17 @@ def test_the_arabic_inbox_shows_arabic_labels(client):
 
 
 def test_the_arabic_empty_inbox_says_so_in_arabic(client):
-    page = _client(client, "ar").get(reverse("advisor_inbox")).content.decode()
-    assert "لا توجد حالات تطابق عوامل التصفية هذه." in page
-    assert "No cases match these filters." not in page
+    arabic = _client(client, "ar")
+    # Nothing passed to this person yet: said so, not blamed on filters.
+    page = arabic.get(reverse("advisor_inbox")).content.decode()
+    assert "لم تُحَل إليك أي حالة بعد." in page
+    assert "لا توجد حالات تطابق عوامل التصفية هذه." not in page
+    # Filters that leave nothing: said so, with a way to clear them.
+    filtered = arabic.get(reverse("advisor_inbox"), {"status": "CLOSED"}).content.decode()
+    assert "لا توجد حالات تطابق عوامل التصفية هذه." in filtered
+    assert f'<a href="{reverse("advisor_inbox")}">مسح عوامل التصفية</a>' in filtered
+    for english in INBOX_ENGLISH:
+        assert english not in page and english not in filtered, english
 
 
 def test_the_arabic_case_page_shows_arabic_labels(client):
@@ -249,8 +259,14 @@ def test_the_english_inbox_is_unchanged(client):
     empty = english_client.get(reverse("advisor_inbox"), {"status": "CLOSED"}).content.decode()
 
     assert "No cases match these filters." in empty
+    assert f'<a href="{reverse("advisor_inbox")}">Clear the filters</a>' in empty
     for english in INBOX_ENGLISH:
-        if english != "No cases match these filters.":
+        # The empty-list sentences show only on an empty list.
+        if english not in (
+            "No cases match these filters.",
+            "No case has been escalated to you yet.",
+            "Clear the filters",
+        ):
             assert english in page, english
     assert "Escalated adviser cases" in page
     for _value, label in AdvisorEscalation.Status.choices:
@@ -259,6 +275,17 @@ def test_the_english_inbox_is_unchanged(client):
         assert label in page, label
     assert "الحالات المحالة" not in page
     assert "مفتوحة" not in page
+
+
+def test_an_empty_english_inbox_says_nothing_has_been_escalated_yet(client):
+    # With no filter on, an empty list is not "no cases match these filters".
+    english = _client(client, "en")
+    page = english.get(reverse("advisor_inbox")).content.decode()
+    assert "No case has been escalated to you yet." in page
+    assert "No cases match these filters." not in page and "Clear the filters" not in page
+    # "Assigned to me" is a filter too.
+    mine = english.get(reverse("advisor_inbox"), {"mine": "1"}).content.decode()
+    assert "No cases match these filters." in mine
 
 
 def test_the_english_case_page_is_unchanged(client):

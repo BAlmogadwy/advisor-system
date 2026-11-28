@@ -15,6 +15,7 @@ staying in the queue of the one that no longer does. Frozen evidence, live routi
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from django.db.models import QuerySet
@@ -37,14 +38,17 @@ class InboxError(Exception):
 ESCALATION_ADMIN_ROLES = frozenset({ROLE_SUPER_ADMIN})
 
 
-def visible_cases(user: Any) -> QuerySet[AdvisorEscalation]:
+def visible_cases(user: Any, scope: Mapping[str, Any] | None = None) -> QuerySet[AdvisorEscalation]:
     """The cases this user may open — as a QUERYSET, not a post-filter.
 
     Returning everything and checking each row afterwards is one forgotten line
     away from a leak, and the forgotten line looks like working code. Scope is part
     of the filter here for the same reason it is on the student side.
+
+    ``scope`` is this user's own `get_user_scope`, when the caller has already
+    read it (the sidebar, on every page), so it is not read twice.
     """
-    scope = get_user_scope(user)
+    scope = get_user_scope(user) if scope is None else scope
     role = str(scope.get("role") or "")
     if not role or role == ROLE_STUDENT:
         return AdvisorEscalation.objects.none()

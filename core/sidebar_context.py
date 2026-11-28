@@ -10,7 +10,7 @@ import logging
 from django.conf import settings
 from django.http import HttpRequest
 
-from core.models import TimetableFeedback
+from core.models import AdvisorEscalation, TimetableFeedback
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_EXAM_COMMITTEE,
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 MRI_VIEW_NAME = "timetable_workspace_mri_page"
 #: The roles the staff side of timetable feedback is for.
 _FEEDBACK_STAFF_ROLES = frozenset({ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR})
+#: The roles the advisor inbox's `role_required(ROLE_ADVISOR)` lets in.
+_INBOX_ROLES = frozenset({ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR})
 
 
 def get_sidebar_context(request: HttpRequest) -> dict[str, object]:
@@ -44,6 +46,14 @@ def get_sidebar_context(request: HttpRequest) -> dict[str, object]:
     feedback_staff = (
         role in _FEEDBACK_STAFF_ROLES
         and bool(settings.TIMETABLE_FEEDBACK_ENABLED)
+        and url_name != MRI_VIEW_NAME
+    )
+    # The questions the virtual advisor passes to a person: their inbox, for the
+    # roles that may open it, while students can send them (the same setting),
+    # and never on the MRI page.
+    advisor_inbox = (
+        role in _INBOX_ROLES
+        and bool(getattr(settings, "STUDENT_ADVISOR_V2_ENABLED", False))
         and url_name != MRI_VIEW_NAME
     )
 
@@ -67,6 +77,9 @@ def get_sidebar_context(request: HttpRequest) -> dict[str, object]:
         "timetable_feedback_staff_count": (
             _feedback_waiting_on(request, scope) if feedback_staff else 0
         ),
+        "can_advisor_inbox": advisor_inbox,
+        # One COUNT of the cases this person can see that wait for an advisor.
+        "advisor_inbox_waiting": _escalations_waiting(request, scope) if advisor_inbox else 0,
     }
 
 
@@ -90,4 +103,26 @@ def _feedback_waiting_on(request: HttpRequest, scope: dict[str, object]) -> int:
         )
     except Exception:  # noqa: BLE001 - a badge must never break the page
         logger.exception("timetable feedback: the staff count failed")
+        return 0
+
+
+#: An escalation waits for an advisor until one has answered it: once it needs
+#: information it waits on the student, and once resolved or closed on nobody.
+_WAITING_FOR_ADVISOR = (AdvisorEscalation.Status.OPEN, AdvisorEscalation.Status.ASSIGNED)
+
+
+def _escalations_waiting(request: HttpRequest, scope: dict[str, object]) -> int:
+    """How many escalated questions this person can see wait for an advisor,
+    counted over the inbox's own scope (the one already read for the sidebar, so
+    the count is the only query). A count that fails is logged and drawn as none:
+    the sidebar must never take a page down with it."""
+    # Imported here, like the feedback count: every page draws the sidebar.
+    from core.services.advisor_inbox import visible_cases
+
+    try:
+        return (
+            visible_cases(request.user, scope=scope).filter(status__in=_WAITING_FOR_ADVISOR).count()
+        )
+    except Exception:  # noqa: BLE001 - a badge must never break the page
+        logger.exception("advisor inbox: the waiting count failed")
         return 0
