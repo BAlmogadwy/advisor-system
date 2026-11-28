@@ -881,7 +881,7 @@ class TestNameColumn(RegisteredRowsCase):
 
     def test_the_names_start_on_one_line_where_the_list_has_room(self) -> None:
         # Each row is its own grid: CS301 and STAT305 used to start their names apart.
-        for width in (1366, 1440):
+        for width in (1600, 1920):
             for language in ("en", "ar"):
                 with self.subTest(width=width, language=language):
                     page = self._reg(width=width, height=900, language=language)
@@ -894,10 +894,11 @@ class TestNameColumn(RegisteredRowsCase):
                     page.context.close()
 
     def test_a_narrow_list_keeps_each_rows_own_code_width(self) -> None:
-        # At 1152 a name needs every pixel: the 5-letter codes do not take a 7-letter cell.
-        for language in ("en", "ar"):
-            with self.subTest(language=language):
-                page = self._reg(width=1152, height=900, language=language)
+        # At 1152 and 1440 the line under a name needs every pixel (a wider code cell wrapped it on
+        # option tabs): the 5-letter codes do not take a 7-letter cell.
+        for width, language in ((1152, "en"), (1152, "ar"), (1440, "en"), (1440, "ar")):
+            with self.subTest(width=width, language=language):
+                page = self._reg(width=width, height=900, language=language)
                 self._add(page, "STAT305")
                 codes = page.eval_on_selector_all(
                     "#plbPlanList .plb-prow > .plb-code",
