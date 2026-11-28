@@ -324,8 +324,8 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
         )
 
     def test_the_program_filter_survives_for_a_healthy_adviser(self):
-        """`#apProgramFilter` and `#apLoadedLabel` were children of the hidden bar,
-        so EVERY adviser lost them — including one whose portfolio loads fine."""
+        """`#apProgramFilter` was a child of the hidden bar, so EVERY adviser lost
+        it — including one whose portfolio loads fine."""
         self._students()
         page = self._page()
         self._open(page)
@@ -487,15 +487,14 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
     def test_the_totals_agree_with_each_other(self):
         """It read "50 students" beside an attention count of 60 — the page
         contradicting itself, because one number came from the slice and the other
-        from the server's summary over the whole set."""
+        from the server's summary over the whole set. The count is said once now,
+        in the Students tile (the header chip that repeated it is gone)."""
         self._many(60)
         page = self._page()
         self._open(page)
         page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=20_000)
 
-        chip = page.inner_text("#apCountChip")
         students = page.inner_text("#mStudents")
-        assert "60" in chip, chip
         assert students.strip() == "60", students
         assert "50" not in page.inner_text("#apShowing").split("of")[-1], page.inner_text(
             "#apShowing"
@@ -565,7 +564,6 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
         loaded = page.evaluate("() => allStudents.length")
         assert loaded == 500, loaded
 
-        assert "505" in page.inner_text("#apCountChip"), page.inner_text("#apCountChip")
         assert page.inner_text("#mStudents").strip() == "505", page.inner_text("#mStudents")
         assert page.is_visible("#apTruncatedNote"), "a truncated roster said nothing about it"
         note = page.inner_text("#apTruncatedNote")

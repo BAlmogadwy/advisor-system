@@ -44,13 +44,10 @@ const T = {
     : `This table holds the first ${n} of ${total} students. The CSV export covers the full list.`,
   mappingNotReady:    IS_AR ? 'ربط الطلاب بالمرشدين غير جاهز بعد.'  : 'Student-advisor mapping is not ready yet.',
   mappingNotReadyShort: IS_AR ? 'الربط غير جاهز'                    : 'Mapping not ready',
-  nStudents:       (n) => IS_AR ? `${n} طالب`                       : `${n} students`,
   loadedStudents:  (n) => IS_AR ? `تم تحميل ${n} طالب`              : `Loaded ${n} students`,
   networkFailure:     IS_AR ? 'خطأ في الاتصال'                       : 'Network failure',
 
   // ── Clear state ──
-  noAdvisor:          IS_AR ? 'لا يوجد مرشد'                        : 'No advisor',
-  zeroStudents:       IS_AR ? '0 طالب'                               : '0 students',
   noAdvisorSelected:  IS_AR ? 'لم يتم اختيار مرشد'                  : 'No advisor selected',
   chooseAdvisorHint:  IS_AR ? 'اختر مرشدًا أعلاه لتحميل قائمة طلابه' : 'Choose an advisor above to load their roster',
 
@@ -228,7 +225,7 @@ function renderProgramControls(programBreakdown) {
                 aria-pressed="false" onclick="setProgramFilter(this.dataset.program)">
           ${esc(program)} <span class="ap-prog-n">${Number(count) || 0}</span>
         </button>`).join('')
-    : '<span style="font-size:0.78rem;color:var(--muted);">—</span>';
+    : '<span class="ap-programs-none">—</span>';
   syncProgramPills();
 }
 
@@ -365,9 +362,6 @@ async function loadStudents(advisorId) {
        attention count of 60 — the page contradicting itself. */
     rosterTotal = Number.isFinite(data.count) ? data.count : allStudents.length;
 
-    const advisorName = String(data.advisor?.full_name || '').trim();
-    q('apAdvisorChip').textContent = advisorName ? `${advisorName} · ${advisorId}` : advisorId;
-    q('apCountChip').textContent = T.nStudents(rosterTotal);
     /* And if the roster genuinely exceeds what one request returns, say so
        rather than quietly showing a prefix. */
     const truncated = q('apTruncatedNote');
@@ -375,11 +369,6 @@ async function loadStudents(advisorId) {
       truncated.classList.toggle('d-none', rosterTotal <= allStudents.length);
       truncated.textContent = T.showingFirst(allStudents.length, rosterTotal);
     }
-    q('apLoadedLabel').classList.remove('d-none');
-    /* The browser's locale printed "3:13:55 AM" inside the Arabic page. */
-    q('apLoadedTime').textContent = new Date().toLocaleTimeString(IS_AR ? 'ar' : 'en-GB', {
-      hour: 'numeric', minute: '2-digit', numberingSystem: 'latn',
-    });
     q('apMetricsWrap').classList.remove('d-none');
 
     renderProgramControls(summaryCache.program_breakdown);
@@ -400,9 +389,6 @@ function clearPortfolio() {
   summaryCache = {};
   filteredStudents = [];
   q('apMetricsWrap').classList.add('d-none');
-  q('apLoadedLabel').classList.add('d-none');
-  q('apAdvisorChip').textContent = T.noAdvisor;
-  q('apCountChip').textContent = T.zeroStudents;
   const tbody = q('apTable').querySelector('tbody');
   tbody.innerHTML = `<tr><td colspan="10"><div class="ap-empty"><span class="ap-empty-icon"><span class="i i-xl" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span></span><div class="ap-empty-title">${T.noAdvisorSelected}</div><div class="ap-empty-hint">${T.chooseAdvisorHint}</div></div></td></tr>`;
   q('apShowing').innerHTML = '—';
@@ -439,7 +425,6 @@ function updateMetrics() {
   q('mHighRisk').textContent = s.very_high_risk_count || 0;
   q('mStudents').textContent = scopedTotal;
   q('mAvgGpa').textContent = s.avg_gpa != null ? String(s.avg_gpa) : '—';
-  q('mTermHours').textContent = s.current_term_registered_hours_total || 0;
   q('mHpMissing').textContent = s.high_priority_missing_count || 0;
   /* Three red tiles all reading 0 is alarm without cause: an alert tile is
      coloured only while it counts somebody. */
@@ -488,10 +473,6 @@ function summarizeStudents(students) {
       Array.isArray(student.high_priority_missing_courses)
       && student.high_priority_missing_courses.length >= 2
     ).length,
-    current_term_registered_hours_total: students.reduce(
-      (sum, student) => sum + Number(student.current_term_registered_hours || 0),
-      0
-    ),
   };
 }
 
