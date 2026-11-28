@@ -8053,6 +8053,7 @@ html[dir="rtl"] .plb-chev svg { transform: rotate(90deg); }
 .plb-sec { display: grid; grid-template-columns: 20px 44px minmax(0, 1fr) auto; align-items: center; column-gap: 8px; min-height: 32px; padding-block: 3px; padding-inline-end: 8px; border-top: 1px solid var(--line); font-size: var(--text-xs); line-height: 16px; color: var(--t2); }
 .plb-sec--h { min-height: 22px; border-top: 0; }
 .plb-sec[data-off="true"] { color: var(--t3); }
+label.plb-sec:not([data-off="true"]) { cursor: pointer; }
 .plb-sec-n { font-family: var(--font-mono); font-weight: 700; color: var(--ink); }
 .plb-sec-seats { text-align: end; white-space: nowrap; }
 .plb-only-row { display: flex; justify-content: flex-end; padding-top: 6px; }

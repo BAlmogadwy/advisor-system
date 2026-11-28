@@ -54,7 +54,6 @@
     noFreeDay: IS_AR ? 'لا يوم فارغ' : 'no free day',
     noTimedClasses: IS_AR ? 'بلا محاضرات' : 'No timed classes',
     removeCourse: (code) => (IS_AR ? `إزالة ${code}` : `Remove ${code}`),
-    addCourse: (code) => (IS_AR ? `إضافة ${code}` : `Add ${code}`),
     registeredLock: IS_AR ? 'مسجّل' : 'Registered',
     added: (code) => (IS_AR ? ['أُضيف ', bdi(code), ' إلى الخطة.'] : ['Added ', bdi(code), ' to the plan.']),
     removed: (code) => (IS_AR ? ['أُزيل ', bdi(code), ' من الخطة.'] : ['Removed ', bdi(code), ' from the plan.']),
@@ -2658,8 +2657,10 @@
     // Only an accepted student retires the plan and section requests of the one on screen. A
     // fetch that failed above leaves them alive, or their groups would say "loading" for good.
     const run = ++state.gen;
-    state.hues = {};
     const previousId = state.student ? String(state.student.student_id) : null;
+    // Course colours belong to the student: the same student reloaded keeps them, so a kept
+    // (out-of-date) build is still drawn in the colours it was shown in.
+    if (previousId !== String(data.student.student_id)) state.hues = {};
     const previousCtx = state.ctx ? { ...state.ctx } : null;
     // Options belong to the student they were built for. The same student reloaded (a rule that
     // reloads the suggestions) keeps them, marked out of date; another student removes them.
