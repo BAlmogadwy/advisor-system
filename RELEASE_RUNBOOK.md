@@ -65,6 +65,52 @@ migrations or discard imported assignments just to run the previous application.
   release the code that no longer reads it first, then drop it in a later one.
   Adding a nullable column is safe in one step.
 
+## Production hosting (OVH VPS) and deploying a release
+
+Since 2026-11-28 production runs on an OVH VPS behind
+`https://smartacademicadviser.online/`, not on Render. **A merge to `master`
+deploys nothing**: a release is a Docker image built on the VPS and switched in
+by hand. `render.yaml` and its validator below are kept only as history.
+
+Layout on the VPS (user `ubuntu`, key-only SSH, passwordless `sudo`): one Docker
+Compose project in `~/ovh-migration` with `compose.yaml` plus the overrides
+`advisor.production.yaml`, `committee.production.yaml` and
+`caddy.production.yaml`. Services: `advisor-web` (gunicorn), `advisor-db`
+(PostgreSQL 18), `advisor-retention`, `caddy` (ports 80/443) and the separate
+Exam Committee app (`committee-*`), which a planner release never touches.
+Runtime settings and feature flags live in `~/ovh-migration/private/*.env` and the
+`environment:` block of `advisor.production.yaml` (secrets: never print them).
+
+Before a release, check what production runs (`docker inspect
+ovh-migration-advisor-web-1 --format '{{.Config.Image}}'`; the image label
+`org.opencontainers.image.revision` is the commit). If it carries commits that are
+not in `master`, build the release from `master` **merged with them**, or the
+features they provide (for example the student login email provider) break.
+
+1. Locally: `git archive --format=tar -o source.tar <commit> manage.py
+   site_defaults.json requirements.txt config core scheduler telegram_gateway
+   whatsapp_gateway static policies data/department_courses.csv
+   data/department_prerequisites.csv`.
+2. On the VPS: make `~/ovh-migration/advisor-<name>-<sha12>.<tag>/context`, copy
+   `source.tar` in, `tar -xf source.tar -C context`, copy
+   `../advisor/Dockerfile.production` beside it.
+3. Build: `sudo docker build -f Dockerfile.production --build-arg
+   ADVISOR_REVISION=<sha40> -t ovh-advisor:<name>-<sha40>-<tag> context >
+   build.log 2>&1` (static files are collected inside the build).
+4. Keep a rollback copy: `cp -p advisor.production.yaml
+   private/advisor.production.rollback.<tag>.yaml`, then set
+   `advisor-web.image` in `advisor.production.yaml` to the new tag.
+5. Switch only the web container: `sudo docker compose -f compose.yaml -f
+   advisor.production.yaml -f committee.production.yaml -f caddy.production.yaml
+   up -d --no-build --no-deps advisor-web`, wait for `healthy`.
+6. Check from outside: `/health/` answers 200 and `/login/` or `/planner/` serve
+   the new `global.<hash>.css?v=N`. A release with a migration runs `python
+   manage.py migrate` in the new container after a database backup; plan that
+   separately.
+
+Rollback: copy the rollback yaml back over `advisor.production.yaml` and repeat
+step 5 (the previous image stays on the VPS).
+
 ## Production web domains
 
 The Render web service accepts the direct Render hostname plus both custom-domain
