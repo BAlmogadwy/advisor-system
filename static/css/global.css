@@ -11191,7 +11191,7 @@ html[data-theme="dark"] .btn-export {
 
 /* ── Program breakdown + GPA chart row ─── */
 .ap-breakdown-row {
-  display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start;
+  display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;
   margin-bottom: 0.75rem;
 }
 .ap-programs {
@@ -11245,6 +11245,61 @@ html[data-theme="dark"] .btn-export {
   font-size: var(--text-micro); color: var(--muted); font-weight: 600;
   margin-top: 0.1rem;
 }
+
+/* ── Above the fold (2026-11 premium pass) ───────────────────
+   The roster is the job, and it started 555px down an 840px window: two
+   stacked picker bars, a tall tile row, an insights row and a chart row
+   came first. One top row, a compact tile strip and one breakdown row
+   bring it up 152px in Arabic and 108px in English at 1440x900
+   (3 -> 6 and 5 -> 7 students above the fold; measured against master). */
+.ap-topbar {
+  display: flex; gap: 0.5rem 0.75rem; align-items: center; flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.ap-topbar > .ap-advisor-bar { margin-bottom: 0; }
+.ap-topbar > #apAdvisorBar { flex: 1 1 320px; }
+.ap-topbar > #apAdvisorBar select { max-width: 460px; }
+
+.ap-metrics {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0 1rem; margin-bottom: 0.5rem;
+}
+@media (max-width: 1100px) { .ap-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 575.98px) { .ap-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ap-metrics .mc { padding: 10px 0 8px; }
+.ap-metrics .mc-head { margin-bottom: 6px; gap: 8px; }
+.ap-metrics .mc-icon { width: 28px; height: 28px; }
+.ap-metrics .mc-icon .i { width: 15px; height: 15px; }
+.ap-metrics .mc-val { display: block; font-size: clamp(1.25rem, 1.05rem + 0.6vw, 1.5rem); }
+/* An alert tile at zero is not an alert. */
+.ap-metrics .mc.is-zero .mc-val { color: var(--t3); }
+.ap-metrics .mc.is-zero .mc-icon { background: var(--pl-overlay-2); color: var(--t3); }
+.ap-metrics .mc.is-zero::before { opacity: 0.25; }
+/* The alert tiles are buttons that open the list they count. */
+.mc-drill {
+  display: block; width: 100%; text-align: start;
+  font: inherit; color: inherit; cursor: pointer;
+}
+.mc-drill:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius); }
+.mc-drill.active { background: color-mix(in srgb, var(--mc-c, var(--teal)) 8%, transparent); }
+.mc-drill.active::before { opacity: 1; height: 2px; }
+
+.ap-breakdown-title {
+  font-size: var(--text-micro); font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted); margin-bottom: 0.25rem;
+}
+.ap-breakdown-programs { flex: 1 1 240px; }
+.ap-breakdown-gpa { flex: 0 0 180px; }
+.ap-breakdown-row .ap-insights { flex: 0 1 auto; margin-bottom: 0; align-self: center; }
+.ap-gpa-chart { border-bottom: 1px solid var(--rule); }
+.ap-gpa-chart.is-empty {
+  align-items: center; justify-content: center;
+  border: 1px dashed var(--rule); border-radius: var(--radius);
+  font-size: var(--text-xs); color: var(--muted);
+}
+
+/* 72px rows showed three students above the fold. */
+#apTable tbody tr.cr-row td { padding-block: 9px; }
 
 /* Filter chips layout */
 .ap-filters { display:flex; gap:0.25rem; flex-wrap:wrap; }

@@ -54,11 +54,15 @@ const T = {
   noAdvisorSelected:  IS_AR ? 'لم يتم اختيار مرشد'                  : 'No advisor selected',
   chooseAdvisorHint:  IS_AR ? 'اختر مرشدًا أعلاه لتحميل قائمة طلابه' : 'Choose an advisor above to load their roster',
 
-  // ── Insights ──
-  veryHighRisk:    (n) => IS_AR ? `${n} خطورة عالية جدًا`           : `${n} very high risk`,
-  lowGpaInsight:   (n) => IS_AR ? `${n} معدل أقل من 2.0`            : `${n} GPA < 2.0`,
+  // ── Insights ── (only what no tile or filter count already says)
   hpMissing2Plus:  (n) => IS_AR ? `${n} بنقص ≥2 مقررات ذات أولوية`  : `${n} with 2+ HP missing`,
-  zeroTermHours:   (n) => IS_AR ? `${n} بدون ساعات هذا الفصل`       : `${n} zero current-term hours`,
+  noGpaData:          IS_AR ? 'لا توجد معدلات بعد'                  : 'No GPA data yet',
+  gpaChartLabel:   (b) => IS_AR
+    ? `توزيع المعدل: أقل من 2: ${b[0]}، 2–3: ${b[1]}، 3–3.5: ${b[2]}، 3.5 فأكثر: ${b[3]}`
+    : `GPA distribution: below 2: ${b[0]}, 2–3: ${b[1]}, 3–3.5: ${b[2]}, 3.5+: ${b[3]}`,
+  unnamedAdvisor:     IS_AR ? 'بدون اسم'                            : 'No name on record',
+  viewN:           (n) => IS_AR ? `عرض (${n})`                       : `View (${n})`,
+  selectStudent:   (id) => IS_AR ? `تحديد الطالب ${id}`              : `Select student ${id}`,
   allPrograms:        IS_AR ? 'كل البرامج'                          : 'All programs',
 
   // ── Table status ──
@@ -258,6 +262,14 @@ async function copyText(text, triggerBtn) {
 /* ═══════════════════════════════════════════════════════════════
    LOAD ADVISORS DROPDOWN
    ═══════════════════════════════════════════════════════════════ */
+/* "40 — null (CS2,IS2)": an import stored a missing name as the text "null".
+   The server now sends "" for placeholders; this says so in words. */
+function advisorLabel(a) {
+  const name = String(a.full_name || '').trim() || T.unnamedAdvisor;
+  const dept = String(a.department || '').trim();
+  return `${a.advisor_id} — ${name}${dept ? ` (${dept})` : ''}`;
+}
+
 async function loadAdvisors() {
   try {
     const res = await fetch('/report/advisors/');
@@ -277,7 +289,7 @@ async function loadAdvisors() {
     }
     const sel = q('apAdvisorSelect');
     sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` +
-      data.items.map(a => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
+      data.items.map(a => `<option value="${esc(a.advisor_id)}">${esc(advisorLabel(a))}</option>`).join('');
 
     // Auto-select if advisor_id is in URL
     const params = new URLSearchParams(location.search);
@@ -353,7 +365,8 @@ async function loadStudents(advisorId) {
        attention count of 60 — the page contradicting itself. */
     rosterTotal = Number.isFinite(data.count) ? data.count : allStudents.length;
 
-    q('apAdvisorChip').textContent = advisorId;
+    const advisorName = String(data.advisor?.full_name || '').trim();
+    q('apAdvisorChip').textContent = advisorName ? `${advisorName} · ${advisorId}` : advisorId;
     q('apCountChip').textContent = T.nStudents(rosterTotal);
     /* And if the roster genuinely exceeds what one request returns, say so
        rather than quietly showing a prefix. */
@@ -363,7 +376,10 @@ async function loadStudents(advisorId) {
       truncated.textContent = T.showingFirst(allStudents.length, rosterTotal);
     }
     q('apLoadedLabel').classList.remove('d-none');
-    q('apLoadedTime').textContent = new Date().toLocaleTimeString();
+    /* The browser's locale printed "3:13:55 AM" inside the Arabic page. */
+    q('apLoadedTime').textContent = new Date().toLocaleTimeString(IS_AR ? 'ar' : 'en-GB', {
+      hour: 'numeric', minute: '2-digit', numberingSystem: 'latn',
+    });
     q('apMetricsWrap').classList.remove('d-none');
 
     renderProgramControls(summaryCache.program_breakdown);
@@ -415,17 +431,18 @@ function updateMetrics() {
   q('mAvgGpa').textContent = s.avg_gpa != null ? String(s.avg_gpa) : '—';
   q('mTermHours').textContent = s.current_term_registered_hours_total || 0;
   q('mHpMissing').textContent = s.high_priority_missing_count || 0;
+  /* Three red tiles all reading 0 is alarm without cause: an alert tile is
+     coloured only while it counts somebody. */
+  [['mAttention', s.needs_attention_count], ['mHighRisk', s.very_high_risk_count],
+   ['mHpMissing', s.high_priority_missing_count]].forEach(([id, n]) => {
+    q(id)?.closest('.mc')?.classList.toggle('is-zero', !Number(n));
+  });
 
-  // Insights
-  const vhr = Number(s.very_high_risk_count || 0);
+  /* Insights. High risk, low GPA and zero hours each already have a tile or a
+     filter count; repeating them here said every number twice. */
   const twoPlus = Number(s.two_plus_high_priority_missing_count || 0);
-  const zero = Number(s.zero_current_term_hours_count || 0);
-  const lowGpa = Number(s.low_gpa_count || 0);
   const chips = [];
-  if (vhr > 0) chips.push(`<span class="ap-insight ap-insight-danger"><span class="i i-xxs" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg></span> ${T.veryHighRisk(vhr)}</span>`);
-  if (lowGpa > 0) chips.push(`<span class="ap-insight ap-insight-danger"><span class="i i-xxs" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg></span> ${T.lowGpaInsight(lowGpa)}</span>`);
   if (twoPlus > 0) chips.push(`<span class="ap-insight ap-insight-warn"><span class="i i-xxs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> ${T.hpMissing2Plus(twoPlus)}</span>`);
-  if (zero > 0) chips.push(`<span class="ap-insight ap-insight-warn"><span class="i i-xxs" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> ${T.zeroTermHours(zero)}</span>`);
   q('apInsights').innerHTML = chips.join('');
 
   // GPA mini-chart
@@ -452,7 +469,7 @@ function summarizeStudents(students) {
     ],
     student_count: students.length,
     needs_attention_count: students.filter(student => student.needs_attention).length,
-    very_high_risk_count: students.filter(student => Number(student.risk_score || 0) >= 8).length,
+    very_high_risk_count: students.filter(isHighRisk).length,
     high_priority_missing_count: students.filter(student => student.has_high_priority_missing).length,
     zero_current_term_hours_count: students.filter(
       student => Number(student.current_term_registered_hours || 0) === 0
@@ -482,16 +499,35 @@ function buildGpaChart(students = allStudents, serverBuckets = null) {
       else buckets[3]++;
     });
   }
+  const chart = q('apGpaChart');
+  const total = buckets.reduce((sum, n) => sum + n, 0);
+  /* A 4% floor drew four stub bars titled "0 students" for a roster with no
+     GPA at all — a chart of nothing that read as data. */
+  q('apGpaLabels')?.classList.toggle('d-none', total === 0);
+  chart.classList.toggle('is-empty', total === 0);
+  if (total === 0) {
+    chart.removeAttribute('aria-label');
+    chart.setAttribute('role', 'note');
+    chart.textContent = T.noGpaData;
+    return;
+  }
+  chart.setAttribute('role', 'img');
+  chart.setAttribute('aria-label', T.gpaChartLabel(buckets));
   const max = Math.max(...buckets, 1);
   const colors = ['ap-gpa-bar-danger', 'ap-gpa-bar-warn', 'ap-gpa-bar-ok', 'ap-gpa-bar-great'];
-  q('apGpaChart').innerHTML = buckets.map((n, i) =>
-    `<div class="ap-gpa-bar ${colors[i]}" style="height:${Math.max(n/max*100, 4)}%" title="${T.nStudentsTitle(n)}"></div>`
+  chart.innerHTML = buckets.map((n, i) =>
+    `<div class="ap-gpa-bar ${colors[i]}${n ? '' : ' is-zero'}" style="height:${Math.round(n / max * 100)}%" title="${T.nStudentsTitle(n)}"></div>`
   ).join('');
 }
 
 /* ═══════════════════════════════════════════════════════════════
    FILTER + RENDER — Fix #1, #4, #8, #10
    ═══════════════════════════════════════════════════════════════ */
+/* The risk score at which a student is "high risk" — core/services/advisors.py
+   HIGH_RISK_SCORE. The tile, its chip and Copy High-Risk IDs all use it. */
+const HIGH_RISK_SCORE = 8;
+const isHighRisk = s => Number(s.risk_score || 0) >= HIGH_RISK_SCORE;
+
 function setFocus(btn) {
   currentFocus = btn.dataset.focus;
   currentPage = 1;
@@ -501,8 +537,22 @@ function setFocus(btn) {
   });
   btn.classList.add('active');
   btn.setAttribute('aria-pressed', 'true');
+  document.querySelectorAll('#apMetrics .mc-drill').forEach(tile => {
+    const on = tile.dataset.focus === currentFocus;
+    tile.classList.toggle('active', on);
+    tile.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
   apFilter();
 }
+
+/* A tile opens the list it counts — through the chip, so there is one path. */
+q('apMetrics')?.addEventListener('click', event => {
+  const tile = event.target.closest('.mc-drill');
+  if (!tile) return;
+  const chip = document.querySelector(`#apFilters .fb-dd[data-focus="${tile.dataset.focus}"]`);
+  if (chip) setFocus(chip);
+  q('apTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 function apFilter() {
   const search = (q('apSearch')?.value || '').trim().toLowerCase();
@@ -517,6 +567,7 @@ function apFilter() {
     rows = rows.filter(s => normalizeProgram(s.program) === progFilter);
   }
   if (currentFocus === 'attention') rows = rows.filter(s => s.needs_attention);
+  else if (currentFocus === 'highrisk') rows = rows.filter(isHighRisk);
   else if (currentFocus === 'risk') rows = rows.filter(s => s.gpa != null && Number(s.gpa) < 2.0);
   else if (currentFocus === 'missing') rows = rows.filter(s => s.has_high_priority_missing);
   else if (currentFocus === 'zerohours') rows = rows.filter(s => Number(s.current_term_registered_hours || 0) === 0);
@@ -548,6 +599,7 @@ function updatePillCounts() {
   const counts = {
     all:       base.length,
     attention: base.filter(s => s.needs_attention).length,
+    highrisk:  base.filter(isHighRisk).length,
     risk:      base.filter(s => s.gpa != null && Number(s.gpa) < 2.0).length,
     missing:   base.filter(s => s.has_high_priority_missing).length,
     zerohours: base.filter(s => Number(s.current_term_registered_hours || 0) === 0).length,
@@ -615,7 +667,7 @@ function renderTable(rows) {
     const gpaCls = gpaNum == null ? '' : gpaNum < 2.0 ? 'cr-gpa-lo' : gpaNum < 3.0 ? 'cr-gpa-md' : 'cr-gpa-hi';
     const rs = Number(s.risk_score || 0);
 
-    const riskPill = rs >= 8
+    const riskPill = rs >= HIGH_RISK_SCORE
       ? `<span class="pill-status pill-r"><span class="pill-dot"></span>${rs.toFixed(1)}</span>`
       : rs >= 4
       ? `<span class="pill-status pill-a"><span class="pill-dot"></span>${rs.toFixed(1)}</span>`
@@ -623,7 +675,7 @@ function renderTable(rows) {
 
     const hpList = Array.isArray(s.high_priority_missing_courses) ? s.high_priority_missing_courses : [];
     const hpCell = s.has_high_priority_missing
-      ? `<button type="button" class="fb-dd ap-hp-btn fs-11 text-warning" data-sid="${sid}" data-courses='${esc(JSON.stringify(hpList))}' style="padding:4px 10px">View (${hpList.length})</button>`
+      ? `<button type="button" class="fb-dd ap-hp-btn fs-11 text-warning" data-sid="${sid}" data-courses='${esc(JSON.stringify(hpList))}' style="padding:4px 10px">${esc(T.viewN(hpList.length))}</button>`
       : '<span class="text-t3 fs-11">—</span>';
 
     const attCell = s.needs_attention
@@ -644,9 +696,9 @@ function renderTable(rows) {
       .map(r => `<span class="pill-status pill-a fs-10" style="padding:2px 7px"><span class="pill-dot"></span>${esc(reasonMap[r]||r)}</span>`).join(' ') || '<span class="text-t3">—</span>';
 
     return `<tr class="${trCls}" data-sid="${sid}" onclick="onRowClick(event, '${sid}')">
-      <td onclick="event.stopPropagation()" style="padding-inline-start:14px;"><input type="checkbox" class="ap-check" ${checked} onchange="toggleBatch('${sid}',this.checked)" style="accent-color:var(--teal);"></td>
+      <td onclick="event.stopPropagation()" style="padding-inline-start:14px;"><input type="checkbox" class="ap-check" ${checked} onchange="toggleBatch('${sid}',this.checked)" style="accent-color:var(--teal);" aria-label="${esc(T.selectStudent(sid))}"></td>
       <td><span class="cr-id">${sid}</span></td>
-      <td><div class="cr-nm">${esc(shortName(s.name))}</div><div class="cr-sub">${esc(s.program||'')} · ${esc(s.section||'')}</div></td>
+      <td><div class="cr-nm">${esc(shortName(s.name))}</div><div class="cr-sub">${esc(T.section)} ${esc(s.section||'—')}</div></td>
       <td class="cr-prog">${esc(s.program||'—')}</td>
       <td>${attCell}</td>
       <td><span class="cr-gpa ${gpaCls}">${gpaVal}</span></td>
@@ -695,7 +747,7 @@ function openDrawer(sid) {
 
   const gpa = s.gpa == null ? '—' : Number(s.gpa).toFixed(2);
   const rs = Number(s.risk_score || 0);
-  const riskCls = rs >= 8 ? 'ap-risk-high' : rs >= 4 ? 'ap-risk-mid' : 'ap-risk-low';
+  const riskCls = rs >= HIGH_RISK_SCORE ? 'ap-risk-high' : rs >= 4 ? 'ap-risk-mid' : 'ap-risk-low';
   const reasonMap = { low_gpa: T.lowGpa, high_priority_missing: T.hpMissing, zero_current_term_hours: T.zeroHours };
   const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : []).map(r => esc(reasonMap[r]||r)).join(', ') || T.none;
   const hpList = Array.isArray(s.high_priority_missing_courses) ? s.high_priority_missing_courses : [];
@@ -1466,7 +1518,7 @@ function copyFilteredIds(triggerBtn) {
 }
 
 function copyHighRiskIds(triggerBtn) {
-  const ids = allStudents.filter(s => Number(s.risk_score || 0) >= 8).map(s => s.student_id);
+  const ids = allStudents.filter(isHighRisk).map(s => s.student_id);
   if (!ids.length) { notify.warning(T.noHighRisk); return; }
   copyText(ids.join(','), triggerBtn);
 }
