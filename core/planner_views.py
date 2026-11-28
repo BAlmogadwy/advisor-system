@@ -16,6 +16,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import throttle
 from core.models import (
+    AcademicAdvisor,
     Course,
     Prerequisite,
     ProgrammeRequirement,
@@ -291,12 +292,22 @@ def _planner_context_inner(
     if not student:
         return _err(f"Student not found: {student_id}", code="STUDENT_NOT_FOUND", status=404)
 
+    advisor_name = ""
+    if student["advisor_id"]:
+        # The board shows the advisor's name, never the number; an unknown advisor has none.
+        advisor_name = (
+            AcademicAdvisor.objects.filter(advisor_id=str(student["advisor_id"]))
+            .values_list("full_name", flat=True)
+            .first()
+            or ""
+        ).strip()
     student_summary = {
         "student_id": student["student_id"],
         "name": student["name"] or "",
         "program": student["program"] or "",
         "cohort_section": student["section"] or "",
         "advisor_id": student["advisor_id"] or "",
+        "advisor_name": advisor_name,
         "gpa": student["gpa"],
         "registered_credits": student["total_registered_credits"] or 0,
         # The SUGGESTED cap, not the university's limit. The planner board labels this

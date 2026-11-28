@@ -152,10 +152,14 @@ class PlannerBoardPhoneTests(PlannerBoardCase):
 
     def test_the_apply_bar_and_the_glance_stack_on_a_phone(self) -> None:
         page, _fake = self._phone(built=True)
-        bar = page.locator("#plbActs").bounding_box()
         review = page.locator("#plbReview").bounding_box()
         notes = page.locator("#plbActs .plb-applynotes").bounding_box()
-        self.assertGreaterEqual(review["width"], bar["width"] - 2)
+        # The button fills the bar's content box (the bar is a padded card).
+        inner = page.locator("#plbActs").evaluate(
+            "n => { const s = getComputedStyle(n); return n.clientWidth"
+            " - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); }"
+        )
+        self.assertGreaterEqual(review["width"], inner - 2)
         self.assertGreaterEqual(review["y"], notes["y"] + notes["height"] - 1)
         week = page.locator("#plbWeekPanel").bounding_box()
         glance = page.locator("#plbGlance").bounding_box()

@@ -90,7 +90,7 @@ class PlannerBoardOptionsTests(PlannerBoardCase):
         self.assertEqual(hues["row"], hues["glance"])
         self.assertEqual(hues["row2"], hues["block2"])
         self.assertEqual(hues["row2"], hues["glance2"])
-        self.assertEqual((hues["row"], hues["row2"]), ("1", "2"))
+        self.assertEqual((hues["row"], hues["row2"]), ("4", "5"))
         # another tab, another week: the colours stay with the courses
         self._pick(page, "B1")
         self.assertEqual(page.evaluate(HUES_OF_AI331), hues)
@@ -257,9 +257,9 @@ class PlannerBoardOptionsTests(PlannerBoardCase):
     def test_a_course_keeps_its_colour_when_another_is_removed(self) -> None:
         page, _fake = self._built()
         before = page.evaluate(HUES_OF_AI331)
-        self.assertEqual((before["row"], before["row2"]), ("1", "2"))
+        self.assertEqual((before["row"], before["row2"]), ("4", "5"))
         self._remove(page, "AI331")
-        self.assertEqual(page.evaluate(HUES_OF_AI331)["row2"], "2")
+        self.assertEqual(page.evaluate(HUES_OF_AI331)["row2"], before["row2"])
 
     def test_the_glance_reads_the_cap_of_the_build_not_the_live_rule(self) -> None:
         page = self._open(BuildFake())

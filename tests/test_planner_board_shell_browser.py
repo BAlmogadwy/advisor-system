@@ -58,7 +58,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertIn("Graduates as it stands", self._text(page, ".plb-sf:nth-child(4)"))
         self.assertIn("After the first build", self._text(page, ".plb-sf:nth-child(4)"))
         self.assertEqual(self._text(page, "#plbContext"), "4500000 · 1448/1")
-        self.assertEqual(self._text(page, "#plbStatus"), "Student loaded.")
+        self.assertEqual(self._text(page, "#plbStatus"), "")
 
     def test_loading_not_found_and_error_are_plain_lines(self) -> None:
         fake = Fake()
@@ -127,7 +127,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertIn("Newer Student", student)
         self.assertNotIn("Older Student", student)
         self.assertEqual(self._text(page, "#plbContext"), "4500001 · 1448/1")
-        self.assertEqual(self._text(page, "#plbStatus"), "Student loaded.")
+        self.assertEqual(self._text(page, "#plbStatus"), "")
 
     def test_a_failed_fetch_leaves_the_plan_of_the_student_on_screen_alive(self) -> None:
         fake = Fake()
@@ -180,7 +180,8 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         expect(page.locator("#plbSwapIn")).not_to_be_checked()
         self.assertTrue(page.locator("#plbRulesChanged").is_hidden())
         # Max credits comes from the student's cap: the old page's 17 was a bug.
-        self.assertIn("advisory 18 · regulatory 19", self._text(page, "#plbMaxInHint"))
+        # The cap is the field's value; no "advisory / regulatory" hint line under it any more.
+        self.assertEqual(page.locator("#plbMaxInHint").count(), 0)  # no hint line at all
         self.assertIn("not available yet", self._text(page, "#plbZoneRules"))
         self.assertEqual(page.locator("#plbRulesDialog, #plbEditRules, #plbRules2").count(), 0)
 
@@ -202,7 +203,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self._fetch(page, OTHER_ID)
         expect(page.locator("#plbMaxIn")).to_have_value("")
         self.assertEqual(self._load(page), ("15 cr", "6 planned + 9 registered"))
-        self.assertEqual(self._text(page, "#plbMaxInHint"), "The advisory cap is not known.")
+        self.assertEqual(page.locator("#plbMaxInHint").count(), 0)  # no hint line at all
         self.assertNotIn("Credit cap 0", self._text(page, "#plbStudent"))
         # The student's cap is back when the next student has one.
         fake.context_answer = lambda body: (
@@ -647,7 +648,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
     def test_arabic_renders_arabic_labels_and_right_to_left(self) -> None:
         page = self._open(Fake(), language="ar")
         self.assertEqual(page.evaluate("document.documentElement.dir"), "rtl")
-        self.assertEqual(self._text(page, "#plbStatus"), "تم تحميل بيانات الطالب.")
+        self.assertEqual(self._text(page, "#plbStatus"), "")
         self.assertIn("المعدل التراكمي", self._text(page, "#plbStudent"))
         self.assertIn("المسجّل الآن", self._text(page, "#plbStudent"))
         self.assertIn("بعد أول بناء", self._text(page, "#plbStudent"))

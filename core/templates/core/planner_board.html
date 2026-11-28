@@ -12,6 +12,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}خطة الفصل القادم{% else %}Plan next term{% endif %}{% endblock %}
 
 {% block page_chips %}
+            <span class="plb-kicker" id="plbKicker">{% if LANGUAGE_CODE == 'ar' %}المخطِّط · الفصل {{ default_term }}، <bdi dir="ltr">{{ default_year }}</bdi>{% else %}Planner · Term {{ default_term }}, <bdi dir="ltr">{{ default_year }}</bdi>{% endif %}</span>
             <span class="plb-ctx" id="plbContext" hidden></span>
 {% endblock %}
 
@@ -79,8 +80,7 @@
             </div>
             <div class="plb-rc-row plb-rc-row--max">
               <label class="plb-rc-l" for="plbMaxIn">{% if LANGUAGE_CODE == 'ar' %}أقصى عدد للساعات{% else %}Most credits{% endif %}</label>
-              <input id="plbMaxIn" class="plb-rc-in" type="text" inputmode="numeric" autocomplete="off" dir="ltr" aria-describedby="plbMaxInHint plbMaxInErr">
-              <p class="plb-rc-hint" id="plbMaxInHint"></p>
+              <input id="plbMaxIn" class="plb-rc-in" type="text" inputmode="numeric" autocomplete="off" dir="ltr" aria-describedby="plbMaxInErr">
               <p class="plb-err" id="plbMaxInErr" role="alert" hidden></p>
             </div>
             <div class="plb-rc-row">
@@ -148,6 +148,7 @@
           <p class="plb-phsum" id="plbPhoneSum"></p>
           <div class="plb-buildrow">
             <div class="plb-buildnotes">
+              <p class="plb-bstate" id="plbBuildState" aria-live="polite" hidden></p>
               <p class="plb-acts-note" id="plbBuildLine" role="status" aria-live="polite"></p>
               <p class="plb-acts-note" id="plbLastBuild" hidden></p>
             </div>
@@ -257,5 +258,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=17"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=19"></script>
 {% endblock %}

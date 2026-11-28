@@ -19,7 +19,6 @@
     enterStudent: IS_AR ? 'أدخل رقم الطالب.' : 'Enter a student ID.',
     enterYear: IS_AR ? 'أدخل سنة من أربعة أرقام.' : 'Enter a four-digit year.',
     loading: IS_AR ? 'جارٍ تحميل بيانات الطالب…' : 'Loading student…',
-    loaded: IS_AR ? 'تم تحميل بيانات الطالب.' : 'Student loaded.',
     notFound: IS_AR ? 'لا يوجد طالب بهذا الرقم.' : 'No student found with that ID.',
     failed: IS_AR ? 'تعذّر تحميل بيانات الطالب. حاول مرة أخرى.' : 'The student could not be loaded. Try again.',
     planFailed: IS_AR
@@ -110,8 +109,8 @@
       return IS_AR ? `إضافة ${code}، الشُعب ${list}` : `Add ${code}, section${secs.length > 1 ? 's' : ''} ${list}`;
     },
     phoneSum: (n, load) => `${T.courseWord(n)} · ${load}`,
-    availHead: (n) => `${IS_AR ? 'المتاحة' : 'Available'} · ${T.courseWord(n)}`,
-    planHead: (n) => `${IS_AR ? 'خطتك' : 'Your plan'} · ${T.courseWord(n)}`,
+    availHead: (n) => [IS_AR ? 'المتاحة' : 'Available', T.courseWord(n)],
+    planHead: (n) => [IS_AR ? 'خطتك' : 'Your plan', T.courseWord(n)],
     tickedLine: (k, cr) => (IS_AR ? `${k} محدد · ${cr} ${T.creditUnit(cr)}` : `${k} ticked · ${cr} cr`),
     plannedN: (n) => (IS_AR ? `${n} مخطَّطة` : `${n} planned`),
     registeredN: (n) => (IS_AR ? `${n} مسجّلة` : `${n} registered`),
@@ -130,6 +129,7 @@
     meetsHead: IS_AR ? 'اللقاء' : 'Meets',
     seatsHead: IS_AR ? 'المقاعد' : 'Seats',
     addOnly: (n) => (IS_AR ? `أضف ${T.sectionWord(n)} فقط` : `Add only these ${T.sectionWord(n)}`),
+    showAll: (n) => (IS_AR ? `عرض الكل ${n}` : `Show all ${n}`),
     blockedFold: (n) => (IS_AR ? `${n} لا يمكن تسجيلها بعد · متطلبات سابقة ناقصة` : `${n} can't be registered yet · prerequisites missing`),
     sectionsOf: (code) => (IS_AR ? `شُعب ${code}` : `Sections of ${code}`),
     tickCourse: (code) => (IS_AR ? `تحديد ${code}` : `Tick ${code}`),
@@ -169,17 +169,15 @@
     ends: IS_AR ? 'تنتهي' : 'ends',
     gap: IS_AR ? 'فجوة' : 'gap',
     freeOne: (day) => (IS_AR ? `${day} فارغ` : `${day} free`),
-    maxHint: (cap, reg) => {
-      if (cap && reg) return IS_AR ? `إرشادي ${cap} · النظامي ${reg}` : `advisory ${cap} · regulatory ${reg}`;
-      if (cap) return IS_AR ? `إرشادي ${cap}` : `advisory ${cap}`;
-      return IS_AR ? 'الحد الإرشادي غير معروف.' : 'The advisory cap is not known.';
-    },
     maxError: (max) => (IS_AR ? `أدخل عددًا صحيحًا من 1 إلى ${max}.` : `Enter a whole number from 1 to ${max}.`),
     // The student band and the current-timetable disclosure.
     termButton: (year, term) => (IS_AR ? [`الفصل ${term}، `, bdi(year)] : [`Term ${term}, `, bdi(year)]),
     bandProgress: IS_AR ? 'التقدم' : 'Progress',
     bandRegistered: IS_AR ? 'المسجّل الآن' : 'Registered now',
     bandGraduates: IS_AR ? 'يتخرّج كما هو الحال' : 'Graduates as it stands',
+    optionsCurrent: IS_AR ? 'الخيارات أدناه تطابق هذه المقررات والقواعد' : 'The options below match these courses and rules',
+    optionsStale: IS_AR ? 'الخيارات قديمة، أعد البناء' : 'Options are out of date — rebuild',
+    kicker: IS_AR ? 'المخطِّط' : 'Planner',
     afterFirstBuild: IS_AR ? 'بعد أول بناء' : 'After the first build',
     curTTNone: IS_AR ? 'بلا محاضرات' : 'No timed classes',
 
@@ -416,16 +414,9 @@
     gWatch: IS_AR ? 'انتبه' : 'Watch',
     gStatus: IS_AR ? 'الحالة' : 'Status',
     gDepends: IS_AR ? 'يعتمد على' : 'Depends on',
-    // What one course does to the forecast: "If postponed: 5 terms" / "Still 4 terms" / "3 terms, 1 sooner".
-    // Arabic puts "no change" after the count: a verb would have to agree with one, two, few and many terms.
-    ifPostponed: (n, still) => (IS_AR
-      ? `إن أُجِّل: ${T.gradTermCount(n)}${still ? `${T.gradSep}بلا تغيير` : ''}`
-      : `If postponed: ${still ? 'still ' : ''}${T.gradTermCount(n)}`),
-    ifAdded: (n, delta) => {
-      if (delta === 0) return IS_AR ? `${T.gradTermCount(n)}${T.gradSep}بلا تغيير` : `Still ${T.gradTermCount(n)}`;
-      if (IS_AR) return `${T.gradTermCount(n)}${T.gradSep}${T.gradTiming(delta)}`;
-      return `${T.gradTermCount(n)}${T.gradSep}${Math.abs(delta)} ${delta < 0 ? 'sooner' : 'later'}`;
-    },
+    // What one course does to the forecast, said only when it changes graduation:
+    // "If postponed: 1 term later" / "1 term sooner" (a tag in the row's meta area).
+    ifPostponed: (delta) => `${IS_AR ? 'إن أُجِّل: ' : 'If postponed: '}${T.gradTiming(delta)}`,
     viewOption: (name) => (IS_AR ? ['عرض ', bdi(name)] : ['View ', bdi(name)]),
     whyOnly: IS_AR ? 'الجدول الوحيد الذي وجده هذا البناء.' : 'The only timetable this build found.',
     whyAllCourses: IS_AR ? 'الخيار الوحيد الذي يجدول كل المقررات.' : 'The only option that schedules every course.',
@@ -702,12 +693,6 @@
   function changedRuleKeys() {
     return Object.keys(DEFAULT_RULES).filter((key) => state.rules[key] !== state.defaults[key]);
   }
-  // The cap's hint ("advisory 18 · regulatory 19"), as the dialog shows it.
-  function maxHintText() {
-    const cap = state.student ? finitePositive(state.student.credit_cap) : null;
-    const reg = state.student ? finitePositive(state.student.regulatory_max_credits) : null;
-    return T.maxHint(cap, reg);
-  }
   function renderRules() {
     const r = state.rules;
     // The controls on the board show the rules in force.
@@ -726,7 +711,6 @@
       $('plbMaxInErr').hidden = true;
       $('plbMaxInErr').textContent = '';
     }
-    $('plbMaxInHint').textContent = maxHintText();
     const changed = changedRuleKeys().length;
     const badge = $('plbRulesChanged');
     badge.hidden = changed === 0;
@@ -856,6 +840,7 @@
     const year = $('plbYear').value.trim() || '—';
     const term = $('plbTerm').value;
     $('plbTermBtn').replaceChildren(...T.termButton(year, term), svg(ICONS.chev, 12));
+    $('plbKicker').replaceChildren(`${T.kicker} · `, ...T.termButton(year, term));
   }
   function setTermPop(open, focusBack) {
     $('plbTermPop').hidden = !open;
@@ -895,8 +880,7 @@
     // 18-credit cap it reads as a mistake, and it is not what this screen is about.
     const registered = registeredCredits();
     const courses = registeredCourses();
-    const codes = [...new Set(courses.map((c) => c.code).filter(Boolean))];
-    const advisor = st.advisor_id === null || st.advisor_id === undefined ? '' : String(st.advisor_id).trim();
+    const advisor = st.advisor_name ? String(st.advisor_name).trim() : '';
     const progress = planProgress();
     const baseline = projectionOf() ? projectionOf().baseline : null;
     const ends = isComplete(baseline) ? completionParts(baseline) : [];
@@ -905,7 +889,7 @@
       fact(T.programme,
         el('div', 'plb-big', st.program ? bdi(st.program) : '—'),
         el('div', 'plb-smeta', st.name ? isolate(st.name) : T.unnamed, ' · ', bdi(st.student_id),
-          advisor ? ` · ${T.advisor} ` : null, advisor ? bdi(advisor) : null)),
+          advisor ? ` · ${T.advisor} ` : null, advisor ? isolate(advisor) : null)),
       fact(T.bandProgress,
         el('div', 'plb-big', ...(progress
           ? [bdi(`${progress.done} / ${progress.total}`), ' ', el('span', 'plb-big-u', T.creditUnit(progress.total))]
@@ -919,8 +903,8 @@
         el('div', 'plb-smeta', `${T.gpa} `, gpa === null ? '—' : gpa.toFixed(2))),
       fact(T.bandRegistered,
         el('div', 'plb-big', registered === null ? '—' : String(registered)),
-        el('div', 'plb-smeta', T.courseWord(courses.length ? new Set(courses.map((c) => c.key)).size : 0)),
-        codes.length ? el('div', 'plb-codes', ...codes.flatMap((c, i) => (i ? [' ', el('span', 'plb-cd', bdi(c))] : [el('span', 'plb-cd', bdi(c))]))) : null),
+        // The codes themselves are on the Current timetable line just below: not repeated here.
+        el('div', 'plb-smeta', T.courseWord(courses.length ? new Set(courses.map((c) => c.key)).size : 0))),
       fact(T.bandGraduates,
         ends.length ? el('div', 'plb-big', ...ends) : el('div', 'plb-big plb-big--muted', T.afterFirstBuild)),
     );
@@ -1072,6 +1056,7 @@
   const HUES = 6;
   function planKeys() {
     const keys = state.shortlist.map((c) => norm(c.course_code));
+    for (const c of registeredCourses()) if (c.key && !keys.includes(norm(c.key))) keys.push(norm(c.key));
     if (state.build) for (const c of state.build.shortlist) if (!keys.includes(norm(c.course_code))) keys.push(norm(c.course_code));
     return keys;
   }
@@ -1110,7 +1095,7 @@
     block.dataset.code = m.key;
     block.dataset.kind = m.kind || 'reg';
     if (m.clash) block.dataset.clash = 'true';
-    if (m.kind === 'new' && hueOf(m.key)) block.dataset.hue = String(hueOf(m.key));
+    if (hueOf(m.key)) block.dataset.hue = String(hueOf(m.key));
     const label = `${m.code}${m.section ? ` ${IS_AR ? 'شعبة' : 'section'} ${m.section}` : ''}, ${DAY_SHORT[m.day]} ${range}`
       + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
     if (item) {
@@ -1123,7 +1108,7 @@
       block.setAttribute('aria-label', label);
     }
     block.append(...present(
-      el('span', 'plb-cd', bdi(m.code)),
+      el('span', 'plb-cd', m.kind === 'new' ? null : svg(ICONS.lock, 11), bdi(m.code)),
       m.section ? el('span', 'plb-bs', bdi(`§${m.section}`)) : null,
       el('span', 'plb-bt', bdi(range))));
     return block;
@@ -1176,11 +1161,11 @@
   function renderLegend(opt, alt) {
     const showRegistered = !opt || state.build.rules.mode === 'keep';
     const parts = [];
-    if (showRegistered) parts.push(el('span', 'plb-lg-i', el('i', 'plb-k'), T.legendRegistered));
+    if (showRegistered) parts.push(el('span', 'plb-lg-i', svg(ICONS.lock, 11), T.legendRegistered));
     if (opt) parts.push(...(parts.length ? [' '] : []), el('span', 'plb-lg-i', el('i', 'plb-k plb-k--new'), T.planned));
     if (alt) parts.push(...(parts.length ? [' '] : []), el('span', 'plb-lg-i', el('i', 'plb-k plb-k--alt'), T.legendAlt));
     $('plbLegend').replaceChildren(...parts);
-    for (const mark of $('plbLegend').querySelectorAll('i')) mark.setAttribute('aria-hidden', 'true');
+    for (const mark of $('plbLegend').querySelectorAll('i, svg')) mark.setAttribute('aria-hidden', 'true');
   }
   function renderWeek() {
     const host = $('plbWeek');
@@ -1286,11 +1271,8 @@
     const rows = state.baseline.filter((r) => normDay(r.day) && toMins(r.start_time) !== null && toMins(r.end_time) !== null);
     const codes = [...new Set(rows.map((r) => String(r.course_code || r.course_key || '')).filter(Boolean))];
     if (!codes.length) return [T.curTTNone];
-    return codes.flatMap((code, i) => [
-      ...(i ? [IS_AR ? '؛ ' : '; '] : []),
-      el('bdi', '', bdi(code), ' ',
-        ...whenNodes(rows.filter((r) => String(r.course_code || r.course_key || '') === code))),
-    ]);
+    // Codes only, never meetings or times: the opened week has the detail.
+    return codes.flatMap((code, i) => (i ? [' · ', bdi(code)] : [bdi(code)]));
   }
   // The "Current timetable" disclosure under the student band: closed by default, the registered
   // week drawn with the week's own grid when it is opened, redrawn while it stays open.
@@ -1884,10 +1866,11 @@
   }
 
   /* ── Courses: the picker (zone 02) ─────────────────────────────────────── */
+  const AVAIL_CAP = 40;
   const SOURCES = ['recommended', 'plan', 'eligible', 'all'];
   const newPick = () => ({
     src: 'recommended', find: '', ticked: new Set(), secs: new Map(), opened: new Set(),
-    planTicked: new Set(), blockedOpen: false,
+    planTicked: new Set(), blockedOpen: false, showAll: false,
   });
   // What the search box compares: Arabic-Indic digits read as digits, no case, no spaces.
   const fold = (text) => String(text || '')
@@ -2065,6 +2048,9 @@
     if (known && sections.length && caps.every((c) => c.known && c.full)) tags.push(tagNode(T.allFull, 'bad'));
     else if (openCaps.length && openCaps.every(fewSeats)) tags.push(tagNode(T.tagFewSeats, 'warn'));
     // Phones have no transfer column: every row carries its own "+" (only the ticked sections when some are).
+    // On an option's tab a tag in the meta area says when adding the course changes graduation.
+    const effect = currentOption() ? effectNode(code, 'could') : null;
+    if (effect) tags.push(effect);
     const plus = el('button', 'plb-addbtn', svg(ICONS.plus, 18));
     plus.type = 'button';
     plus.dataset.act = 'add';
@@ -2096,12 +2082,14 @@
         }
       }
     }
-    // On an option's tab the line says what adding the course would do to graduation.
-    const effect = currentOption() ? effectNode(code, 'could') : null;
-    const row = el('div', 'plb-arow', main, effect ? el('div', 'plb-fxl', effect) : null, body);
+    const row = el('div', 'plb-arow', main, body);
     row.dataset.code = code;
     if (ticked) row.dataset.ticked = 'true';
     return row;
+  }
+  // "Available · 11 courses": the title in bold, the count muted (the text reads the same).
+  function paneHead(node, [title, count]) {
+    node.replaceChildren(`${title} `, el('span', 'plb-h3-n', `· ${count}`));
   }
   function renderAvailable() {
     const host = $('plbAvailList');
@@ -2114,7 +2102,15 @@
     else if (src === 'all' && state.allState === 'error') nodes.push(el('p', 'plb-empty plb-pad', T.allFailed));
     else if ((src === 'plan' || src === 'eligible') && state.planState === 'loading' && !lists.avail.length) nodes.push(el('p', 'plb-empty plb-pad', T.loadingPlan));
     else if (!lists.avail.length && !lists.blocked.length) nodes.push(el('p', 'plb-empty plb-pad', state.pick.find.trim() ? T.noMatch : T.nothingHere));
-    for (const entry of lists.avail) nodes.push(availRowNode(entry, src));
+    // The list grows with its content (the page scrolls); a long source shows its first rows and a button.
+    const shown = state.pick.showAll ? lists.avail : lists.avail.slice(0, AVAIL_CAP);
+    for (const entry of shown) nodes.push(availRowNode(entry, src));
+    if (shown.length < lists.avail.length) {
+      const more = el('button', 'btn btn-sm btn-neutral plb-showall', T.showAll(lists.avail.length));
+      more.type = 'button';
+      more.dataset.act = 'showall';
+      nodes.push(el('div', 'plb-showall-row', more));
+    }
     if (lists.blocked.length) {
       const open = state.pick.blockedOpen;
       const fold2 = el('button', 'plb-fold', svg(ICONS.chev, 14), T.blockedFold(lists.blocked.length));
@@ -2139,7 +2135,7 @@
     host.replaceChildren(...nodes);
     const tickedEntries = lists.avail.filter((e) => state.pick.ticked.has(e.code));
     const tickedCr = tickedEntries.reduce((sum, e) => sum + (e.credits || 0), 0);
-    $('plbAvailCount').textContent = ready ? T.availHead(lists.avail.length) : T.availHead(0);
+    paneHead($('plbAvailCount'), T.availHead(ready ? lists.avail.length : 0));
     $('plbAvailTicked').textContent = ready ? T.tickedLine(tickedEntries.length, tickedCr) : '';
     return lists;
   }
@@ -2236,7 +2232,7 @@
     }
     host.replaceChildren(...nodes);
     if (hadFocus) hadFocus.focus({ preventScroll: true });
-    $('plbPlanCount').textContent = T.planHead(ready ? state.shortlist.length : 0);
+    paneHead($('plbPlanCount'), T.planHead(ready ? state.shortlist.length : 0));
     renderCreditsHeader();
   }
   function renderXfer(lists) {
@@ -2443,6 +2439,7 @@
     state.pick.secs.clear();
     state.pick.opened.clear();
     state.pick.blockedOpen = false;
+    state.pick.showAll = false;
     if (src === 'all' && state.allState !== 'ready' && state.allState !== 'loading') loadAllCatalog(state.gen);
     renderCourses();
   }
@@ -2700,7 +2697,7 @@
     $('plbYear').value = state.ctx.year;
     if ([...$('plbTerm').options].some((o) => o.value === state.ctx.term)) $('plbTerm').value = state.ctx.term;
     renderTermBtn();
-    setStatus('ok', T.loaded);
+    setStatus('');
     renderContextChip();
     renderStudent();
     renderRules();
@@ -2892,6 +2889,13 @@
     renderGuide();
     renderGrad();
     holdBandHeight(false);
+    // Beside Rebuild: whether the options below still match the courses and rules (nothing before a build).
+    const bstate = $('plbBuildState');
+    const row = bstate.closest('.plb-buildrow');
+    bstate.hidden = !state.build || building;
+    bstate.dataset.kind = state.build && state.build.stale ? 'warn' : 'ok';
+    bstate.textContent = state.build ? (state.build.stale ? T.optionsStale : T.optionsCurrent) : '';
+    row.dataset.stale = state.build && state.build.stale ? 'true' : '';
     const last = $('plbLastBuild');
     if (state.build) last.replaceChildren(`${T.lastBuild} `, bdi(state.build.at));
     else last.replaceChildren();
@@ -2983,19 +2987,18 @@
     const map = row.course_effects[group === 'new' ? 'postponed' : 'added'];
     const effect = isObj(map) ? map[norm(code)] : null;
     if (!isComplete(effect) || !Number.isInteger(effect.delta_terms)) return null;
-    const count = effect.terms_including_planning_term;
     const delta = effect.delta_terms;
+    // A course that leaves the graduation term where it is says nothing.
+    if (delta === 0) return null;
     if (group === 'new') {
-      return delta > 0
-        ? { text: T.ifPostponed(count, false), tone: 'strong', delta }
-        : { text: T.ifPostponed(count, delta === 0), tone: 'muted', delta };
+      return delta > 0 ? { text: T.ifPostponed(delta), tone: 'strong', delta } : null;
     }
-    return { text: T.ifAdded(count, delta), tone: delta < 0 ? 'brand' : 'muted', delta };
+    return { text: T.gradTiming(delta), tone: delta < 0 ? 'brand' : 'muted', delta };
   }
   function effectNode(code, group) {
     const effect = effectFor(code, group);
     if (!effect) return null;
-    const node = el('span', `plb-fxt plb-fxt--${effect.tone}`, effect.text);
+    const node = el('span', `plb-fxt plb-fxt--${effect.tone} plb-flag`, effect.text);
     node.dataset.fx = group;
     if (state.build && state.build.stale) node.dataset.stale = state.build.stale;
     return node;
@@ -3969,7 +3972,18 @@
       else if (act === 'open') {
         if (state.pick.opened.has(code)) state.pick.opened.delete(code); else state.pick.opened.add(code);
         renderCourses();
-      } else if (act === 'fold') { state.pick.blockedOpen = !state.pick.blockedOpen; renderCourses(); }
+      } else if (act === 'showall') {
+        // The button goes away: the keyboard lands on the first row it revealed, not in Find.
+        const before = document.querySelectorAll('#plbAvailList .plb-arow').length;
+        state.pick.showAll = true;
+        renderCourses();
+        const next = document.querySelectorAll('#plbAvailList .plb-arow')[before];
+        // The tick, or on phones (where the tick is hidden) the row's + button.
+        const target = next && [...next.querySelectorAll('[data-act="tick"], [data-act="add"]')]
+          .find((n) => !n.disabled && n.getClientRects().length);
+        if (target) target.focus();
+      }
+      else if (act === 'fold') { state.pick.blockedOpen = !state.pick.blockedOpen; renderCourses(); }
       else if (act === 'only') moveOne(code, true);
       else if (act === 'add') moveOne(code, false, 'plus');
     });
