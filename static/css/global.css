@@ -11270,7 +11270,7 @@ html[data-theme="dark"] .btn-export {
 .ap-metrics .mc-head { margin-bottom: 6px; gap: 8px; }
 .ap-metrics .mc-icon { width: 28px; height: 28px; }
 .ap-metrics .mc-icon .i { width: 15px; height: 15px; }
-.ap-metrics .mc-val { display: block; font-size: clamp(1.25rem, 1.05rem + 0.6vw, 1.5rem); }
+.ap-metrics .mc-val { display: block; font-size: var(--text-xl); }
 /* An alert tile at zero is not an alert. */
 .ap-metrics .mc.is-zero .mc-val { color: var(--t3); }
 .ap-metrics .mc.is-zero .mc-icon { background: var(--pl-overlay-2); color: var(--t3); }
