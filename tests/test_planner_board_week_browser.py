@@ -247,6 +247,20 @@ class PlannerBoardShortClassTests(PlannerBoardCase):
         )
         self.assertEqual(order, ["plb-cd", "plb-bt", "plb-bs"])
         self.assertEqual(self._text(page, f"{block} .plb-bt"), "11:50-12:40")
+        # ... and whole on screen, in the week beside the glance and in the Current timetable: on
+        # one line the section gives way first, the time only in a column too narrow for it.
+        # What gives way first is the section, then the time; the code last. STAT301 with its lock
+        # is the widest code of the week: whole too.
+        # Measured to the sub-pixel: an ellipsis is drawn for a fraction of a pixel too.
+        cut = (
+            "n => { const r = document.createRange(); r.selectNodeContents(n);"
+            " return r.getBoundingClientRect().width - n.getBoundingClientRect().width; }"
+        )
+        for where in ("#plbWeek", "#plbCurTTWeek"):
+            for part in ("[data-code='IS482'] .plb-bt", "[data-code='STAT301'] .plb-cd"):
+                self.assertLessEqual(
+                    page.eval_on_selector(f"{where} .plb-b{part}", cut), 0.01, (where, part)
+                )
         # The Current timetable draws the same week with the same rule.
         current = page.evaluate(
             "() => [...document.querySelectorAll('#plbCurTTWeek .plb-b')]"
@@ -266,6 +280,28 @@ class PlannerBoardShortClassTests(PlannerBoardCase):
         )
         self.assertEqual(order, ["plb-cd", "plb-bt", "plb-bs"])
         self.assertEqual(page.evaluate(CLIPPED), [])
+        # Arabic type is a step larger: STAT301's code and time do not both fit its column. The time
+        # gives way (an ellipsis); the code stays whole.
+        code = page.eval_on_selector(
+            "#plbWeek .plb-b[data-code='STAT301'] .plb-cd",
+            "n => { const r = document.createRange(); r.selectNodeContents(n);"
+            " return r.getBoundingClientRect().width - n.getBoundingClientRect().width; }",
+        )
+        self.assertLessEqual(code, 0.01)
+        # The time that gave way keeps its start hour: the ellipsis takes the end of the range.
+        first = page.eval_on_selector(
+            "#plbWeek .plb-b[data-code='STAT301'] .plb-bt",
+            "n => { const text = n.querySelector('bdi').firstChild; const r = document.createRange();"
+            " r.setStart(text, 0); r.setEnd(text, 1); const box = n.getBoundingClientRect();"
+            " const ch = r.getBoundingClientRect(); return [ch.left - box.left, box.right - ch.right]; }",
+        )
+        self.assertGreaterEqual(min(first), -0.5, first)
+        # ... and a whole time sits at the start edge of its line, as Arabic reads.
+        whole = page.eval_on_selector(
+            "#plbWeek .plb-b[data-code='STAT305']",
+            "b => b.getBoundingClientRect().right - b.querySelector('.plb-bt bdi').getBoundingClientRect().right",
+        )
+        self.assertLess(whole, 12)
 
     def test_dark_theme_and_a_phone_keep_every_line_whole(self) -> None:
         for language in ("en", "ar"):

@@ -8175,22 +8175,30 @@ html[dir="rtl"] .plb-xb[data-side="plan-to-list"] .plb-dir { transform: none; }
 /* A block's lines are whole lines: the code, the section and the time never break inside, and
    what a column is too narrow for ends in an ellipsis instead of half a line. */
 .plb-bt { flex: 1 0 100%; min-width: 0; font-size: var(--text-micro); line-height: 14px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A time reads left to right in both languages, so the ellipsis it may end in takes the end of the
+   range, never the start hour (in a right-to-left box it would cut "11:" off the front). */
+.plb-bt { direction: ltr; }
+html[dir="rtl"] .plb-bt { text-align: right; }
 .plb-b .plb-cd { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .plb-bs { margin-inline-start: auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; line-height: 14px; color: var(--t2); white-space: nowrap; }
 /* How many lines a block holds is decided by the script from the block's own geometry (its rows
    x --plb-row against these line heights): "two" = code and section, then the time; "one" = a
-   block too short for two lines, code · time · §section, the time giving way first. */
+   block too short for two lines, code · time · §section. Whatever a column is too narrow for
+   gives way in this order: the section, then the time; the code last. One line is a flex row, and
+   the order is its shrink weights: each is a million times the next, so a part takes no share of
+   the shortfall (not even the sub-pixel that would end it in an ellipsis) until the one before it
+   is gone. */
 .plb-b[data-fit="two"], .plb-gb[data-fit="two"] {
   display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); grid-template-areas: "cd bs" "bt bt";
   align-content: start; column-gap: 6px;
 }
-.plb-b[data-fit="one"], .plb-gb[data-fit="one"] {
-  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content); grid-template-areas: "cd bt bs";
-  align-content: start; align-items: baseline; column-gap: 5px;
-}
-[data-fit] > .plb-cd { grid-area: cd; }
-[data-fit] > .plb-bs { grid-area: bs; justify-self: end; }
-[data-fit] > .plb-bt { grid-area: bt; }
+.plb-b[data-fit="two"] > .plb-cd, .plb-gb[data-fit="two"] > .plb-cd { grid-area: cd; }
+.plb-b[data-fit="two"] > .plb-bs, .plb-gb[data-fit="two"] > .plb-bs { grid-area: bs; justify-self: end; }
+.plb-b[data-fit="two"] > .plb-bt, .plb-gb[data-fit="two"] > .plb-bt { grid-area: bt; }
+.plb-b[data-fit="one"], .plb-gb[data-fit="one"] { flex-wrap: nowrap; align-items: baseline; column-gap: 5px; }
+.plb-b[data-fit="one"] > .plb-cd, .plb-gb[data-fit="one"] > .plb-cd { order: 0; flex: 0 1 auto; }
+.plb-b[data-fit="one"] > .plb-bt, .plb-gb[data-fit="one"] > .plb-bt { order: 1; flex: 0 1000000 auto; }
+.plb-b[data-fit="one"] > .plb-bs, .plb-gb[data-fit="one"] > .plb-bs { order: 2; flex: 0 1000000000000 auto; min-width: 0; }
 /* An alternative: a section the adviser allowed, drawn dashed under the open course. Not a control. */
 .plb-gb {
   margin: 1px; padding-block: 2px; padding-inline: 5px 4px; border-radius: 3px; overflow: hidden; pointer-events: none;
