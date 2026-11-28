@@ -1252,12 +1252,14 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                 )
             load_only_keys.add(key)
             held_load_credits += int(held["credits"])  # type: ignore[call-overload]
-        # A registered course in the shortlist counts its registered hours, whatever was sent.
+        # A registered course in the shortlist counts its registered hours, whatever was sent. It
+        # counts in the registered load the plan still holds when the student holds a section of it
+        # (usable meetings or not), exactly as the builder counts it beside the limit.
         for item in normalized_shortlist:
             held = held_courses.get(normalize_code(item["course_code"]))
             if held and int(held["credits"]) > 0:  # type: ignore[call-overload]
                 item["credits"] = int(held["credits"])  # type: ignore[call-overload]
-                if held["timed"]:
+                if held["section_ids"]:
                     held_in_plan += int(held["credits"])  # type: ignore[call-overload]
         held_in_plan += held_load_credits
     # THE BASELINE IS SERVER-DERIVED. "Keep Registered" promises the build

@@ -340,6 +340,31 @@ class TestConversion(RegisteredRowsCase):
         self.assertEqual(self._plan_rows(page), [[c, "keep"] for c in ROWS])
         expect(page.locator("#plbRegKeep")).to_be_focused()
 
+    def test_ignore_for_a_student_with_no_registered_course_says_nothing_about_them(self) -> None:
+        page = self._open(RegFake(baseline=[]), plan=False)
+        expect(page.locator("#plbPlanList .plb-prow--kept")).to_have_count(0)
+        page.click("#plbRegIgnore")
+        self.assertEqual(self._mode(page), "ignore")
+        self.assertNotIn("editable", self._status(page))
+        self.assertNotIn("Change any of them", self._status(page))
+        expect(page.locator("#plbConvText")).to_have_text("")
+
+    def test_a_course_held_at_two_sections_becomes_one_row(self) -> None:
+        # None in the data today; the build reads such a course as one course, so the plan does.
+        two = [
+            *REG_BASELINE,
+            _row("CS301", "Algorithms", "M2", 3, "MON", "08:00", "09:15", 31),
+            _row("CS301", "Algorithms", "M2", 3, "WED", "08:00", "09:15", 31),
+        ]
+        page = self._open(RegFake(baseline=two), plan=False)
+        expect(page.locator("#plbPlanList .plb-prow--kept")).to_have_count(5)
+        page.click("#plbRegIgnore")
+        self.assertEqual(
+            self._plan_rows(page),
+            [["CS301", "edit"], ["CS322", "edit"], ["CS330", "edit"], ["LO101", "load"]],
+        )
+        expect(page.locator("#plbBackKeep")).to_have_text("Back to Keep")  # nothing changed
+
     def test_conversion_in_arabic(self) -> None:
         page = self._reg(language="ar")
         self._ctl(page, "remove", "CS330").click()
@@ -414,6 +439,22 @@ class TestBackToKeep(RegisteredRowsCase):
         self.assertEqual(self._mode(page), "keep")
         self.assertEqual(self._plan_rows(page), [[c, "keep"] for c in ROWS])
         expect(page.locator("#plbRegKeep")).to_be_focused()
+
+    def test_one_back_to_keep_question_at_a_time(self) -> None:
+        page = self._reg()
+        self._ctl(page, "remove", "LO101").click()
+        page.click("#plbBackKeep")
+        expect(page.locator("#plbConvAsk")).to_be_visible()
+        page.click("#plbRegKeep")  # the switch asks the same: the bar's question goes
+        expect(page.locator("#plbEligConfirm")).to_be_visible()
+        expect(page.locator("#plbConvAsk")).to_be_hidden()
+        page.click("#plbBackKeep")  # and the other way round
+        expect(page.locator("#plbConvAsk")).to_be_visible()
+        expect(page.locator("#plbEligConfirm")).to_be_hidden()
+        page.keyboard.press("Escape")  # one Escape closes the one question
+        expect(page.locator("#plbConvAsk")).to_be_hidden()
+        expect(page.locator("#plbEligConfirm")).to_be_hidden()
+        self.assertEqual(self._mode(page), "ignore")
 
     def test_the_confirm_says_what_each_question_does(self) -> None:
         page = self._reg()
@@ -517,6 +558,8 @@ class TestSectionMenu(RegisteredRowsCase):
         self._ctl(page, "detail", "CS301").click()
         expect(page.locator("#plbPop .plb-dt-hint").first).to_have_text("Loading the sections…")
         expect(page.locator("#plbPop")).not_to_contain_text("No sections this term")
+        # While the list is on its way no section is listed, and none is said to be gone.
+        self.assertEqual(page.locator("#plbPop [data-tsid]").count(), 0)
         self._wait(page, lambda: fake.pending_catalog)
         body = fake.catalog_bodies[-1]
         self.assertTrue(body.get("include_registered"), body)
@@ -693,6 +736,37 @@ class TestApply(RegisteredRowsCase):
             [["CS301", "edit"], ["CS322", "edit"], ["AI331", "planned"], ["LO101", "load"]],
         )
 
+    def test_apply_for_a_student_with_only_a_forecast_reads_the_saved_plan_back_in_keep(
+        self,
+    ) -> None:
+        forecast = [{**row, "source": "registration_plan_1448_t1"} for row in BASELINE]
+        fake = RegFake(baseline=forecast)
+        page = self._open(fake, plan=False)
+        expect(page.locator("#plbPlanList .plb-prow--kept")).to_have_count(3)
+        self._ctl(page, "remove", "CS330").click()
+        self._add(page, "AI331")
+        page.click("#plbBuild")
+        self._built_now(page)
+        page.click("#plbReview")
+        # The save is the student's timetable now: the next read gives the saved sections back.
+        fake.baseline = [
+            {**_row(code, name, section, 3, day, start, end, tsid), "source": "planner"}
+            for code, name, section, days, start, end, tsid in (
+                ("CS301", "Algorithms", "M2", ("MON", "WED"), "08:00", "09:15", 31),
+                ("CS322", "Databases", "M2", ("SUN", "TUE"), "10:00", "11:15", 2),
+                ("AI331", "Machine Learning", "M1", ("SUN", "TUE"), "11:30", "12:45", 11),
+            )
+            for day in days
+        ]
+        page.click("#plbApplyGo")
+        expect(page.locator("#plbApplyDialog")).to_be_hidden()
+        expect(page.locator("#plbPlanList .plb-prow--kept")).to_have_count(3)
+        self.assertEqual(self._mode(page), "keep")
+        self.assertEqual(
+            self._plan_rows(page), [["CS301", "keep"], ["CS322", "keep"], ["AI331", "keep"]]
+        )
+        expect(page.locator("#plbConvText")).to_have_text("")
+
 
 class TestWeekAndBar(RegisteredRowsCase):
     def test_the_notice_bar_is_a_live_region_that_is_always_there(self) -> None:
@@ -766,4 +840,69 @@ class TestPhone(RegisteredRowsCase):
                 expect(self._ctl(page, "must", "CS322")).to_be_focused()
                 expect(page.locator("#plbConvBar")).to_be_visible()
                 self.assertEqual(page.evaluate(OVERFLOWS), [])
+                page.context.close()
+
+    def test_a_long_tag_ends_in_an_ellipsis_inside_its_name_cell(self) -> None:
+        long = "M1-EVENING-ONLINE-WOMEN"
+        baseline = [
+            {**row, "section": long} if row["course_code"] == "CS301" else row
+            for row in REG_BASELINE
+        ]
+        for language in ("en", "ar"):
+            with self.subTest(language=language):
+                page = self._open(
+                    RegFake(baseline=baseline), plan=False, width=390, height=900, language=language
+                )
+                expect(page.locator("#plbPlanList .plb-prow--kept")).to_have_count(4)
+                page.click("#plbRegIgnore")
+                self._plan_panel(page)
+                tag = page.evaluate(
+                    """() => {
+                      const tag = document.querySelector(
+                        "#plbPlanList .plb-prow[data-code='CS301'] .plb-sl > .plb-reg-tag");
+                      const cell = tag.closest('.plb-pmain').getBoundingClientRect();
+                      const r = tag.getBoundingClientRect();
+                      return {
+                        inside: r.left >= cell.left - 0.5 && r.right <= cell.right + 0.5,
+                        cut: tag.scrollWidth > tag.clientWidth,
+                      };
+                    }"""
+                )
+                self.assertEqual(tag, {"inside": True, "cut": True})
+                self.assertEqual(page.evaluate(OVERFLOWS), [])
+                page.context.close()
+
+
+class TestNameColumn(RegisteredRowsCase):
+    EDGES = (
+        "els => els.map(e => Math.round(document.documentElement.dir === 'rtl'"
+        " ? e.getBoundingClientRect().right : e.getBoundingClientRect().left))"
+    )
+
+    def test_the_names_start_on_one_line_where_the_list_has_room(self) -> None:
+        # Each row is its own grid: CS301 and STAT305 used to start their names apart.
+        for width in (1366, 1440):
+            for language in ("en", "ar"):
+                with self.subTest(width=width, language=language):
+                    page = self._reg(width=width, height=900, language=language)
+                    self._add(page, "STAT305")
+                    edges = page.eval_on_selector_all(
+                        "#plbPlanList .plb-prow > .plb-pmain", self.EDGES
+                    )
+                    self.assertEqual(len(edges), 5)
+                    self.assertEqual(len(set(edges)), 1, edges)
+                    page.context.close()
+
+    def test_a_narrow_list_keeps_each_rows_own_code_width(self) -> None:
+        # At 1152 a name needs every pixel: the 5-letter codes do not take a 7-letter cell.
+        for language in ("en", "ar"):
+            with self.subTest(language=language):
+                page = self._reg(width=1152, height=900, language=language)
+                self._add(page, "STAT305")
+                codes = page.eval_on_selector_all(
+                    "#plbPlanList .plb-prow > .plb-code",
+                    "els => Object.fromEntries(els.map(e => [e.closest('.plb-prow').dataset.code,"
+                    " Math.round(e.getBoundingClientRect().width)]))",
+                )
+                self.assertLess(codes["CS301"], codes["STAT305"] - 10, codes)
                 page.context.close()

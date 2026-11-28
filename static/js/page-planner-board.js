@@ -888,7 +888,8 @@
         convertRegistered();
         renderCourses();
         renderActions();
-        setStatus('ok', T.convManual);
+        // Said only when there were registered courses to make editable.
+        if (state.converted) setStatus('ok', T.convManual);
       } else requestBackToKeep('switch');
       return;
     }
@@ -919,6 +920,8 @@
     closeEligConfirm(true);
   }
   function openEligConfirm(kind, value, reset) {
+    // One question at a time: the notice bar's own Back to Keep question closes.
+    closeConvAsk(false);
     if (!eligWords) {
       eligWords = { text: $('plbEligConfirmText').textContent, go: $('plbEligGo').textContent, keep: $('plbEligKeep').textContent };
     }
@@ -2109,6 +2112,19 @@
   function planRegistered() {
     return registeredCourses().filter((c) => !(c.fallback && c.credits === 0));
   }
+  // The registered courses once each: a course held at two sections is one course to the build
+  // (the server reads it so), so it becomes one row, pinned to the first section listed.
+  function heldOnce() {
+    const seen = new Set();
+    return planRegistered().filter((c) => {
+      const key = norm(c.key);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  // What the student holds, as one comparable string (course and section, in any order).
+  const holdingsSig = (regs) => regs.map((c) => `${norm(c.key)}|${String(c.tsid)}`).sort().join(',');
   const regWord = (c) => (c && c.registrar ? T.regTag : T.expTag);
   // A CODE::NAME key is shown by its code; the key stays the course's identity everywhere else.
   const shownCode = (code) => String(code || '').split('::')[0];
@@ -2145,7 +2161,7 @@
   // courses are now editable" in front of it). A tick alone only selects: it never converts.
   function convertRegistered() {
     if (!state.ctx || state.rules.mode !== 'keep') return false;
-    const regs = planRegistered();
+    const regs = heldOnce();
     if (!regs.length) {
       // Nothing registered: Ignore is only the rule.
       commitRules({ ...state.rules, mode: 'ignore' }, true);
@@ -2234,6 +2250,8 @@
     closeConvAsk(true);
   }
   function openConvAsk() {
+    // One question at a time: the rules zone's confirm closes.
+    closeEligConfirm(false);
     $('plbConvAskText').textContent = T.askMode(changesCount());
     $('plbConvGo').textContent = T.askModeGo;
     $('plbConvKeep').textContent = T.askModeKeep;
@@ -3243,7 +3261,11 @@
     state.rules.mode = 'keep';
     state.converted = null;
     state.loadOnly = [];
-    if (restore) {
+    // After a save in Ignore the plan comes back as built, while the student still holds what it
+    // was edited against (a save never changes the registrar's timetable). A student with only a
+    // forecast now holds the saved sections themselves: the board reads them back in Keep, where
+    // the rows are the plan as saved and nothing is a change against an old forecast.
+    if (restore && holdingsSig(heldOnce()) === holdingsSig(restore.converted.regs)) {
       state.rules.mode = 'ignore';
       state.shortlist = restore.shortlist;
       state.loadOnly = restore.loadOnly;
@@ -4390,7 +4412,9 @@
     group.append(modeRow('any', T.anySectionOpt, T.anySectionHint, !only), modeRow('only', T.onlyOpt, null, only));
     // While the catalogue is on its way (it reloads when the registered courses become rows) the
     // list is loading, never "no sections".
-    if (state.catState === 'loading' && (!list || !list.length)) group.append(el('p', 'plb-dt-hint', T.loadingSections));
+    // A list from before the reload is not shown either: it can lack the registered sections.
+    const loading = state.catState === 'loading';
+    if (loading) group.append(el('p', 'plb-dt-hint', T.loadingSections));
     else if (list === null) group.append(el('p', 'plb-dt-hint', T.noCatalog));
     else if (!list.length) group.append(el('p', 'plb-dt-hint', T.noSections));
     else {
@@ -4398,9 +4422,10 @@
         group.append(sectionRow(sectionModel(section), 'pick', tickedIds.has(String(section.term_section_id)), atMax));
       }
     }
-    // A ticked section that is not in the list any more is flagged, never silently dropped.
+    // A ticked section that is not in the list any more is flagged, never silently dropped (once
+    // the list is in: while it loads, nothing is known to be gone).
     const listed = new Set((list || []).map((section) => String(section.term_section_id)));
-    for (const pin of pins) {
+    for (const pin of loading ? [] : pins) {
       const id = String(pin.term_section_id);
       if (listed.has(id)) continue;
       const gone = el('label', 'plb-dt-sec');

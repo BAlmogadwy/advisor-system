@@ -369,6 +369,19 @@ def test_load_only_is_refused_for_anything_but_the_students_own_untimed_course()
     assert _post_build(client, [], mode="keep", registered_load_only=["NOPE100"]).status_code == 200
 
 
+def test_a_held_section_without_usable_meetings_counts_in_the_registered_load() -> None:
+    # The page sends such a course as load only; a shortlist row of it (as any client may send)
+    # still counts its registered hours in the load the plan holds, as the builder counts it.
+    _student()
+    timed = _register(_section("HT100", "SUN", "08:00", "09:15"))
+    _register(_section("HU100", "MON", "08:00", "08:00", hours=4, once=True))  # no length
+
+    result = _build(_client(), [_row("HT100", timed), _row("HU100", must=False, credits=1)])
+
+    assert result["constraints"]["registered_credits"] == 7  # 3 + its registered 4, not 1
+    assert result["constraints"]["credit_room"] == 11
+
+
 def test_a_registered_row_keeps_its_registered_hours_whatever_the_client_sends() -> None:
     _student()
     held = _register(_section("HR100", "SUN", "08:00", "09:15", hours=4))

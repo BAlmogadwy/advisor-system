@@ -8590,6 +8590,15 @@ html[data-theme="dark"] .plb-req[aria-pressed="true"] { background: rgba(46,201,
 .plb-sw[data-hue="9"] { background: var(--plb-c9); } .plb-sw[data-hue="10"] { background: var(--plb-c10); }
 .plb-sw:not([data-hue]) { display: none; }
 .plb-prow .plb-code:has(> .plb-sw) { display: inline-flex; align-items: center; gap: 6px; }
+/* Each row is its own grid. Where the list has room (500px: a 1366px screen and wider), the code
+   cell is as wide as a 7-letter code (and its swatch) in every row, so the names start on one line
+   down the list; a longer code still widens its own row. A narrower list keeps each row's own code
+   width: there a name needs every pixel (at 1152 the 17px would wrap "3 cr · §M2" on option tabs). */
+.plb-plist { container: plblist / inline-size; }
+@container plblist (min-width: 500px) {
+  .plb-prow > .plb-code { min-inline-size: calc(7ch + 16px); }
+  .plb-ar-main > .plb-code { min-inline-size: 7ch; }
+}
 .plb-b[data-hue="1"] { --h: var(--plb-c1); --ht: var(--plb-c1-t); }
 .plb-b[data-hue="2"] { --h: var(--plb-c2); --ht: var(--plb-c2-t); }
 .plb-b[data-hue="3"] { --h: var(--plb-c3); --ht: var(--plb-c3-t); }
