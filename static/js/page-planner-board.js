@@ -1103,6 +1103,7 @@
     }
     block.style.gridColumn = String(col);
     block.style.gridRow = `${rowStart} / ${rowEnd}`;
+    block.dataset.span = String(rows);         // its height in rows, for fitBlocks()
     block.dataset.code = m.key;
     block.dataset.kind = m.kind || 'reg';
     if (m.clash) block.dataset.clash = 'true';
@@ -1164,6 +1165,7 @@
       el('span', 'plb-bt', bdi(`${hhmm(m.st)}-${hhmm(m.en)}`)));
     block.style.gridColumn = String(col);
     block.style.gridRow = `${rowStart} / ${rowEnd}`;
+    block.dataset.span = String(rowEnd - rowStart);
     block.dataset.alt = 'true';
     block.dataset.code = m.key;
     block.setAttribute('aria-hidden', 'true');
@@ -1276,6 +1278,32 @@
       grid.append(foot);
     });
     host.replaceChildren(el('div', 'plb-wkwrap', grid), ...notes);
+    fitBlocks(grid);
+  }
+  // How many lines each block of a drawn week holds, from its own geometry, never from a number of
+  // minutes: its height is its span of 15-minute rows (the grid's --plb-row each, less its margins),
+  // and two lines need its padding and borders plus the line heights of the code and the time; a
+  // third line is the section's, when a narrow column pushes it off the code's line. A block too
+  // short for two lines reads on one ("one": code · time · §section), one too short for three keeps
+  // the code and the section on its first line ("two"); a taller one wraps freely. All read from
+  // the stylesheet, so a change of row height or type size changes the answer with it.
+  function fitBlocks(grid) {
+    const px = (value) => parseFloat(value) || 0;
+    const row = px(getComputedStyle(grid).getPropertyValue('--plb-row'));
+    if (row <= 0) return;
+    for (const block of grid.querySelectorAll('.plb-b, .plb-gb')) {
+      delete block.dataset.fit;
+      const own = getComputedStyle(block);
+      const height = (Number(block.dataset.span) || 1) * row - px(own.marginTop) - px(own.marginBottom);
+      const chrome = px(own.paddingTop) + px(own.paddingBottom) + px(own.borderTopWidth) + px(own.borderBottomWidth);
+      const line = (selector) => {
+        const part = block.querySelector(`:scope > ${selector}`);
+        return part ? px(getComputedStyle(part).lineHeight) : 0;
+      };
+      const two = chrome + line('.plb-cd') + line('.plb-bt');
+      if (height < two) block.dataset.fit = 'one';
+      else if (height < two + line('.plb-bs')) block.dataset.fit = 'two';
+    }
   }
   // The registered classes in one line: "CS101 Sun Tue 10:00-11:15; AI201 Mon 08:00-09:15".
   function curTTDigest() {

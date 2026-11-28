@@ -1,9 +1,14 @@
-"""The week's colours, in a real browser (slice S6, item C).
+"""The week's colours and its short classes, in a real browser (slice S6, items C and D).
 
 C. One colour per course, really. Registered courses have been coloured since PR #301, so with six
 hues a seventh course repeated one (live: IS482 planned and STAT301 registered, both amber, in one
 week). Ten hues now, assigned first-free; past ten the least-used hue is shared. The registered
 rows of "at a glance" carry their swatch too.
+
+D. A block too short for two lines (a 50-minute class; a 60-minute one that starts at :15) was cut
+mid-line. Such a block now reads on one line (code · time · §section); whether it is short is
+decided from the block's own geometry, so no block of the week, or of the Current timetable, ever
+holds more than it shows.
 
 The board fakes answer every request (tests/planner_board_support.py).
 """
@@ -154,3 +159,117 @@ class PlannerBoardWeekColourTests(PlannerBoardCase):
         page.select_option("#plbSource", "plan")
         self._add(page, "EL013", source="plan")
         self.assertEqual(self._hues(page, "#plbPlanList .plb-prow .plb-code .plb-sw")["EL013"], "1")
+
+
+# Whether a block shows more than it holds, and whether its lines are whole.
+CLIPPED = """() => {
+  const bad = [];
+  for (const b of document.querySelectorAll('.plb-b, .plb-gb')) {
+    if (!b.getClientRects().length) continue;
+    const where = `${b.closest('#plbCurTTWeek') ? 'current' : 'week'} ${b.dataset.code} ${b.dataset.fit || '-'}`;
+    if (b.scrollHeight > b.clientHeight + 1 || b.scrollWidth > b.clientWidth + 1)
+      bad.push(`${where}: ${b.scrollWidth}x${b.scrollHeight} > ${b.clientWidth}x${b.clientHeight}`);
+    // A part may end in an ellipsis sideways, never be cut in height: each is at least one whole
+    // line tall (a squeezed grid row would clip it mid-line) and ends inside the block.
+    const own = getComputedStyle(b);
+    const floor = b.getBoundingClientRect().bottom - parseFloat(own.borderBottomWidth) - parseFloat(own.paddingBottom);
+    for (const part of b.children) {
+      const line = parseFloat(getComputedStyle(part).lineHeight);
+      if (part.clientHeight + 1 < line)
+        bad.push(`${where} ${part.className}: less than a line, ${part.clientHeight} < ${line}`);
+      if (part.getBoundingClientRect().bottom > floor + 1)
+        bad.push(`${where} ${part.className}: below the block`);
+    }
+  }
+  return bad;
+}"""
+FITS = """() => Object.fromEntries([...document.querySelectorAll('#plbWeek .plb-b')]
+  .map((b) => [b.dataset.code + ' ' + b.style.gridRow, b.dataset.fit || '-']))"""
+
+
+class PlannerBoardShortClassTests(PlannerBoardCase):
+    start_on = "B1"
+
+    @staticmethod
+    def _add_any(page, code: str) -> None:
+        """Add a course from the eligible list: the arrow on a wide screen, the row's + on a phone."""
+        page.select_option("#plbSource", "eligible")
+        if page.locator("#plbXAdd").is_visible():
+            page.check(f"#plbAvailList .plb-arow[data-code='{code}'] input[data-act='tick']")
+            page.click("#plbXAdd")
+        else:
+            page.click(f"#plbAvailList button[data-act='add'][data-code='{code}']")
+        expect(page.locator(f"#plbPlanList .plb-prow[data-code='{code}']")).to_be_attached()
+
+    def _week(self, language, width, theme="light"):
+        page, _ = self._built(six_fake([SHORT_WEEK]), language=language, width=width)
+        self._add_any(page, "STAT305")  # the option places it: draw it planned, not "not in build"
+        page.click("#plbBuild")
+        expect(page.locator("#plbBuild")).to_be_enabled()
+        self._start(page)
+        if theme == "dark":
+            page.evaluate("document.documentElement.setAttribute('data-theme', 'dark')")
+        page.click("#plbCurTT > summary")
+        expect(page.locator("#plbCurTTWeek .plb-b").first).to_be_visible()
+        return page
+
+    def test_no_block_holds_more_than_it_shows_at_three_widths_in_both_languages(self) -> None:
+        for language in ("en", "ar"):
+            for width in (1440, 1152, 390):
+                with self.subTest(language=language, width=width):
+                    page = self._week(language, width)
+                    self.assertEqual(page.evaluate(CLIPPED), [])
+                    page.context.close()
+
+    def test_a_block_too_short_for_two_lines_reads_on_one_line(self) -> None:
+        page = self._week("en", 1440)
+        fits = page.evaluate(FITS)
+        # 50 minutes (11:50-12:40) and 60 minutes from :15 (14:15-15:15) span four rows: one line.
+        self.assertEqual(fits["IS482 17 / 21"], "one")
+        self.assertEqual(fits["STAT301 27 / 31"], "one")
+        self.assertEqual(fits["AI331 17 / 21"], "one")
+        # 75 minutes: two lines; 150 minutes: room for the section on a line of its own.
+        self.assertEqual(fits["CS205 2 / 7"], "two")
+        self.assertEqual(fits["AI342 10 / 15"], "two")
+        self.assertEqual(fits["STAT305 10 / 20"], "-")
+        # One line: code, then the time, then the section; the time is whole here.
+        block = "#plbWeek .plb-b[data-code='IS482']"
+        # One line: every part overlaps every other vertically (they sit on one baseline).
+        boxes = page.eval_on_selector_all(
+            f"{block} > span",
+            "ns => ns.map(n => { const r = n.getBoundingClientRect(); return [r.top, r.bottom]; })",
+        )
+        self.assertLess(max(top for top, _ in boxes), min(bottom for _, bottom in boxes), boxes)
+        order = page.eval_on_selector_all(
+            f"{block} > span",
+            "ns => ns.map(n => [n.className, Math.round(n.getBoundingClientRect().left)])"
+            ".sort((a, b) => a[1] - b[1]).map(x => x[0])",
+        )
+        self.assertEqual(order, ["plb-cd", "plb-bt", "plb-bs"])
+        self.assertEqual(self._text(page, f"{block} .plb-bt"), "11:50-12:40")
+        # The Current timetable draws the same week with the same rule.
+        current = page.evaluate(
+            "() => [...document.querySelectorAll('#plbCurTTWeek .plb-b')]"
+            ".map(b => b.dataset.code + ':' + (b.dataset.fit || '-')).sort()"
+        )
+        self.assertIn("IS482:one", current)
+        self.assertIn("STAT301:one", current)
+        self.assertIn("CS205:two", current)
+
+    def test_in_arabic_the_one_line_order_mirrors(self) -> None:
+        page = self._week("ar", 1440)
+        block = "#plbWeek .plb-b[data-code='IS482']"
+        order = page.eval_on_selector_all(
+            f"{block} > span",
+            "ns => ns.map(n => [n.className, Math.round(n.getBoundingClientRect().right)])"
+            ".sort((a, b) => b[1] - a[1]).map(x => x[0])",
+        )
+        self.assertEqual(order, ["plb-cd", "plb-bt", "plb-bs"])
+        self.assertEqual(page.evaluate(CLIPPED), [])
+
+    def test_dark_theme_and_a_phone_keep_every_line_whole(self) -> None:
+        for language in ("en", "ar"):
+            with self.subTest(language=language):
+                page = self._week(language, 390, theme="dark")
+                self.assertEqual(page.evaluate(CLIPPED), [])
+                page.context.close()

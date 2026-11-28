@@ -8172,16 +8172,32 @@ html[dir="rtl"] .plb-xb[data-side="plan-to-list"] .plb-dir { transform: none; }
 }
 .plb-b[data-kind="new"] { border-inline-start-color: var(--plb-new-edge); background: var(--plb-new); }
 .plb-b[data-clash="true"] { outline: 2px solid var(--sev-critical); outline-offset: -2px; }
-.plb-bt { flex: 1 0 100%; font-size: var(--text-micro); line-height: 14px; color: var(--t2); overflow-wrap: anywhere; }
-.plb-b .plb-cd { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-.plb-bs { margin-inline-start: auto; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; line-height: 14px; color: var(--t2); white-space: nowrap; }
+/* A block's lines are whole lines: the code, the section and the time never break inside, and
+   what a column is too narrow for ends in an ellipsis instead of half a line. */
+.plb-bt { flex: 1 0 100%; min-width: 0; font-size: var(--text-micro); line-height: 14px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plb-b .plb-cd { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.plb-bs { margin-inline-start: auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; line-height: 14px; color: var(--t2); white-space: nowrap; }
+/* How many lines a block holds is decided by the script from the block's own geometry (its rows
+   x --plb-row against these line heights): "two" = code and section, then the time; "one" = a
+   block too short for two lines, code · time · §section, the time giving way first. */
+.plb-b[data-fit="two"], .plb-gb[data-fit="two"] {
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); grid-template-areas: "cd bs" "bt bt";
+  align-content: start; column-gap: 6px;
+}
+.plb-b[data-fit="one"], .plb-gb[data-fit="one"] {
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr) minmax(0, max-content); grid-template-areas: "cd bt bs";
+  align-content: start; align-items: baseline; column-gap: 5px;
+}
+[data-fit] > .plb-cd { grid-area: cd; }
+[data-fit] > .plb-bs { grid-area: bs; justify-self: end; }
+[data-fit] > .plb-bt { grid-area: bt; }
 /* An alternative: a section the adviser allowed, drawn dashed under the open course. Not a control. */
 .plb-gb {
   margin: 1px; padding-block: 2px; padding-inline: 5px 4px; border-radius: 3px; overflow: hidden; pointer-events: none;
   display: flex; flex-wrap: wrap; align-content: flex-start; column-gap: 6px; min-width: 0;
   background: transparent; border: 1px dashed var(--t4); border-inline-start: 3px dashed var(--t4);
 }
-.plb-gb .plb-cd { min-width: 0; white-space: normal; overflow-wrap: anywhere; color: var(--t3); }
+.plb-gb .plb-cd { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--t3); }
 .plb-gb .plb-bs, .plb-gb .plb-bt { color: var(--t3); }
 .plb-k--alt { background: transparent; border: 1px dashed var(--t4); border-inline-start: 3px dashed var(--t4); }
 .plb-or { color: var(--t3); font-weight: 400; }
