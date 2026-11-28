@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 from contextlib import closing
 from datetime import timedelta
 from email.header import Header
@@ -25,6 +26,10 @@ _BREVO_LOCK = "brevo_submission:lock"
 _BREVO_ATTEMPT_PREFIX = "brevo_submission:attempt:"
 _BREVO_DEFINITE_REJECTIONS = {400, 401, 402, 403, 404, 405, 413, 415, 422, 429}
 _SES_ENDPOINT = "https://email.ap-southeast-1.amazonaws.com"
+# SES answers 408/409 for transient conflicts and 429 for throttling: retryable, not a refusal.
+_SES_TRANSIENT_4XX = {408, 409, 429}
+
+logger = logging.getLogger(__name__)
 
 
 class _BrevoRejected(Exception):
@@ -122,7 +127,9 @@ def _send_via_ses(to_email: str, subject: str, body: str, *, timeout: int) -> st
         from_address = f"{from_name} <{from_address}>"
 
     try:
-        client = boto3.client(
+        # A session of its own per send: boto3's shared default session is not safe to
+        # create clients from concurrently, and gunicorn runs several threads.
+        client = boto3.session.Session().client(
             "sesv2",
             region_name=settings.AWS_REGION,
             endpoint_url=_SES_ENDPOINT,
@@ -156,7 +163,7 @@ def _send_via_ses(to_email: str, subject: str, body: str, *, timeout: int) -> st
         status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
         reason = (
             "provider_rejected"
-            if 400 <= status < 500 and status not in {408, 409}
+            if 400 <= status < 500 and status not in _SES_TRANSIENT_4XX
             else "provider_unavailable"
         )
         raise EmailDeliveryError(reason) from None
@@ -213,8 +220,14 @@ def send_transactional_email(to_email: str, subject: str, body: str) -> str:
             except _BrevoRejected:
                 if not has_fallback:
                     raise EmailDeliveryError("provider_rejected") from None
+                # No recipient, code or key in the line: only that the fallback was taken.
+                logger.warning(
+                    "student OTP email: Brevo declined the submission; sending through SES"
+                )
         elif not has_fallback:
             raise EmailDeliveryError("provider_budget_exhausted")
+        else:
+            logger.warning("student OTP email: Brevo daily cap reached; sending through SES")
 
         _charge_shared_budget()
     except DatabaseError:

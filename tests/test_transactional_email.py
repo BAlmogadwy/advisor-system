@@ -51,7 +51,15 @@ def providers(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock, Mock, Mock]:
         "MessageId": "ses-id",
     }
     ses_factory = Mock(return_value=ses)
-    monkeypatch.setattr(boto3, "client", ses_factory)
+    session = Mock()
+    session.return_value.client = ses_factory
+    monkeypatch.setattr(boto3.session, "Session", session)
+    # The shared default session is not thread-safe: a send must never create its client there.
+    monkeypatch.setattr(
+        boto3,
+        "client",
+        Mock(side_effect=AssertionError("client made on the shared default session")),
+    )
     return brevo, response, ses_factory, ses
 
 
@@ -116,7 +124,8 @@ def test_ses_fallback_uses_a_real_sdk_client_and_closes_it(
 ) -> None:
     _, response, ses_factory, _ = providers
     response.status = 429
-    client = boto3.session.Session().client(
+    # boto3.Session is the real class (the fixture replaced only boto3.session.Session).
+    client = boto3.Session().client(
         "sesv2",
         region_name="ap-southeast-1",
         aws_access_key_id="offline",
@@ -150,6 +159,41 @@ def test_ses_fallback_uses_a_real_sdk_client_and_closes_it(
         requests.assert_no_pending_responses()
 
     close.assert_called_once_with()
+
+
+def test_ses_throttling_is_unavailable_not_a_rejection(
+    providers: tuple[Mock, Mock, Mock, Mock],
+) -> None:
+    from botocore.exceptions import ClientError  # type: ignore[import-untyped]
+
+    _, response, _, ses = providers
+    response.status = 401  # Brevo declines: the send falls back to SES
+    ses.send_email.side_effect = ClientError(
+        {
+            "Error": {"Code": "TooManyRequestsException", "Message": "throttled"},
+            "ResponseMetadata": {"HTTPStatusCode": 429},
+        },
+        "SendEmail",
+    )
+
+    with pytest.raises(EmailDeliveryError, match="^provider_unavailable$"):
+        send_transactional_email(RECIPIENT, SUBJECT, BODY)
+
+
+def test_a_fallback_to_ses_is_logged_without_the_recipient_or_code(
+    providers: tuple[Mock, Mock, Mock, Mock], caplog: pytest.LogCaptureFixture
+) -> None:
+    _, response, _, _ = providers
+    response.status = 401
+
+    with caplog.at_level("WARNING", logger="core.services.transactional_email"):
+        assert send_transactional_email(RECIPIENT, SUBJECT, BODY) == "ses-id"
+
+    lines = [
+        r.getMessage() for r in caplog.records if r.name == "core.services.transactional_email"
+    ]
+    assert lines == ["student OTP email: Brevo declined the submission; sending through SES"]
+    assert not any(RECIPIENT in line or "203040" in line for line in caplog.messages)
 
 
 def test_separate_authenticated_sender_for_each_provider(

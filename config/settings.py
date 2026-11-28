@@ -751,11 +751,8 @@ LOGGING = {
             "level": "WARNING",
             "propagate": False,
         },
-        "urllib3": {
-            "handlers": ["discard_vendor_email"],
-            "level": "WARNING",
-            "propagate": False,
-        },
+        # botocore's own HTTP layer logs under "botocore" (silenced above). urllib3 is
+        # left alone: requests uses it across the app, and its warnings must stay visible.
         # gunicorn configures no root logger, so without these the app's own
         # warnings reached Render only through Python's bare last-resort
         # handler, and its INFO lines not at all.
