@@ -451,6 +451,31 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "report_see_cases": ("See the cases", "عرض الحالات"),
     "report_see_cases_about": ("See the cases: {what}", "عرض الحالات: {what}"),
     "report_link": ("See the report", "عرض التقرير"),
+    # The report as a workbook
+    "export_button": ("Download as Excel", "تنزيل بصيغة إكسل"),
+    "export_hint": (
+        "Each part of the report on its own sheet, and one row per point. Students appear"
+        " by university ID only; what they wrote stays on each case.",
+        "كل جزء من التقرير في ورقة مستقلة، وصف لكل نقطة. يظهر الطلاب بأرقامهم الجامعية فقط،"
+        " وتبقى كتاباتهم في صفحة كل حالة.",
+    ),
+    "export_sheet_summary": ("Summary", "الملخص"),
+    "export_sheet_issues": ("Issues", "المشكلات"),
+    "export_sheet_sections": ("Sections", "الشعب"),
+    "export_sheet_moves": ("Section changes", "طلبات الانتقال"),
+    "export_sheet_missing": ("Missing courses", "المقررات الناقصة"),
+    "export_sheet_programmes": ("Programmes", "البرامج"),
+    "export_sheet_points": ("Points", "النقاط"),
+    "export_col_item": ("Item", "البند"),
+    "export_col_value": ("Value", "القيمة"),
+    "export_col_student_id": ("University ID", "الرقم الجامعي"),
+    "export_generated": ("Prepared at", "وقت الإعداد"),
+    "export_median_hours": ("Median hours to the first action", "الوسيط بالساعات لأول إجراء"),
+    "export_prompt": ("First action within two days", "أول إجراء خلال يومين"),
+    "export_acted_on": ("Cases acted on", "الحالات التي اتُّخذ فيها إجراء"),
+    "export_helpful_yes": ("Answers found helpful", "ردود عُدّت مفيدة"),
+    "export_helpful_no": ("Answers found not helpful", "ردود عُدّت غير مفيدة"),
+    "export_withdrawn": ("Withdrawn by the student", "سحبها الطالب"),
 }
 
 #: The guide's steps: (title, text) pairs in each language.

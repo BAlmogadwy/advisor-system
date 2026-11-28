@@ -50,6 +50,7 @@ from core.models import (
 from core.services import timetable_feedback as feedback
 from core.services import timetable_feedback_copy as copy
 from core.services import timetable_feedback_report as report
+from core.services import timetable_feedback_report_export as report_export
 from core.services import timetable_feedback_staff as service
 from core.services import timetable_feedback_staff_copy as scopy
 from core.services import timetable_feedback_workflow as workflow
@@ -1257,6 +1258,21 @@ def _queue_link(**params: object) -> str:
     return f"{reverse('staff_timetable_feedback_queue')}?{query.urlencode()}"
 
 
+def _export_link(filters: report.Filters) -> str:
+    """The workbook of exactly what the page shows: the same narrowing, the term
+    included even when it is every term, so the file never falls back to another."""
+    query = QueryDict(mutable=True)
+    query["term"] = filters.term_value
+    for key, value in (
+        ("programme", filters.programme),
+        ("reason", filters.reason),
+        ("window", filters.window),
+    ):
+        if value:
+            query[key] = value
+    return f"{reverse('staff_timetable_feedback_report_export')}?{query.urlencode()}"
+
+
 def _share(part: int, whole: int) -> int:
     """A whole percentage; 0 when there is nothing to share."""
     return round(100 * part / whole) if whole else 0
@@ -1369,6 +1385,38 @@ def _kpis(data: report.Report, language: str) -> list[dict[str, Any]]:
 
 @never_cache
 @require_GET
+def report_export_view(request: HttpRequest) -> HttpResponse:
+    """The report the page shows, narrowed the same way, as a workbook to keep.
+
+    Over the same scope as the page, never more; every download is audited with
+    what it was narrowed to."""
+    begun = _begin(request)
+    if isinstance(begun, HttpResponse):
+        return begun
+    language, staff = begun
+    content, name, data = report_export.build_workbook(staff, request.GET, language=language)
+    log_audit_event(
+        request,
+        action="timetable_feedback.report_export",
+        status="success",
+        details={
+            "term": data.filters.term,
+            "programme": data.filters.programme,
+            "reason": data.filters.reason,
+            "window": data.filters.window,
+            "cases": data.totals.cases,
+        },
+    )
+    response = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{name}"'
+    return response
+
+
+@never_cache
+@require_GET
 def report_view(request: HttpRequest) -> HttpResponse:
     begun = _begin(request)
     if isinstance(begun, HttpResponse):
@@ -1451,6 +1499,7 @@ def report_view(request: HttpRequest) -> HttpResponse:
             staff=staff,
             filters=narrowed,
             scope=_scope_line(staff, language),
+            export_url=_export_link(narrowed),
             terms=data.terms,
             every_term=report.EVERY_TERM,
             programmes=data.programmes,

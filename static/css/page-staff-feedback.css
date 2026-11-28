@@ -569,6 +569,26 @@
   margin: 0 0 12px;
 }
 
+/* The workbook: the button, and what the file holds and leaves out beside it. */
+.ttfr-export {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: -8px 0 18px;
+}
+
+.ttfr-export .btn {
+  box-sizing: border-box;
+}
+
+.ttfr-export-hint {
+  color: var(--t2);
+  flex: 1 1 16rem;
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
 .ttfr-filters {
   align-items: end;
   display: grid;

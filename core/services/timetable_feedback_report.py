@@ -125,10 +125,13 @@ def sent_from_programme_q(code: str) -> Q:
     )
 
 
-def _split_identity(identity: str) -> tuple[str, str]:
+def split_identity(identity: str) -> tuple[str, str]:
     """('CS113', 'Programming') from 'CS113::Programming'; a bare code has no name."""
     code, _, name = str(identity or "").partition("::")
     return code.strip(), name.strip()
+
+
+_split_identity = split_identity
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +351,16 @@ def _narrowed(
     live = cases.exclude(status=S.WITHDRAWN)
     points = points.filter(case__in=live.values("pk"))
     return cases, live, points
+
+
+def narrowed(
+    staff: staff_service.Staff, filters: Filters, now: datetime
+) -> tuple[
+    QuerySet[TimetableFeedback], QuerySet[TimetableFeedback], QuerySet[TimetableFeedbackPoint]
+]:
+    """(cases, live cases, live points) exactly as the report counts them, for a
+    reader that needs the rows themselves (the workbook's point sheet)."""
+    return _narrowed(staff, filters, now)
 
 
 def _totals(

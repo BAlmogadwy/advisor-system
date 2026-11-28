@@ -57,6 +57,7 @@ QUEUE = "/ops/timetable-feedback/"
 GUIDE = "/ops/timetable-feedback/guide/"
 BULK = "/ops/timetable-feedback/bulk/"
 REPORT = "/ops/timetable-feedback/report/"
+EXPORT = "/ops/timetable-feedback/report/export/"
 T = scopy.strings("en")
 TA = scopy.strings("ar")
 SENTINEL_NOTE = "INTERNAL-SENTINEL-7Q"
@@ -116,7 +117,7 @@ def _act(client, case, action, language="en", **fields):
     return client.post(_case_url(case, "action/"), data, headers={"accept-language": language})
 
 
-STAFF_URLS = [QUEUE, GUIDE, REPORT, "/ops/timetable-feedback/TTF-2026-00001/"]
+STAFF_URLS = [QUEUE, GUIDE, REPORT, EXPORT, "/ops/timetable-feedback/TTF-2026-00001/"]
 
 
 # ---------------------------------------------------------------------------
