@@ -248,10 +248,10 @@ class PlannerBoardZonesTests(PlannerBoardCase):
     # ── reset, escape and the inert disclosure ───────────────────────────────
     def test_reset_over_an_edited_list_and_a_changed_eligibility_asks_first(self) -> None:
         fake = BuildFake()
-        page = self._open(fake)
-        page.click("#plbEligRelaxed")  # the list is still the suggestions: applied at once
+        page = self._open(fake, plan=False)
+        page.click("#plbEligRelaxed")  # nothing added yet: applied at once
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
+        self._add(page, "AI331")
         self.assertEqual(self._rows(page, "new"), ["AI331"])
         loads = len(fake.context_bodies)
         page.click("#plbRulesReset")
@@ -263,13 +263,15 @@ class PlannerBoardZonesTests(PlannerBoardCase):
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
         self.assertEqual(self._rows(page, "new"), ["AI331"])
         self.assertEqual(len(fake.context_bodies), loads)
-        # Go: the usual rules come back and the suggestions are reloaded
+        # Go: the usual rules come back, the student is reloaded and Your plan is the registered
+        # courses only again (the course the adviser added is cleared)
         page.click("#plbRulesReset")
         page.click("#plbEligGo")
         expect(page.locator("#plbEligStrict")).to_be_checked()
         expect(page.locator("#plbRulesUsual")).to_be_visible()
-        expect(page.locator("#plbPlanList .plb-prow[data-code='AI342']")).to_be_visible()
-        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
+        expect(page.locator("#plbAvailList .plb-arow[data-code='AI331']")).to_be_visible()
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
         self.assertEqual(fake.context_bodies[-1]["eligibility_mode"], "strict")
 
     def test_reset_without_an_edited_list_applies_at_once(self) -> None:

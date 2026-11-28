@@ -106,6 +106,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         page = self._open(fake, load=False)
         self._fetch(page, STUDENT_ID)
         self._eligible(page)
+        self._plan_recommended(page)
         page.click("#plbBuild")
         self._wait_until(page, lambda: len(fake.projection_bodies) == 1)
         self.assertEqual(fake.projection_bodies, [{"token": "token"}])
@@ -131,6 +132,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         page = self._open(fake, load=False)
         self._fetch(page, STUDENT_ID)
         expect(page.locator("#plbBuild")).to_be_enabled()
+        self._plan_recommended(page)
         page.click("#plbBuild")
         self._wait_until(page, lambda: len(fake.projection_bodies) == 1)
         self.assertEqual(fake.projection_bodies, [{"token": "token"}])
@@ -194,6 +196,7 @@ class PlannerBoardEffectsBrowserTests(PlannerBoardCase):
         page = self._open(fake, load=False)
         self._fetch(page, STUDENT_ID)
         expect(page.locator("#plbBuild")).to_be_enabled()
+        self._plan_recommended(page)
         page.click("#plbBuild")
         self._wait_until(page, lambda: len(fake.projection_bodies) == 1)
         return page

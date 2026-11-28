@@ -136,6 +136,10 @@
     tickSection: (code, label) => (IS_AR ? `تحديد الشعبة ${label} من ${code}` : `Tick section ${label} of ${code}`),
     tickPlanned: (code) => (IS_AR ? `اختيار ${code} في الخطة` : `Select ${code} in the plan`),
     nothingHere: IS_AR ? 'لا مقررات لإضافتها من هذه القائمة.' : 'Nothing to add from this list.',
+    // The "Recommended" source when it has nothing to show: there was nothing to recommend, or the
+    // adviser has already moved every recommended course into Your plan (Fetch adds none itself).
+    noRecs: IS_AR ? 'لا مقررات مقترحة لهذا الطالب.' : 'Nothing is recommended for this student.',
+    recsAllPlanned: IS_AR ? 'كل المقررات المقترحة موجودة في خطتك.' : 'Every recommended course is already in Your plan.',
     allLoading: IS_AR ? 'جارٍ تحميل كل مقررات هذا الفصل…' : 'Loading every course offered this term…',
     allFailed: IS_AR ? 'تعذّر تحميل قائمة كل المقررات.' : 'The list of all courses could not be loaded.',
     sectionsBtn: (labels) => (IS_AR
@@ -154,9 +158,8 @@
     xRemAll: IS_AR ? 'إزالة كل مقررات الخطة' : 'Remove every planned course',
     addedMany: (n) => (IS_AR ? `أُضيفت ${T.courseWord(n)} إلى الخطة.` : `Added ${n} courses to the plan.`),
     removedMany: (n) => (IS_AR ? `أُزيلت ${T.courseWord(n)} من الخطة.` : `Removed ${n} courses from the plan.`),
-    resetDone: (n) => (IS_AR
-      ? `أُعيدت المقررات إلى المقترح (${n}).`
-      : `Courses reset to the ${n} suggested.`),
+    // The registered courses use the whole limit and nothing is planned yet: not "over", just no room.
+    noRoomLeft: IS_AR ? 'لا متّسع ضمن الحد' : 'no room left under the limit',
     rulesChanged: (n) => (IS_AR
       ? pluralAr(n, forms('قاعدة واحدة تغيّرت', 'قاعدتان تغيّرتا', '{n} قواعد تغيّرت', '{n} قاعدة تغيّرت'))
       : `${n} ${n === 1 ? 'rule' : 'rules'} changed`),
@@ -508,10 +511,9 @@
     catalog: null,     // Map normalised course code -> [section]; null = unknown
     shortlist: [],
     pickTab: 'avail',  // phones: which picker panel shows (avail | plan)
-    hues: {},          // this student's course colours: code -> 1..6, kept while the plan changes
-    suggested: [],     // the courses the page suggested when the student loaded ("Reset to suggestions")
+    hues: {},          // this student's course colours: code -> 1..HUES, kept while the plan changes
     rules: { ...DEFAULT_RULES },
-    shownElig: null,   // the eligibility the suggestions on screen were loaded with
+    shownElig: null,   // the eligibility the recommendations on screen were loaded with
     defaults: { ...DEFAULT_RULES },
     focus: null,       // {kind, code}: where focus goes after the next redraw
     // The build loop. `build` is null until a reply is accepted, and again when another student
@@ -745,16 +747,17 @@
     if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
       loadCatalog(state.gen);
     }
-    // The suggestions depend on eligibility: reload them, as the current page does. If no reload
+    // The recommendations depend on eligibility: reload them, as the current page does. If no reload
     // lands, loadStudent puts back the eligibility the page was loaded with.
     if (state.ctx && state.rules.eligibility !== before.eligibility) loadStudent({ reuse: true });
   }
   // A switch on the board.
   function changeRuleInPlace(key, value) {
     if (state.rules[key] === value) return;
-    // The reload would replace a course list the adviser has changed: an inline confirm says so and
-    // asks. The switch keeps showing the rule in force until "Change and reset".
-    if (key === 'eligibility' && state.ctx && !isSuggested()) {
+    // The reload clears Your plan back to the registered courses: when the adviser has added
+    // courses, an inline confirm says so and asks. The switch keeps showing the rule in force
+    // until "Change and clear".
+    if (key === 'eligibility' && state.ctx && !nothingAdded()) {
       renderRules();
       openEligConfirm(value);
       return;
@@ -805,10 +808,10 @@
       if (on) on.focus();
     }
   }
-  // "Reset": back to the usual rules. Putting back another eligibility reloads the suggestions, so
-  // over an edited course list it asks first, as the switch does.
+  // "Reset": back to the usual rules. Putting back another eligibility reloads the student, which
+  // clears the courses the adviser added, so then it asks first, as the switch does.
   function resetRules() {
-    if (state.ctx && !isSuggested() && state.defaults.eligibility !== state.rules.eligibility) {
+    if (state.ctx && !nothingAdded() && state.defaults.eligibility !== state.rules.eligibility) {
       openEligConfirm(state.defaults.eligibility, true);
       return;
     }
@@ -1819,15 +1822,15 @@
       .filter((c) => (c.status === 'not_taken' && c.canRegister) || (includeStudying && c.status === 'studying'))
       .sort((a, b) => b.importance - a.importance);
   }
-  function shortlistFromRecs(recs) {
-    return recs
-      .filter((r) => r.status === 'Eligible')
-      .map((r) => ({
-        course_code: String(r.course_code || ''), course_name: String(r.course_name || ''),
-        credits: Number(r.credits) || 0, priority: r.priority || 'Med', status: 'Eligible',
-        missing_prerequisites: [], must_take: false, score: Number(r.score) || 0,
-      }));
+  // A recommended course as the build takes it: the recommender's priority and score ride along.
+  function itemFromRec(r) {
+    return {
+      course_code: String(r.course_code || ''), course_name: String(r.course_name || ''),
+      credits: Number(r.credits) || 0, priority: r.priority || 'Med', status: 'Eligible',
+      missing_prerequisites: [], must_take: false, score: Number(r.score) || 0,
+    };
   }
+  const eligibleRec = (code) => state.recs.find((r) => norm(r.course_code) === norm(code) && String(r.status) === 'Eligible') || null;
   function itemFromPlan(course) {
     return {
       course_code: course.code, course_name: course.name, credits: course.credits,
@@ -1941,10 +1944,14 @@
   };
   const entrySections = (entry, src) => (src === 'all' && state.allCatalog ? state.allCatalog.get(entry.code) || [] : catalogSections(entry.code));
   const sortSections = (list) => list.slice().sort((a, b) => String(a.section || '').localeCompare(String(b.section || ''), 'en', { numeric: true }));
-  // The plan's row for the course, a recommendation's, or one built from the whole-term catalogue.
+  // What a course moved into Your plan is, whichever source it came from: the recommendation when
+  // the course is recommended (the build orders by the recommender's priority and score, as it did
+  // when Fetch used to fill the plan with them), else the plan's row, else one built from the
+  // whole-term catalogue.
   function makeItem(entry) {
+    const rec = entry.recRow && String(entry.recRow.status) === 'Eligible' ? entry.recRow : eligibleRec(entry.code);
+    if (rec) return itemFromRec(rec);
     if (entry.plan) return itemFromPlan(entry.plan);
-    if (entry.recRow && entry.recRow.status === 'Eligible') return shortlistFromRecs([entry.recRow])[0];
     return {
       course_code: entry.code, course_name: entry.name, credits: entry.credits || 0, priority: 'Med',
       status: 'Eligible', missing_prerequisites: [], must_take: false, score: 0,
@@ -2087,6 +2094,13 @@
     if (ticked) row.dataset.ticked = 'true';
     return row;
   }
+  // Why a source shows nothing. "Recommended" says which truth it is: nothing was recommended, or
+  // every recommended course is already in Your plan (moved there, or registered and kept).
+  function emptyText(src) {
+    if (state.pick.find.trim()) return T.noMatch;
+    if (src !== 'recommended') return T.nothingHere;
+    return state.recs.length ? T.recsAllPlanned : T.noRecs;
+  }
   // "Available · 11 courses": the title in bold, the count muted (the text reads the same).
   function paneHead(node, [title, count]) {
     node.replaceChildren(`${title} `, el('span', 'plb-h3-n', `· ${count}`));
@@ -2101,7 +2115,7 @@
     else if (src === 'all' && state.allState === 'loading') nodes.push(el('p', 'plb-empty plb-pad', T.allLoading));
     else if (src === 'all' && state.allState === 'error') nodes.push(el('p', 'plb-empty plb-pad', T.allFailed));
     else if ((src === 'plan' || src === 'eligible') && state.planState === 'loading' && !lists.avail.length) nodes.push(el('p', 'plb-empty plb-pad', T.loadingPlan));
-    else if (!lists.avail.length && !lists.blocked.length) nodes.push(el('p', 'plb-empty plb-pad', state.pick.find.trim() ? T.noMatch : T.nothingHere));
+    else if (!lists.avail.length && !lists.blocked.length) nodes.push(el('p', 'plb-empty plb-pad', emptyText(src)));
     // The list grows with its content (the page scrolls); a long source shows its first rows and a button.
     const shown = state.pick.showAll ? lists.avail : lists.avail.slice(0, AVAIL_CAP);
     for (const entry of shown) nodes.push(availRowNode(entry, src));
@@ -2280,7 +2294,6 @@
     if (focus) $(name === 'avail' ? 'plbPickTabAvail' : 'plbPickTabPlan').focus();
   }
   function renderCreditsHeader() {
-    renderReset();
     const load = $('plbPlanLoad');
     const line = $('plbMeterLine');
     const meter = $('plbMeter');
@@ -2298,9 +2311,15 @@
     const parts = [T.plannedN(planned)];
     if (keep) parts.push(T.registeredN(reg));
     let text = parts.join(' + ');
+    // The limit is the build's: what the registered courses leave of it is the room for the planned
+    // ones (the build's `credit_room`). Only planned credits can be over it: registered courses
+    // that use the whole limit leave no room, they are not "over" when nothing is planned.
+    const room = cap === null ? null : Math.max(0, cap - reg);
+    const free = room === null ? null : room - planned;
     if (cap !== null) {
-      const free = cap - used;
-      text += free >= 0 ? ` · ${free} ${T.creditUnit(free)} ${T.free2}` : ` · ${T.overLimitN(-free)}`;
+      if (free < 0) text += ` · ${T.overLimitN(-free)}`;
+      else if (room === 0) text += ` · ${T.noRoomLeft}`;
+      else text += ` · ${free} ${T.creditUnit(free)} ${T.free2}`;
       load.dataset.over = free < 0 ? 'true' : 'false';
       line.dataset.over = free < 0 ? 'true' : 'false';
       const total = Math.max(cap, used) || 1;
@@ -2311,8 +2330,8 @@
     } else meter.hidden = true;
     line.textContent = text;
     const sum = T.phoneSum(state.shortlist.length, cap === null ? T.loadOnly(used) : T.loadOf(used, cap));
-    phoneSum.textContent = cap !== null && used > cap ? `${sum} · ${T.overLimitN(used - cap)}` : sum;
-    if (cap !== null) phoneSum.dataset.over = used > cap ? 'true' : 'false';
+    phoneSum.textContent = cap !== null && free < 0 ? `${sum} · ${T.overLimitN(-free)}` : sum;
+    if (cap !== null) phoneSum.dataset.over = free < 0 ? 'true' : 'false';
   }
   // The courses zone, drawn again from the state. Keyboard focus is found again by its action,
   // course and section; where that control has gone it falls to the search box.
@@ -2345,25 +2364,9 @@
     renderDetail();
     restoreFocus(mark);
   }
-  // The list is the suggested one (every field the build reads, in the same order): nothing to reset.
-  const isSuggested = () => JSON.stringify(state.shortlist) === JSON.stringify(state.suggested);
-  function renderReset() {
-    const button = $('plbReset');
-    const show = !!state.ctx && !isSuggested();
-    button.hidden = !show;
-    button.disabled = !show;
-  }
-  function resetToSuggestions() {
-    if (!state.ctx || isSuggested()) return;
-    state.shortlist = JSON.parse(JSON.stringify(state.suggested));
-    state.pick.planTicked.clear();
-    if (state.detail) delete state.detail.only;
-    planChanged();
-    setStatus('ok', T.resetDone(state.shortlist.length));
-    state.focus = { kind: 'find' };
-    renderCourses();
-    if (state.build) renderWeek();
-  }
+  // Fetch puts no course in Your plan: every planned course is one the adviser moved across. So
+  // there are no suggestions to reset to, and « (remove every planned course) is the way back.
+  const nothingAdded = () => state.shortlist.length === 0;
   function restoreFocus(mark) {
     const want = state.focus;
     state.focus = null;
@@ -2677,8 +2680,12 @@
     const cap = finitePositive(data.student.credit_cap);
     state.defaults.maxCredits = cap;
     if (previousId !== String(data.student.student_id)) state.rules.maxCredits = cap;
-    state.shortlist = shortlistFromRecs(state.recs);
-    state.suggested = JSON.parse(JSON.stringify(state.shortlist));
+    // FETCH ADDS NO COURSE (owner, 2026-11-28). Your plan starts as the registered courses (the
+    // kept rows) and nothing planned, for every student and in both modes; the recommendations
+    // wait in Available ("Recommended for this student"). The recommender proposes a term's worth
+    // as if this term's registrations were already done, so prefilling it put 8 credits on top of
+    // a full 18-credit registration. A reload (a rule, a save) clears the plan the same way.
+    state.shortlist = [];
     state.planCourses = null;
     state.planCredits = null;
     state.catalog = null;
@@ -3966,7 +3973,6 @@
         if (state.detail && state.detail.code === code) closeDetail(true);
         else openDetail(code);
       } else if (act === 'dt-close') closeDetail(true);
-      else if (act === 'reset') resetToSuggestions();
       else if (act === 'remove') removeCoursesFromPlan([code], 'row');
       else if (act === 'must') toggleRequired(code);
       else if (act === 'open') {

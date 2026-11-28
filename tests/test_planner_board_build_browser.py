@@ -48,8 +48,10 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
 
     def test_the_build_body_follows_the_rules_and_the_plan(self) -> None:
         fake = BuildFake()
-        page = self._open(fake)
+        # The rules first: a changed eligibility reloads the student, which clears Your plan.
+        page = self._open(fake, plan=False)
         self._rules(page, mode="ignore", elig="relaxed", max=15, prog=False, full=True)
+        self._plan_recommended(page)
         page.click("#plbPlanList button[data-act='remove'][data-code='AI342']")
         page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
         page.click("#plbBuild")
@@ -605,6 +607,10 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._tab_names(page)[0], "C1")
         self._fetch(page, OTHER_ID)
         self._assert_options_gone(page)
+        # The other student starts with nothing planned (Fetch adds no course); a course the
+        # adviser moves across starts on any section.
+        self.assertEqual(self._rows(page, "new"), [])
+        self._plan_recommended(page)
         self.assertEqual(self._cell(page, "AI331"), "Any section")
 
     def test_resetting_rules_that_are_already_the_usual_keeps_the_options(self) -> None:

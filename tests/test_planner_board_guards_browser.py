@@ -161,8 +161,9 @@ class PlannerBoardEligibilityRequestTests(PlannerBoardCase):
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_be_enabled()
         self.assertEqual(fake.build_bodies[-1]["eligibility_mode"], "strict")
-        # Relaxed: the suggestions reload with it, on both student requests, and so does a build.
-        page.click("#plbEligRelaxed")
+        # Relaxed: the recommendations reload with it, on both student requests, and so does a
+        # build. (Over the courses the adviser added it asks first; "Change and clear" goes on.)
+        self._rules(page, elig="relaxed")
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
         # The reload asks for the student, then for the plan: wait for the second request.
         for _ in range(250):

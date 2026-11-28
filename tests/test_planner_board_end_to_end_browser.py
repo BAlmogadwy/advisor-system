@@ -107,6 +107,13 @@ class PlannerBoardEndToEndTests(StaticLiveServerTestCase):
         expect(page.locator("#plbContext")).to_have_text(f"{STUDENT_ID} · {YEAR}/{TERM}")
         expect(page.locator("#plbStudent")).to_contain_text("Planner Sample Student")
         new_rows = "#plbPlanList .plb-prow:not(.plb-prow--kept)"
+        # Fetch adds no course: Your plan starts empty, and the adviser moves the recommended
+        # courses across (the "Recommended" source and »).
+        expect(page.locator("#plbSource")).to_be_enabled()
+        self.assertEqual(page.locator(new_rows).count(), 0)
+        page.select_option("#plbSource", "recommended")
+        expect(page.locator("#plbAvailList .plb-arow[data-code='AI331']")).to_be_visible()
+        page.click("#plbXAddAll")
         expect(page.locator(new_rows)).not_to_have_count(0)
         planned = page.eval_on_selector_all(new_rows, "rows => rows.map(r => r.dataset.code)")
         self.assertIn("AI331", planned)
