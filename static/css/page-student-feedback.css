@@ -148,8 +148,10 @@
 }
 
 /* A meeting, its day and its times, never breaks across lines ("13:00–" on one,
-   "14:15" on the next reads as two times); a list of them breaks between. */
-.ttf-when {
+   "14:15" on the next reads as two times); a list of them breaks between. Nor
+   does a date inside a sentence ("2026-" then "12-08"). */
+.ttf-when,
+.ttf-date {
   white-space: nowrap;
 }
 

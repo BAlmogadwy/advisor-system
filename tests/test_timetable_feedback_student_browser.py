@@ -60,6 +60,18 @@ OVERFLOW = """() => {
   );
 }"""
 
+#: Whether an inline element sits on one line. In Arabic a meeting or a date is
+#: several pieces (right-to-left words, left-to-right figures), each its own
+#: rectangle on the same line. Overlap is no test: with a tight line height the
+#: boxes of two lines overlap too. Pieces of one line share a centre, within half
+#: a box; the next line's is a whole line away.
+ONE_LINE = """(el) => {
+  const rects = Array.from(el.getClientRects());
+  const centres = rects.map((r) => (r.top + r.bottom) / 2);
+  const height = Math.min(...rects.map((r) => r.height));
+  return rects.length > 0 && Math.max(...centres) - Math.min(...centres) < height / 2;
+}"""
+
 
 def _section(code, label, meetings, name):
     section = TermSection.objects.create(
@@ -351,6 +363,19 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         expect(page.get_by_role("button", name="إعادة فتح هذه الملاحظة")).to_be_visible()
         self._check(page, "13-answered-ar")
 
+    def test_a_date_in_a_sentence_never_breaks_at_its_hyphens(self):
+        case = self._case("ANSWERED", answered_at=timezone.now() - timedelta(days=2))
+        # English breaks "2026-12-08" after a hyphen where it can; Arabic text
+        # is broken by other rules, so both are tried.
+        for language in ("en", "ar"):
+            page = self._page(language)
+            page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
+            # "...can be reopened until <date>", however narrow its sentence.
+            date = page.locator("#ttfAnswer .ttf-date")
+            for rem in range(4, 13):
+                date.evaluate(f"(date) => {{ date.parentElement.style.inlineSize = '{rem}rem'; }}")
+                self.assertTrue(date.evaluate(ONE_LINE), (language, rem))
+
     def test_the_list_fits_a_small_phone_and_a_whole_row_opens_its_feedback(self):
         # The longest status there is, in English.
         case = self._case("NEEDS_INFORMATION", points=2)
@@ -393,17 +418,12 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         page.set_viewport_size({"width": 320, "height": 800})
         page.goto(f"{self.live_server_url}/student/timetable-feedback/new/")
         self._check(page, "15-meetings-ar")
-        # A meeting is two pieces in Arabic (the day right to left, its times
-        # left to right): on one line when every piece overlaps every other.
-        one_line = (
-            "() => Array.from(document.querySelectorAll('.ttf-choice-meta .ttf-when'), (when) => {"
-            " const rects = Array.from(when.getClientRects());"
-            " return Math.max(...rects.map((r) => r.top)) < Math.min(...rects.map((r) => r.bottom));"
-            " })"
-        )
         # Section M1 meets on Sunday and on Tuesday: two meetings, each on one
         # line however narrow the line, so a break falls between them or nowhere.
         meta = page.locator(".ttf-choice-meta").first
+        meetings = page.locator(".ttf-choice-meta .ttf-when")
         for rem in range(6, 17):
             meta.evaluate(f"(meta) => {{ meta.style.inlineSize = '{rem}rem'; }}")
-            self.assertEqual(page.evaluate(one_line), [True, True], rem)
+            self.assertEqual(
+                meetings.evaluate_all(f"(all) => all.map({ONE_LINE})"), [True, True], rem
+            )

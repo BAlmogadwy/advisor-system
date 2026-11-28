@@ -147,7 +147,11 @@ def test_inside_its_window_an_answer_says_until_when_it_can_be_reopened(world):
     client, case = _case_in(world, "ANSWERED", answered_days_ago=3)
     until = (case.answered_at + timedelta(days=14)).astimezone(timezone.get_current_timezone())
     html = _page(client, case)
-    assert f'<bdi dir="ltr">{until:%Y-%m-%d}</bdi>' in html.split('id="ttfAnswer"', 1)[1]
+    # A date inside a sentence is kept on one line (ttf-date).
+    assert (
+        f'<bdi dir="ltr" class="ttf-date">{until:%Y-%m-%d}</bdi>'
+        in html.split('id="ttfAnswer"', 1)[1]
+    )
 
 
 def test_with_every_follow_up_used_the_page_says_so_instead_of_offering_one(world):
@@ -633,7 +637,7 @@ def test_an_answer_leads_the_home_page_until_its_window_closes(world):
     banner = _banner(_html(_get(client, reverse("student_home"))))
     assert 'data-kind="answer"' in banner
     until = (case.answered_at + timedelta(days=14)).astimezone(timezone.get_current_timezone())
-    assert f'<bdi dir="ltr">{until:%Y-%m-%d}</bdi>' in banner
+    assert f'<bdi dir="ltr" class="ttf-date">{until:%Y-%m-%d}</bdi>' in banner
 
     TimetableFeedback.objects.filter(pk=case.pk).update(
         answered_at=timezone.now() - timedelta(days=30)

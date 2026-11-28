@@ -1574,7 +1574,7 @@ def report_view(request: HttpRequest) -> HttpResponse:
                     language,
                     period=period,
                     total=copy.bdi(sent),
-                    day=copy.bdi(busiest[0].isoformat()),
+                    day=copy.date_html(busiest[0].isoformat()),
                     count=copy.bdi(busiest[1]),
                 )
                 if busiest and busiest[1]

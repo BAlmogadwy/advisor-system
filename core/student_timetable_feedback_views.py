@@ -888,7 +888,7 @@ def case_page(
                 copy.text(
                     "detail_answer_open",
                     language,
-                    date=copy.bdi(_date(workflow.reopen_until(case))),
+                    date=copy.date_html(_date(workflow.reopen_until(case))),
                 )
                 if offered("reopen_answer")
                 else ""
@@ -1113,7 +1113,7 @@ def _banner(cases: list[TimetableFeedback], language: str) -> dict[str, object] 
     reference = copy.bdi(case.reference)
     details: dict[str, object] = {"reference": reference}
     if kind == "answer":
-        details["date"] = copy.bdi(_date(workflow.reopen_until(case)))
+        details["date"] = copy.date_html(_date(workflow.reopen_until(case)))
     return {
         "kind": kind,
         "title": copy.text(f"banner_{kind}_title", language),

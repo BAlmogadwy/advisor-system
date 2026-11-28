@@ -693,6 +693,13 @@ def term_html(academic_year: object, term: object) -> SafeString:
     return bdi(f"{academic_year}/{term}")
 
 
+def date_html(value: object) -> SafeString:
+    """A date inside a sentence: isolated left-to-right like `bdi`, and kept on one
+    line (``ttf-date``), as ``2026-`` at a line's end and ``12-08`` on the next
+    read as two numbers."""
+    return format_html('<bdi dir="ltr" class="ttf-date">{}</bdi>', value)
+
+
 def strings(language: str) -> dict[str, str]:
     """Every page string without placeholders, in ``language``, for templates.
 
