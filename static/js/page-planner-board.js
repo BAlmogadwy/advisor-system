@@ -3002,12 +3002,16 @@
     renderGuide();
     renderGrad();
     holdBandHeight(false);
-    // Beside Rebuild: whether the options below still match the courses and rules (nothing before a build).
+    // Beside Rebuild: whether the options below still match the courses and rules (nothing before a
+    // build, nor while one runs: a new build retires the last one at once). A live region: it is never hidden, so the line it says is in the
+    // accessibility tree already when its words change, and a screen reader announces it ("Options
+    // are out of date — rebuild"). Empty, it takes no room (the stylesheet). Only a change of words
+    // is written: a redraw that says the same is not announced again.
     const bstate = $('plbBuildState');
     const row = bstate.closest('.plb-buildrow');
-    bstate.hidden = !state.build || building;
+    const said = state.build ? (state.build.stale ? T.optionsStale : T.optionsCurrent) : '';
     bstate.dataset.kind = state.build && state.build.stale ? 'warn' : 'ok';
-    bstate.textContent = state.build ? (state.build.stale ? T.optionsStale : T.optionsCurrent) : '';
+    if (bstate.textContent !== said) bstate.textContent = said;
     row.dataset.stale = state.build && state.build.stale ? 'true' : '';
     const last = $('plbLastBuild');
     if (state.build) last.replaceChildren(`${T.lastBuild} `, bdi(state.build.at));

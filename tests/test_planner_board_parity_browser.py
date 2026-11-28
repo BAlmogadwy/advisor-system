@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 
 from tests.planner_board_support import (
+    FIVE,
     OVERFLOWS,
     STUDENT_ID,
     STUDENT_PLAN,
@@ -85,7 +86,7 @@ class PlannerBoardParityBrowserTests(PlannerBoardCase):
     # ── item 11: the build row's status line ───────────────────────────────────────────────
     def test_the_build_row_says_whether_the_options_still_match(self) -> None:
         page = self._open(BuildFake())
-        expect(page.locator("#plbBuildState")).to_be_hidden()  # before any build: nothing
+        expect(page.locator("#plbBuildState")).to_have_text("")  # before any build: nothing said
         page.click("#plbBuild")
         expect(page.locator("#plbBuildState")).to_have_text(
             "The options below match these courses and rules"
@@ -107,6 +108,56 @@ class PlannerBoardParityBrowserTests(PlannerBoardCase):
         )
         self._rules(page, full=True)
         expect(page.locator("#plbBuildState")).to_have_text("الخيارات قديمة، أعد البناء")
+
+    # ── S6 item F: the status line is a live region that is always there ─────────────────
+    LIVE = """() => { const n = document.getElementById('plbBuildState'); const cs = getComputedStyle(n);
+      return { hidden: n.hidden, display: cs.display, visibility: cs.visibility, live: n.getAttribute('aria-live'),
+        atomic: n.getAttribute('aria-atomic'), text: n.textContent, same: n.dataset.probe === '1',
+        box: Math.round(n.getBoundingClientRect().height) }; }"""
+
+    def test_the_build_state_line_stays_in_the_accessibility_tree_and_only_its_words_change(
+        self,
+    ) -> None:
+        fake = BuildFake()
+        fake.hold_build = 1
+        page = self._open(fake)
+        page.evaluate("document.getElementById('plbBuildState').dataset.probe = '1'")
+
+        def held() -> None:
+            for _ in range(250):
+                if fake.pending_build:
+                    return
+                page.wait_for_timeout(20)
+            raise AssertionError("the build was not asked")
+
+        def look(text):
+            expect(page.locator("#plbBuildState")).to_have_text(text)
+            now = page.evaluate(self.LIVE)
+            # Never hidden: present to a screen reader before its words change, so they are said.
+            self.assertFalse(now["hidden"], now)
+            self.assertNotEqual(now["display"], "none", now)
+            self.assertEqual(now["visibility"], "visible", now)
+            self.assertEqual((now["live"], now["atomic"]), ("polite", "true"), now)
+            self.assertTrue(now["same"], "the region was replaced, not its words")
+            return now
+
+        before = look("")  # no build: nothing said, and no room taken
+        self.assertLessEqual(before["box"], 1)
+        page.click("#plbBuild")
+        held()
+        look("")  # building: nothing claimed yet
+        fake.pending_build.pop().fulfill(json=FIVE)
+        look("The options below match these courses and rules")
+        self._rules(page, full=True)
+        stale = look("Options are out of date — rebuild")
+        self.assertGreater(stale["box"], 1)
+        # A rebuild: the out-of-date claim goes while it runs, and the new words come back.
+        fake.hold_build = 1
+        page.click("#plbBuild")
+        held()
+        look("")
+        fake.pending_build.pop().fulfill(json=FIVE)
+        look("The options below match these courses and rules")
 
     # ── item F: one week style, one colour per course, registered ones locked ──────────────
     def test_every_week_draws_registered_courses_in_their_own_colour_with_a_lock(self) -> None:
