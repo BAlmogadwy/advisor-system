@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.queue_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=3">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=5"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=5">{% endblock %}
 
 {% block page_heading %}{{ t.queue_title }}{% endblock %}
 
@@ -87,7 +87,9 @@
 <form method="post" action="{% url 'staff_timetable_feedback_bulk' %}" id="ttfsBulkForm">
   {% csrf_token %}
   <div class="card p-0 mb-3">
-    <div class="table-wrap">
+    {% comment %}No height of its own: a page of cases scrolls with the page, never
+    inside it.{% endcomment %}
+    <div class="table-wrap ttfs-queue-wrap">
       <table class="table ttfs-queue" id="ttfsQueue">
         <caption class="visually-hidden">{{ t.queue_title }}</caption>
         <thead>
@@ -111,7 +113,7 @@
             <td>
               {% if row.student_missing %}<span>{{ t.student_unavailable }}</span>{% else %}<span dir="auto">{{ row.student_name }}</span>{% endif %}
               <br><small class="ttf-small"><bdi dir="ltr">{{ row.student_id }}</bdi>{% if row.programme %} · <bdi dir="ltr">{{ row.programme }}</bdi>{% endif %}</small>
-              <span class="ttfs-markers">{% if row.new %}<span class="ttf-tag ttfs-new">{{ t.marker_new }}</span>{% endif %}{% if row.unrouted %}<span class="ttf-tag ttfs-unrouted">{{ t.marker_unrouted }}</span>{% endif %}{% if row.registered %}<span class="ttf-tag">{{ t.marker_registered }}</span>{% endif %}{% if row.graduating %}<span class="ttf-tag">{{ t.marker_graduating }}</span>{% endif %}</span>
+              <span class="ttfs-markers">{% if row.untouched %}<span class="ttf-tag ttfs-untouched">{{ t.kpi_untouched }}</span>{% endif %}{% if row.new %}<span class="ttf-tag ttfs-new">{{ t.marker_new }}</span>{% endif %}{% if row.unrouted %}<span class="ttf-tag ttfs-unrouted">{{ t.marker_unrouted }}</span>{% endif %}{% if row.registered %}<span class="ttf-tag">{{ t.marker_registered }}</span>{% endif %}{% if row.graduating %}<span class="ttf-tag">{{ t.marker_graduating }}</span>{% endif %}</span>
             </td>
             <td>{% for point in row.points %}<span dir="auto">{{ point }}</span>{% endfor %}{% if row.more %} <span class="ttf-small">{{ row.more }}</span>{% endif %}</td>
             <td><span class="ttf-status" data-status="{{ row.status_code }}">{{ row.status }}</span></td>
@@ -135,8 +137,12 @@
   {% endif %}
 
   {% if rows %}
-  <fieldset class="card p-3 mb-3 ttfs-bulk">
+  {% comment %}Without JavaScript the bulk actions always show under the list. With
+  it they wait until a case is ticked, then stay in view at the foot of the page
+  with how many are ticked.{% endcomment %}
+  <fieldset class="card p-3 mb-3 ttfs-bulk" id="ttfsBulk">
     <legend class="ttf-legend">{{ t.bulk_title }}</legend>
+    <p class="ttfs-bulk-count" id="ttfsBulkCount" hidden><span>{{ t.bulk_selected_label }}</span> <bdi dir="ltr" data-selected-count>0</bdi></p>
     <p class="ttf-hint" dir="auto">{{ bulk_hint }}</p>
     <div class="ttfs-bulk-grid">
       <div class="ttfs-bulk-part">
@@ -157,4 +163,4 @@
 </form>
 {% endblock %}
 
-{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=1" defer></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=2" defer></script>{% endblock %}

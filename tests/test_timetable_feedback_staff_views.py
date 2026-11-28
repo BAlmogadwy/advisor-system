@@ -57,6 +57,7 @@ QUEUE = "/ops/timetable-feedback/"
 GUIDE = "/ops/timetable-feedback/guide/"
 BULK = "/ops/timetable-feedback/bulk/"
 REPORT = "/ops/timetable-feedback/report/"
+EXPORT = "/ops/timetable-feedback/report/export/"
 T = scopy.strings("en")
 TA = scopy.strings("ar")
 SENTINEL_NOTE = "INTERNAL-SENTINEL-7Q"
@@ -116,7 +117,7 @@ def _act(client, case, action, language="en", **fields):
     return client.post(_case_url(case, "action/"), data, headers={"accept-language": language})
 
 
-STAFF_URLS = [QUEUE, GUIDE, REPORT, "/ops/timetable-feedback/TTF-2026-00001/"]
+STAFF_URLS = [QUEUE, GUIDE, REPORT, EXPORT, "/ops/timetable-feedback/TTF-2026-00001/"]
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,7 @@ def test_with_the_feature_off_nothing_is_written(world, staff, settings):
     assert (case.version, case.status) == (start, "SUBMITTED")
 
 
-@pytest.mark.parametrize("url", [QUEUE, GUIDE, REPORT])
+@pytest.mark.parametrize("url", [QUEUE, GUIDE, REPORT, EXPORT])
 def test_no_staff_page_is_ever_cached(staff, url):
     response = _as(staff["advisor"]).get(url)
     assert "no-cache" in response["Cache-Control"] and "no-store" in response["Cache-Control"]

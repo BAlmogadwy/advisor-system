@@ -50,6 +50,7 @@ from core.models import (
 from core.services import timetable_feedback as feedback
 from core.services import timetable_feedback_copy as copy
 from core.services import timetable_feedback_report as report
+from core.services import timetable_feedback_report_export as report_export
 from core.services import timetable_feedback_staff as service
 from core.services import timetable_feedback_staff_copy as scopy
 from core.services import timetable_feedback_workflow as workflow
@@ -527,6 +528,11 @@ def queue_view(request: HttpRequest) -> HttpResponse:
                 and case.assigned_advisor_id not in routed,
                 "registered": case.has_registration_at_submission,
                 "graduating": (student or {}).get("status") == EXPECTED_GRADUATE_STATUS,
+                # The report's own rule: waiting on staff, nobody has acted, sent
+                # more than two days ago.
+                "untouched": case.status in service.WAITING_ON_STAFF
+                and case.first_staff_action_at is None
+                and case.created_at < now - report.PROMPT,
             }
         )
 
@@ -735,8 +741,11 @@ def case_page(
     errors: list[dict[str, Any]] | None = None,
     values: dict[str, str] | None = None,
     status: int = 200,
+    refused_action: str = "",
 ) -> HttpResponse:
-    """One case as staff see it, with what this person can do on it now."""
+    """One case as staff see it, with what this person can do on it now.
+    ``refused_action`` names the action just refused, whose form the page opens
+    whatever the refusal was about (a stale version as much as a missing word)."""
     t = scopy.strings(language)
     errors = list(errors or [])
     for index, error in enumerate(errors):
@@ -830,6 +839,7 @@ def case_page(
         errors=errors,
         error_for={error["field"]: error for error in errors if error.get("field")},
         values=values or {},
+        refused_action=refused_action if refused_action in _ACTIONS else "",
         empty_text=t["case_none"],
     )
     return render(request, "core/staff_timetable_feedback_case.html", context, status=status)
@@ -919,6 +929,7 @@ def _refused_page(
     language: str,
     field: str,
     values: dict[str, str],
+    action: str = "",
 ) -> HttpResponse:
     """The case again, as it is now, with the refusal: read again through the
     person's scope, which may have changed since the case was first read."""
@@ -943,6 +954,7 @@ def _refused_page(
         errors=errors,
         values=values,
         status=refused.status,
+        refused_action=action,
     )
 
 
@@ -985,6 +997,7 @@ def action_view(request: HttpRequest, reference: str) -> HttpResponse:
             language=language,
             field=f"{action}_body",
             values=values,
+            action=action,
         )
     log_audit_event(
         request,
@@ -1245,6 +1258,21 @@ def _queue_link(**params: object) -> str:
     return f"{reverse('staff_timetable_feedback_queue')}?{query.urlencode()}"
 
 
+def _export_link(filters: report.Filters) -> str:
+    """The workbook of exactly what the page shows: the same narrowing, the term
+    included even when it is every term, so the file never falls back to another."""
+    query = QueryDict(mutable=True)
+    query["term"] = filters.term_value
+    for key, value in (
+        ("programme", filters.programme),
+        ("reason", filters.reason),
+        ("window", filters.window),
+    ):
+        if value:
+            query[key] = value
+    return f"{reverse('staff_timetable_feedback_report_export')}?{query.urlencode()}"
+
+
 def _share(part: int, whole: int) -> int:
     """A whole percentage; 0 when there is nothing to share."""
     return round(100 * part / whole) if whole else 0
@@ -1357,6 +1385,38 @@ def _kpis(data: report.Report, language: str) -> list[dict[str, Any]]:
 
 @never_cache
 @require_GET
+def report_export_view(request: HttpRequest) -> HttpResponse:
+    """The report the page shows, narrowed the same way, as a workbook to keep.
+
+    Over the same scope as the page, never more; every download is audited with
+    what it was narrowed to."""
+    begun = _begin(request)
+    if isinstance(begun, HttpResponse):
+        return begun
+    language, staff = begun
+    content, name, data = report_export.build_workbook(staff, request.GET, language=language)
+    log_audit_event(
+        request,
+        action="timetable_feedback.report_export",
+        status="success",
+        details={
+            "term": data.filters.term,
+            "programme": data.filters.programme,
+            "reason": data.filters.reason,
+            "window": data.filters.window,
+            "cases": data.totals.cases,
+        },
+    )
+    response = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{name}"'
+    return response
+
+
+@never_cache
+@require_GET
 def report_view(request: HttpRequest) -> HttpResponse:
     begun = _begin(request)
     if isinstance(begun, HttpResponse):
@@ -1439,6 +1499,7 @@ def report_view(request: HttpRequest) -> HttpResponse:
             staff=staff,
             filters=narrowed,
             scope=_scope_line(staff, language),
+            export_url=_export_link(narrowed),
             terms=data.terms,
             every_term=report.EVERY_TERM,
             programmes=data.programmes,

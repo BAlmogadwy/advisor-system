@@ -544,6 +544,14 @@ urlpatterns = [
         login_required(role_required(ROLE_ADVISOR)(staff_feedback.report_view), login_url="login"),
         name="staff_timetable_feedback_report",
     ),
+    # The same report, over the same scope, as a workbook.
+    path(
+        "ops/timetable-feedback/report/export/",
+        login_required(
+            role_required(ROLE_ADVISOR)(staff_feedback.report_export_view), login_url="login"
+        ),
+        name="staff_timetable_feedback_report_export",
+    ),
     re_path(
         r"^ops/timetable-feedback/(?P<reference>TTF-[0-9]{4}-[0-9]{5,})/$",
         login_required(role_required(ROLE_ADVISOR)(staff_feedback.case_view), login_url="login"),

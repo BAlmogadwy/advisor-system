@@ -221,6 +221,11 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "detail_title": ("Feedback {reference}", "الملاحظة {reference}"),
     "detail_term": ("Term", "الفصل الدراسي"),
     "detail_status": ("Status", "الحالة"),
+    "detail_progress": ("Progress", "مراحل الملاحظة"),
+    # Read after each step's name, for a screen reader; the dots show it to the eye.
+    "detail_step_done": ("done", "مكتملة"),
+    "detail_step_current": ("current step", "المرحلة الحالية"),
+    "detail_step_next": ("to come", "قادمة"),
     "detail_sent": ("Sent", "تاريخ الإرسال"),
     "detail_points_title": ("What you sent", "ما أرسلته"),
     "detail_whole_timetable": ("Your expected timetable as a whole", "الجدول المتوقع كاملًا"),
