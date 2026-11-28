@@ -11656,8 +11656,13 @@ html[data-theme="dark"] #apMetricsWrap .ap-gpa-bar-ok {
   .page-header:has(#apScope) > .page-header-right { margin-top: 0; }
   /* the bar carries the page's actions (the system's phone pattern); the
      page's sentence would land between them and the title, so a phone,
-     where the roster is a long list of cards, goes without it */
-  .page-header:has(#apScope) .page-header-chips { display: none; }
+     where the roster is a long list of cards, shows it only to a screen
+     reader (hidden to the eye, not removed) */
+  .page-header:has(#apScope) .page-header-chips {
+    position: absolute; width: 1px; height: 1px;
+    margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
   #apScope { flex: 1 1 100%; }
   #apScope .fb-search { flex: 1 1 100%; }
   #apScope .fb-search > select { flex: 1 1 auto; max-width: none; }
