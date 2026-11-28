@@ -87,7 +87,15 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "marker_graduating": ("Graduation expected", "تخرج متوقع"),
     "student_unavailable": ("Student record unavailable", "سجل الطالب غير متاح"),
     "more_points": ("and {count} more", "و{count} أخرى"),
-    "empty_tab": ("No cases here.", "لا توجد حالات هنا."),
+    # An empty list says what is empty, tab by tab, or that the filters left
+    # nothing (with a way to clear them).
+    "empty_tab_action": ("Nothing is waiting on you.", "لا شيء بانتظار إجرائك."),
+    "empty_tab_open": ("No case is open.", "لا توجد حالة مفتوحة."),
+    "empty_tab_student": ("No case is waiting for a student.", "لا توجد حالة بانتظار الطالب."),
+    "empty_tab_department": ("No case is with the department.", "لا توجد حالة لدى القسم."),
+    "empty_tab_closed": ("No case is closed yet.", "لا توجد حالة مغلقة بعد."),
+    "empty_tab_all": ("No case has been sent yet.", "لم تُرسل أي حالة بعد."),
+    "empty_filtered": ("No case here matches these filters.", "لا توجد هنا حالة تطابق التصفية."),
     "empty_NO_ADVISOR_ID": (
         "Your account has no advisor id, so no student's case can reach you. Please contact"
         " the system administrator.",

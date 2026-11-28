@@ -273,6 +273,30 @@ def test_select_all_sits_above_the_list_and_waits_for_the_page_script(world, adv
     assert "<input" not in html.split('<thead role="rowgroup">')[1].split("</thead>")[0]
 
 
+def _empty_row(html):
+    return html.split('id="ttfsEmpty">')[1].split("</td>")[0]
+
+
+@pytest.mark.parametrize("tab", ["action", "open", "student", "department", "closed", "all"])
+def test_an_empty_tab_says_what_is_empty(world, advisor, tab):
+    empty = _empty_row(_html(_as(advisor).get(QUEUE, {"tab": tab})))
+    assert escape(scopy.strings("en")[f"empty_tab_{tab}"]) in empty
+    assert "<a " not in empty  # nothing to clear
+
+
+@pytest.mark.parametrize(
+    "narrowing",
+    [{"reason": "TIME_UNSUITABLE"}, {"from": "report", "term": "1447/2"}],
+    ids=["the form's filters", "the report's"],
+)
+def test_filters_that_leave_nothing_say_so_and_offer_to_clear_them(world, advisor, narrowing):
+    _sent(world)  # a time clash, this term
+    words = scopy.strings("en")
+    empty = _empty_row(_html(_as(advisor).get(QUEUE, {"tab": "all", **narrowing})))
+    assert escape(words["empty_filtered"]) in empty
+    assert f'<a href="?tab=all">{escape(words["filter_clear"])}</a>' in empty
+
+
 def _filters_box(html):
     return html.split('id="ttfsFiltersBox"')[1].split(">")[0]
 

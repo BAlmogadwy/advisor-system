@@ -139,7 +139,7 @@ a desk, nothing is hidden.{% endcomment %}
             <td role="cell" class="ttfs-activity-cell" data-label="{{ t.col_activity }}"><bdi dir="ltr">{{ row.activity }}</bdi></td>
           </tr>
           {% empty %}
-          <tr role="row"><td role="cell" colspan="8" class="ttfs-empty" id="ttfsEmpty">{{ t.empty_tab }}</td></tr>
+          <tr role="row"><td role="cell" colspan="8" class="ttfs-empty" id="ttfsEmpty"><span dir="auto">{{ empty_list }}</span>{% if empty_narrowed %} <a href="?tab={{ filters.tab }}">{{ t.filter_clear }}</a>{% endif %}</td></tr>
           {% endfor %}
         </tbody>
       </table>

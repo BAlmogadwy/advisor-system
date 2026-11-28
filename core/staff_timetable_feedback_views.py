@@ -547,6 +547,25 @@ def queue_view(request: HttpRequest) -> HttpResponse:
         for tab in service.TABS
     ]
     empty = service.why_nothing_is_visible(staff)
+    # How many of the form's own filters are on: the form stays open while any
+    # is, even where it would otherwise fold away (a phone).
+    filters_active = sum(
+        1
+        for on in (
+            filters.search,
+            filters.reason,
+            filters.programme,
+            filters.registered,
+            filters.new,
+            filters.graduating,
+            filters.unrouted,
+        )
+        if on
+    )
+    report_filter = _report_filter_line(filters, language)
+    # An empty list says what is empty: the tab, or the filters, which can be
+    # cleared from there.
+    narrowed = bool(filters_active or report_filter)
     return render(
         request,
         "core/staff_timetable_feedback_queue.html",
@@ -569,22 +588,10 @@ def queue_view(request: HttpRequest) -> HttpResponse:
             ),
             next_query=(filters.query_for(page=page.next_page_number()) if page.has_next() else ""),
             empty=t[f"empty_{empty}"] if empty in ("NO_ADVISOR_ID", "NO_DEPARTMENTS") else "",
-            # How many of the form's own filters are on: the form stays open while
-            # any is, even where it would otherwise fold away (a phone).
-            filters_active=sum(
-                1
-                for on in (
-                    filters.search,
-                    filters.reason,
-                    filters.programme,
-                    filters.registered,
-                    filters.new,
-                    filters.graduating,
-                    filters.unrouted,
-                )
-                if on
-            ),
-            report_filter=_report_filter_line(filters, language),
+            empty_list=t["empty_filtered"] if narrowed else t[f"empty_tab_{filters.tab}"],
+            empty_narrowed=narrowed,
+            filters_active=filters_active,
+            report_filter=report_filter,
             report_clear_query=filters.query_for(
                 course="", section="", term="", window="", sent_programme="", **{"from": ""}
             ),
