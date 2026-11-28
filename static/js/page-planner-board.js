@@ -689,6 +689,48 @@
     return T.hoursMinutes(Math.floor(mins / 60), mins % 60);
   }
 
+  /* ── Course names: one helper decides what the board calls a course ──────── */
+  // Two names reach the board. The curriculum's (English): the plan's rows, the recommendations,
+  // and the items made from them. The registrar's section name (Arabic): the registered rows and
+  // the sections of the catalogue. Shown side by side they mixed languages in one list, so every
+  // name on the board (Your plan, Available, at a glance, the popover, the week's labels) comes
+  // from here: an English screen shows the curriculum name when it is known, else the section
+  // name; an Arabic screen the section name when it is known, else the curriculum name. A "name"
+  // that is only the course's code is not a name.
+  const NAMES = { refs: null, curriculum: new Map(), section: new Map() };
+  function nameMaps() {
+    const refs = [state.planCourses, state.recs, state.baseline, state.catalog, state.allCatalog];
+    if (NAMES.refs && refs.every((ref, i) => ref === NAMES.refs[i])) return NAMES;
+    const curriculum = new Map();
+    const section = new Map();
+    const put = (map, code, name) => {
+      const key = norm(code).split('::')[0];
+      const text = String(name || '').trim();
+      if (key && text && norm(text) !== key && !map.has(key)) map.set(key, text);
+    };
+    for (const course of state.planCourses || []) put(curriculum, course.code, course.name);
+    for (const rec of state.recs) put(curriculum, rec.course_code, rec.course_name);
+    for (const row of state.baseline) put(section, courseKeyOf(row), row.course_name);
+    for (const map of [state.catalog, state.allCatalog]) {
+      if (!map) continue;
+      for (const [key, list] of map) for (const sec of list) put(section, key, sec.course_name);
+    }
+    Object.assign(NAMES, { refs, curriculum, section });
+    return NAMES;
+  }
+  function courseName(code, fallback) {
+    const maps = nameMaps();
+    const key = norm(code).split('::')[0];
+    const curriculum = maps.curriculum.get(key) || '';
+    const section = maps.section.get(key) || '';
+    return (IS_AR ? section || curriculum : curriculum || section) || String(fallback || '').trim();
+  }
+  // The name node of a list row: an isolated name, or nothing.
+  const nameNode = (cls, code, fallback) => {
+    const name = courseName(code, fallback);
+    return el('span', cls, name ? isolate(name) : '');
+  };
+
   /* ── The one status line ───────────────────────────────────────────────── */
   function setStatus(kind, ...parts) {
     const line = $('plbStatus');
@@ -1111,7 +1153,8 @@
     const label = `${m.code}${m.section ? ` ${IS_AR ? 'شعبة' : 'section'} ${m.section}` : ''}, ${DAY_SHORT[m.day]} ${range}`
       + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
     if (item) {
-      const said = `${m.code}${item.course_name ? ` ${item.course_name}` : ''}, ${T.detailsWord}`;
+      const name = courseName(m.key, item.course_name);
+      const said = `${m.code}${name ? ` ${name}` : ''}, ${T.detailsWord}`;
       block.setAttribute('aria-label', `${said}. ${label}`);
       block.setAttribute('aria-expanded', String(!!state.detail && state.detail.code === norm(m.key)));
       if (state.detail && state.detail.code === norm(m.key)) block.dataset.open = 'true';
@@ -1782,7 +1825,7 @@
         const chip = r.section ? el('span', 'plb-sch', bdi(`§${r.section}`), r.limited ? ` ${T.fOnly}` : '') : null;
         if (chip && r.limited) chip.dataset.only = 'true';
         const row = el('li', 'plb-sr', swatch(r.code), el('span', 'plb-code', bdi(r.code)),
-          el('span', 'plb-nm', r.name ? isolate(r.name) : ''), chip);
+          nameNode('plb-nm', r.code, r.name), chip);
         row.dataset.code = norm(r.code);
         rows.push(row);
       }
@@ -1791,7 +1834,7 @@
       for (const c of registeredCourses()) {
         // A registered course has its colour too: the same swatch as its blocks in the week.
         const row = el('li', 'plb-sr plb-sr--kept', swatch(c.key), el('span', 'plb-code', bdi(c.code)),
-          el('span', 'plb-nm', c.name ? isolate(c.name) : ''),
+          nameNode('plb-nm', c.key, c.name),
           c.section ? el('span', 'plb-sch', bdi(`§${c.section}`)) : null, el('span', 'plb-kt', T.keptTag));
         row.dataset.code = c.key;
         rows.push(row);
@@ -1976,7 +2019,8 @@
     const lists = sourceLists(src);
     const needle = fold(state.pick.find);
     if (!needle) return lists;
-    const keep = (e) => fold(e.code).includes(needle) || fold(e.name).includes(needle);
+    const keep = (e) => fold(e.code).includes(needle) || fold(e.name).includes(needle)
+      || fold(courseName(e.code, e.name)).includes(needle);
     return { avail: lists.avail.filter(keep), blocked: lists.blocked.filter(keep) };
   };
   const entrySections = (entry, src) => (src === 'all' && state.allCatalog ? state.allCatalog.get(entry.code) || [] : catalogSections(entry.code));
@@ -2123,7 +2167,7 @@
     plus.disabled = !addable(entry);
     plus.setAttribute('aria-label', T.addCourse(code, pinsFor(entry, src).map((p) => p.section)));
     const main = el('div', 'plb-ar-main', chev, box, el('span', 'plb-code', bdi(code)),
-      el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''),
+      nameNode('plb-nm', code, entry.name),
       el('span', 'plb-meta', metaText.join(' · '), ...tags.flatMap((t) => [' ', t])), plus);
     if (entry.compareOnly && src === 'all') main.title = T.compareWhy;
     if (!addable(entry)) main.title = T.creditsUnknownWhy;
@@ -2197,7 +2241,7 @@
       if (open) {
         for (const entry of lists.blocked) {
           const row = el('div', 'plb-arow plb-arow--off', el('div', 'plb-ar-main plb-ar-main--off',
-            el('span', 'plb-code', bdi(entry.code)), el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''), entry.reason));
+            el('span', 'plb-code', bdi(entry.code)), nameNode('plb-nm', entry.code, entry.name), entry.reason));
           row.dataset.code = entry.code;
           list.append(row);
         }
@@ -2264,7 +2308,7 @@
     req.title = item.must_take ? T.requiredOn(code) : T.makeRequired(code);
     const remove = iconButton('x', T.removeCourse(code), 'remove', code);
     const row = el('div', 'plb-prow', box, el('span', 'plb-code', swatch(code), bdi(code)),
-      el('span', 'plb-pmain', el('span', 'plb-nm plb-nm--wrap', item.course_name ? isolate(item.course_name) : ''), sub),
+      el('span', 'plb-pmain', nameNode('plb-nm plb-nm--wrap', code, item.course_name), sub),
       secbtn, req, remove);
     row.dataset.code = key;
     if (open) row.dataset.open = 'true';
@@ -2277,7 +2321,7 @@
     const sub = [course.credits === null ? T.creditsUnknown : T.credits(course.credits)];
     if (course.section) sub.push(`${IS_AR ? 'شعبة' : 'section'} ${course.section}`);
     const row = el('div', 'plb-prow plb-prow--kept', lock, el('span', 'plb-code', bdi(course.code)),
-      el('span', 'plb-pmain', el('span', 'plb-nm plb-nm--wrap', course.name ? isolate(course.name) : ''), el('span', 'plb-sl', el('span', 'plb-cr', sub.join(' · ')))),
+      el('span', 'plb-pmain', nameNode('plb-nm plb-nm--wrap', course.key, course.name), el('span', 'plb-sl', el('span', 'plb-cr', sub.join(' · ')))),
       el('span', 'plb-flag plb-kept-tag', T.registeredKept));
     row.dataset.code = course.code;
     return row;
@@ -2623,6 +2667,9 @@
       state.catalog = map;
     }
     renderCourses();
+    // The glance's names: the plan (asked just before) brings the curriculum's, the sections the
+    // registrar's.
+    renderGlance();
     if (state.build) keepingFocus(() => { renderStrip(); renderGuide(); });
   }
 
@@ -3586,7 +3633,7 @@
       const key = courseKeyOf(m) || String(m.course_code || '');
       const item = build.shortlist.find((c) => norm(c.course_code) === key);
       return el('li', 'plb-apply-row',
-        el('span', '', bdi(key), ...(m.section ? [' ', bdi(`§${String(m.section).trim()}`)] : []), ...(item && item.course_name ? [' ', isolate(item.course_name)] : [])),
+        el('span', '', bdi(key), ...(m.section ? [' ', bdi(`§${String(m.section).trim()}`)] : []), ...(courseName(key, item && item.course_name) ? [' ', isolate(courseName(key, item && item.course_name))] : [])),
         el('span', 'plb-apply-when', ...whenNodes(m.meetings)));
     }));
     const registered = registeredCourses();
@@ -3695,7 +3742,7 @@
     const d = state.detail;
     if (!d) return null;
     const item = state.shortlist.find((c) => norm(c.course_code) === d.code);
-    if (item) return { inPlan: true, item, name: String(item.course_name || ''), credits: Number(item.credits) || 0 };
+    if (item) return { inPlan: true, item, name: courseName(item.course_code, item.course_name), credits: Number(item.credits) || 0 };
     return null;
   }
   function sectionClashes(section) {

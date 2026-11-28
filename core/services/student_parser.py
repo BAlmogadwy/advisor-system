@@ -89,6 +89,20 @@ def map_level_name_to_number(level_name):
     return _extract_level_token(level_name)
 
 
+# A misaligned export put a stray ")", tabs and the course's OWN number in front of its name
+# (")\t203\t CALCULUS I" for MATH203, 2026-11-28; the Oracle plan parser was the source).
+_NUMBER_DEBRIS = re.compile(r"^\)?[ \t]*(\d+)\t\s*")
+
+
+def clean_course_title(title, number) -> str:
+    """A course name without a leading ")" / tabs / the course's own number, else as it is."""
+    text = str(title or "").strip()
+    found = _NUMBER_DEBRIS.match(text)
+    if found and found.group(1) == str(number or "").strip() and text[found.end() :].strip():
+        text = text[found.end() :]
+    return text.strip()
+
+
 def parse_study_plan(html_content):
     if _is_logout_or_service_page(html_content):
         return []
@@ -147,7 +161,8 @@ def parse_study_plan(html_content):
                     "ue_raw": ue_raw,
                     "no": no,
                     "dept": dept,
-                    "description": description,
+                    # Stored as a new course's name (scrape_students): never with debris in front.
+                    "description": clean_course_title(description, no),
                     "programme_term": programme_term,
                 }
             )
