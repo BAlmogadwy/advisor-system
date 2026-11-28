@@ -305,7 +305,9 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
             500,
             {"ok": False, "error": {"code": "X", "message": "boom"}},
         )
-        self._rules(page, elig="relaxed", mode="ignore")
+        # Ignore with the registered courses taken out (S7), then the prerequisite switch.
+        self._registered_ignored(page)
+        self._rules(page, elig="relaxed")
         expect(page.locator("#plbStatus")).to_have_text(
             "The student could not be loaded. Try again."
         )
@@ -395,13 +397,18 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertEqual(self._rows(page, "could"), ["STAT305", "CS351"])
         self.assertEqual(self._rows(page, "blocked"), ["AI431", "AI450"])
         self.assertEqual(self._load(page), ("15 / 18 cr", "6 planned + 9 registered · 3 cr free"))
-        self.assertEqual(self._text(page, "#plbPlanCount"), "Your plan · 2 courses")
-        # Registered: a lock, the credits and the section, no controls.
+        self.assertEqual(self._text(page, "#plbPlanCount"), "Your plan · 3 registered + 2 added")
+        # Registered (S7): the credits, a "Registered" tag, its section as a control, Required on,
+        # a tick and ×; no lock. Using a control makes the registered courses editable.
         reg = "#plbPlanList .plb-prow--kept[data-code='CS301']"
-        self.assertEqual(self._text(page, f"{reg} .plb-cr"), "3 cr · section M1")
-        self.assertEqual(page.locator(f"{reg} [role='img'][aria-label='Registered']").count(), 1)
-        self.assertEqual(self._text(page, f"{reg} .plb-flag"), "Registered · kept")
-        self.assertEqual(page.locator(f"{reg} button, {reg} input").count(), 0)
+        self.assertEqual(self._text(page, f"{reg} .plb-cr"), "3 cr")
+        self.assertEqual(page.locator(f"{reg} [role='img'][aria-label='Registered']").count(), 0)
+        self.assertEqual(self._text(page, f"{reg} .plb-flag"), "Registered")
+        self.assertEqual(self._text(page, f"{reg} .plb-secbtn"), "§M1")
+        self.assertEqual(
+            page.get_attribute(f"{reg} button[data-act='must']", "aria-pressed"), "true"
+        )
+        self.assertEqual(page.locator(f"{reg} button, {reg} input").count(), 4)
         # New: "Any section" and a Required toggle that is not pressed.
         row = "#plbPlanList .plb-prow[data-code='AI331']"
         self.assertEqual(self._text(page, f"{row} .plb-secbtn"), "Any section")
@@ -467,10 +474,15 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
 
     def test_ignoring_registered_courses_changes_what_counts(self) -> None:
         page = self._open(Fake())
+        # Ignore makes the registered courses rows of the plan (S7): they still count, and once
+        # one is removed it can be planned again like any course.
         self._rules(page, mode="ignore")
-        self.assertEqual(self._load(page), ("6 / 18 cr", "6 planned · 12 cr free"))
-        self.assertEqual(self._rows(page, "registered"), [])  # nothing is kept: no locked rows
-        # The registered courses can be planned again.
+        self.assertEqual(self._load(page), ("15 / 18 cr", "6 planned + 9 registered · 3 cr free"))
+        self.assertEqual(self._rows(page, "registered"), [])  # nothing is kept as registered
+        self.assertEqual(self._rows(page, "new"), ["AI331", "AI342", "CS301", "CS322", "CS330"])
+        self.assertNotIn("CS301", self._rows(page, "could"))
+        self._remove(page, "CS301")
+        self.assertEqual(self._load(page), ("12 / 18 cr", "6 planned + 6 registered · 6 cr free"))
         self.assertIn("CS301", self._rows(page, "could"))
 
     def test_the_search_narrows_what_the_student_could_add(self) -> None:
@@ -592,7 +604,8 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
                 page = self._open(fake, font=font)
                 kept = "#plbPlanList .plb-prow--kept[data-code='GS104']"
                 self.assertEqual(self._text(page, f"{kept} .plb-nm"), long_name)
-                self.assertEqual(self._text(page, f"{kept} .plb-cr"), "2 cr · section M46")
+                self.assertEqual(self._text(page, f"{kept} .plb-cr"), "2 cr")
+                self.assertEqual(self._text(page, f"{kept} .plb-secbtn"), "§M46")
                 name = page.locator(f"{kept} .plb-nm").bounding_box()
                 pane = page.locator("#plbPlan").bounding_box()
                 self.assertGreater(name["width"], pane["width"] * 0.4)
@@ -666,7 +679,7 @@ class PlannerBoardShellBrowserTests(PlannerBoardCase):
         self.assertEqual(self._rules_now(page), {"mode": "keep", "elig": "strict", "max": "18"})
         self.assertIn("الشُعب من", self._text(page, "#plbZoneRules"))
         self.assertIn("اقتراح تبديلات (غير متاح بعد)", self._text(page, "#plbZoneRules"))
-        self.assertEqual(self._text(page, "#plbPlanList .plb-prow--kept .plb-flag"), "مسجّل · مُبقى")
+        self.assertEqual(self._text(page, "#plbPlanList .plb-prow--kept .plb-flag"), "مسجّل")
         self.assertEqual(
             self._text(page, "#plbPlanList [data-code='AI331'] .plb-secbtn"), "أي شعبة"
         )

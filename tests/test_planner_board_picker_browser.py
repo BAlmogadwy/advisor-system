@@ -320,9 +320,12 @@ class PlannerBoardPickerTests(PlannerBoardCase):
         self.assertEqual(self._plan(page), ["AI331"])
         expect(page.locator("#plbXRem")).to_be_disabled()
         self._add(page, "STAT305")
+        # « in Keep starts from scratch (S7): every row goes, the registered ones too (made
+        # editable first); Back to Keep is one click away.
         page.click("#plbXRemAll")
         self.assertEqual(self._plan(page), [])
-        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
+        self.assertEqual(self._rows(page, "registered"), [])
+        expect(page.locator("#plbBackKeep")).to_have_text("Back to Keep (drops 3 changes)")
         expect(page.locator("#plbXRemAll")).to_be_disabled()
         expect(page.locator("#plbPlanList .plb-hint")).to_be_visible()
         # the removed courses come back to their source
@@ -351,19 +354,31 @@ class PlannerBoardPickerTests(PlannerBoardCase):
     # ── the plan ─────────────────────────────────────────────────────────────
     def test_the_plan_header_load_meter_and_hint(self) -> None:
         page, fake = self._page()
-        expect(page.locator("#plbPlanCount")).to_have_text("Your plan · 2 courses")
+        expect(page.locator("#plbPlanCount")).to_have_text("Your plan · 3 registered + 2 added")
         expect(page.locator("#plbPlanLoad")).to_have_text("15 / 18 cr")
         expect(page.locator("#plbMeterLine")).to_have_text("6 planned + 9 registered · 3 cr free")
         self.assertEqual(page.locator("#plbPlanLoad").get_attribute("data-over"), "false")
         self.assertIn("Tick courses on the left", self._text(page, "#plbPlanList .plb-hint"))
-        self._rules(page, mode="ignore")
-        expect(page.locator("#plbMeterLine")).to_have_text("6 planned · 12 cr free")
+        # Ignore with the registered courses taken out (S7: Ignore makes them rows of the plan).
+        self._registered_ignored(page)
+        expect(page.locator("#plbMeterLine")).to_have_text("6 planned + 0 registered · 12 cr free")
         self.assertEqual(self._rows(page, "registered"), [])
+        # Under 4 the limit stands at the 9 registered credits (decision 2), so 6 are not over it.
         self._rules(page, max=4)
-        expect(page.locator("#plbMeterLine")).to_have_text("6 planned · 2 cr over the limit")
+        expect(page.locator("#plbMeterLine")).to_have_text(
+            "6 planned + 0 registered · 3 cr free · the limit stands at 9 cr, the registered load:"
+            " a swap for the same credits fits"
+        )
+        self.assertEqual(page.locator("#plbPlanLoad").get_attribute("data-over"), "false")
+        self._add(page, "STAT305")
+        self._add(page, "CS351")
+        expect(page.locator("#plbMeterLine")).to_have_text(
+            "12 planned + 0 registered · 3 cr over the limit · the limit stands at 9 cr, the"
+            " registered load: a swap for the same credits fits"
+        )
         self.assertEqual(page.locator("#plbPlanLoad").get_attribute("data-over"), "true")
         self._rules(page, max="")
-        expect(page.locator("#plbPlanLoad")).to_have_text("6 cr")
+        expect(page.locator("#plbPlanLoad")).to_have_text("12 cr")
 
     def test_required_toggles_must_take_in_the_request(self) -> None:
         page, fake = self._page()

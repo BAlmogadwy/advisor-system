@@ -109,13 +109,13 @@ class PlannerBoardFetchTests(PlannerBoardCase):
         for language, head, line, source in (
             (
                 "en",
-                "Your plan · 0 courses",
+                "Your plan · 6 registered + 0 added",
                 "0 planned + 18 registered · no room left under the limit",
                 "Recommended for this student (3)",
             ),
             (
                 "ar",
-                "خطتك · 0 مقررًا",
+                "خطتك · 6 مسجّلة + 0 مضافة",
                 "0 مخطَّطة + 18 مسجّلة · لا متّسع ضمن الحد",
                 "مقترحة لهذا الطالب (3)",
             ),
@@ -143,14 +143,17 @@ class PlannerBoardFetchTests(PlannerBoardCase):
 
     def test_in_ignore_mode_fetch_adds_no_course_either(self) -> None:
         page = self._open(owner_fake(), load=False)
-        page.click("#plbRegIgnore")  # before any student: the rule rides along to the fetch
+        page.click("#plbRegIgnore")  # before any student: a load starts in Keep all the same (S7)
         self._fetch(page, STUDENT_ID)
         expect(page.locator("#plbSource")).to_be_enabled()
+        expect(page.locator("#plbRegKeep")).to_be_checked()
         page.select_option("#plbSource", "recommended")
         expect(page.locator("#plbAvailList .plb-arow[data-code='ENG101']")).to_be_visible()
-        self.assertEqual(self._rows(page, "new"), [])
-        self.assertEqual(self._rows(page, "registered"), [])  # ignored: not listed
-        self.assertEqual(self._load(page), ("0 / 18 cr", "0 planned · 18 cr free"))
+        # Ignore makes the registered courses rows of the plan; nothing else is added.
+        self._rules(page, mode="ignore")
+        self.assertEqual(self._rows(page, "new"), REGISTERED)
+        self.assertEqual(self._rows(page, "registered"), [])
+        self.assertEqual(self._load(page), ("18 / 18 cr", "0 planned + 18 registered · 0 cr free"))
 
     def test_a_reload_by_a_rule_clears_the_added_courses_and_says_so_first(self) -> None:
         for language, text, go in (
@@ -269,11 +272,25 @@ class PlannerBoardFetchTests(PlannerBoardCase):
         page.select_option("#plbSource", "plan")
         self.assertEqual(self._tags(page), {"FE1": "GS311 (registered) likely counts for it"})
 
-    def test_ignore_mode_draws_the_rows_without_the_tag(self) -> None:
+    def test_the_tag_follows_whether_its_course_is_still_a_row_of_the_plan(self) -> None:
+        # S7: Ignore makes the registered courses rows of the plan, so GS311 still counts for FE1
+        # there; once GS311 is removed it counts for nothing, and Keep brings it back.
         page = self._owner()
         self._rules(page, mode="ignore")
         page.select_option("#plbSource", "recommended")
-        self.assertEqual(self._tags(page), {"ENG101": None, "FE1": None, "GSE1": None})
+        self.assertEqual(
+            self._tags(page),
+            {
+                "ENG101": None,
+                "FE1": "GS311 (registered) likely counts for it",
+                "GSE1": "GS333 (registered) likely counts for it",
+            },
+        )
+        self._remove(page, "GS311")
+        self.assertEqual(
+            self._tags(page),
+            {"ENG101": None, "FE1": None, "GSE1": "GS333 (registered) likely counts for it"},
+        )
         self._rules(page, mode="keep")
         self.assertEqual(self._tags(page)["FE1"], "GS311 (registered) likely counts for it")
 

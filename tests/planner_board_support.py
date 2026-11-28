@@ -62,7 +62,9 @@ def _row(code: str, name: str, section: str, credits: int | None, day, start, en
         "room": "",
         "instructor": "",
         "term_section_id": tsid,
-        "source": "registration_plan_1448_t1",
+        # The registrar's own source: these are registrations (the board calls a row held only as a
+        # forecast, a `registration_plan_*` one, "Expected"; S7 decision 4).
+        "source": "scraper_timetable",
     }
 
 
@@ -770,8 +772,9 @@ class PlannerBoardCase(StaticLiveServerTestCase):
 
     @staticmethod
     def _tab_lines(page, name: str) -> list[str]:
+        """A tab's lines, without its Changes line (an edited plan's build; read on its own)."""
         return page.eval_on_selector_all(
-            f"#plbTabs [data-opt='{name}'] > span",
+            f"#plbTabs [data-opt='{name}'] > span:not(.plb-tab-chg)",
             "spans => spans.map(s => s.textContent.replace(/\\s+/g, ' ').trim())",
         )
 
@@ -856,7 +859,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             fake.hold_projection = 1
         page = self._open(fake, **kwargs)
         if ignore:
-            self._rules(page, mode="ignore")
+            self._registered_ignored(page)
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text(
             "Rebuild options" if kwargs.get("language", "en") == "en" else "أعد بناء الخيارات"
@@ -884,12 +887,28 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             })"""
         )
 
+    @classmethod
+    def _registered_ignored(cls, page) -> None:
+        """Ignore with every registered course taken out of the plan: the registered week plays no
+        part in the build, which is what Ignore meant before the registered courses became rows
+        of the plan (S7). The adviser's own way there: Ignore, then × on each registered row."""
+        cls._rules(page, mode="ignore")
+        codes = page.eval_on_selector_all(
+            "#plbPlanList .plb-prow[data-reg]", "rows => rows.map(r => r.dataset.code)"
+        )
+        for code in codes:
+            cls._remove(page, code)
+        expect(page.locator("#plbPlanList .plb-prow[data-reg]")).to_have_count(0)
+
     @staticmethod
     def _rules(page, **values) -> None:
         """Set the given rules on the board's own controls (a changed eligibility over an edited
-        course list is confirmed with "Change and clear")."""
+        course list is confirmed with "Change and clear"; Keep over changed registered rows with
+        "Drop the changes")."""
         if "mode" in values:
             page.click("#plbRegIgnore" if values["mode"] == "ignore" else "#plbRegKeep")
+            if values["mode"] == "keep" and page.locator("#plbEligConfirm").is_visible():
+                page.click("#plbEligGo")
         if "elig" in values:
             page.click("#plbEligRelaxed" if values["elig"] == "relaxed" else "#plbEligStrict")
             if page.locator("#plbEligConfirm").is_visible():

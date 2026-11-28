@@ -118,6 +118,17 @@
             <button type="button" class="plb-ptab" id="plbPickTabAvail" role="tab" aria-selected="true" aria-controls="plbAvail"></button>
             <button type="button" class="plb-ptab" id="plbPickTabPlan" role="tab" aria-selected="false" aria-controls="plbPlan" tabindex="-1"></button>
           </div>
+          {% comment %}While the registered courses are rows of the plan (Ignore): a notice and the way back.
+             The words are a live region of their own, always in the page (empty in Keep).{% endcomment %}
+          <div class="plb-convbar" id="plbConvBar" data-on="false">
+            <p class="plb-convbar-t" id="plbConvText" role="status" aria-live="polite"></p>
+            <button type="button" class="plb-lk" id="plbBackKeep" hidden></button>
+            <div class="plb-confirm plb-convbar-ask" id="plbConvAsk" role="group" aria-labelledby="plbConvAskText" hidden>
+              <p class="plb-confirm-t" id="plbConvAskText"></p>
+              <button type="button" class="btn btn-sm btn-neutral" id="plbConvGo"></button>
+              <button type="button" class="plb-lk" id="plbConvKeep"></button>
+            </div>
+          </div>
           <div class="plb-pick" id="plbPick">
             <section class="plb-pane" id="plbAvail" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المتاحة{% else %}Available courses{% endif %}">
               <div class="plb-ph">
@@ -257,5 +268,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=20"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=21"></script>
 {% endblock %}

@@ -53,7 +53,6 @@
     noFreeDay: IS_AR ? 'لا يوم فارغ' : 'no free day',
     noTimedClasses: IS_AR ? 'بلا محاضرات' : 'No timed classes',
     removeCourse: (code) => (IS_AR ? `إزالة ${code}` : `Remove ${code}`),
-    registeredLock: IS_AR ? 'مسجّل' : 'Registered',
     added: (code) => (IS_AR ? ['أُضيف ', bdi(code), ' إلى الخطة.'] : ['Added ', bdi(code), ' to the plan.']),
     removed: (code) => (IS_AR ? ['أُزيل ', bdi(code), ' من الخطة.'] : ['Removed ', bdi(code), ' from the plan.']),
     noMatch: IS_AR ? 'لا مقرر مطابق' : 'No course matches',
@@ -153,7 +152,6 @@
     required: IS_AR ? 'إلزامي' : 'Required',
     requiredOn: (code) => (IS_AR ? `${code} إلزامي، اضغط للإلغاء` : `${code} is required, press to undo`),
     makeRequired: (code) => (IS_AR ? `اجعل ${code} إلزاميًا` : `Make ${code} required`),
-    registeredKept: IS_AR ? 'مسجّل · مُبقى' : 'Registered · kept',
     hintA: IS_AR ? 'حدّد مقررات من القائمة المجاورة واضغط ' : 'Tick courses on the left and press ',
     hintB: IS_AR ? ' أو انقر مرتين على أحدها' : ', or double-click one',
     xAdd: IS_AR ? 'إضافة المقررات المحدّدة إلى الخطة' : 'Add the ticked courses',
@@ -473,6 +471,71 @@
       ? pluralAr(n, forms('يتعارض لقاء واحد مع لقاء مسجّل', 'يتعارض لقاءان مع لقاءات مسجّلة', 'تتعارض {n} لقاءات مع لقاءات مسجّلة', 'يتعارض {n} لقاءً مع لقاءات مسجّلة'))
       : (n === 1 ? '1 class clashes with a registered one' : `${n} classes clash with registered ones`)),
     detailsWord: IS_AR ? 'التفاصيل' : 'details',
+
+    // The registered courses as rows of Your plan (S7). A row the registrar holds is "Registered";
+    // one held only as a forecast (no registrar rows, an earlier apply) is "Expected".
+    regTag: IS_AR ? 'مسجّل' : 'Registered',
+    expTag: IS_AR ? 'متوقع' : 'Expected',
+    // Its section control in Keep says the section ("§M1"); the row's own tag says "Registered", and
+    // the control's name says both ("CS301: §M1 · registered"), so the name keeps its room.
+    regSection: (label, word) => `§${label} · ${IS_AR ? word : word.toLowerCase()}`,
+    // Its quiet tag once editable: "Registered §M1".
+    regTagSec: (word, label) => [word, ...(label ? [' ', bdi(`§${label}`)] : [])],
+    // A registered course with no section, or one with no usable meetings: counted, never placed.
+    loadOnlyNote: IS_AR ? 'ساعاته محتسبة، بلا موعد' : 'counted, no timetable',
+    planHeadReg: (reg, added) => [IS_AR ? 'خطتك' : 'Your plan',
+      IS_AR ? `${reg} مسجّلة + ${added} مضافة` : `${reg} registered + ${added} added`],
+    convLead: IS_AR ? 'أصبحت المقررات المسجّلة قابلة للتعديل (تجاهل). ' : 'Registered courses are now editable (Ignore). ',
+    convSection: (code) => (IS_AR ? ['اختر شعبة للمقرر ', bdi(code), '.'] : ['Choose a section for ', bdi(code), '.']),
+    convNotRequired: (code) => (IS_AR ? [bdi(code), ' لم يعد إلزاميًا.'] : [bdi(code), ' is no longer required.']),
+    convCleared: IS_AR ? 'خطتك فارغة: ابدأ من جديد.' : 'Your plan is empty: start from scratch.',
+    convManual: IS_AR ? 'يمكنك تعديل أي منها أو إضافة مقررات.' : 'Change any of them, or add courses.',
+    convBar: IS_AR ? 'المقررات المسجّلة قابلة للتعديل الآن' : 'Registered courses are editable now',
+    changesWord: (n) => (IS_AR
+      ? pluralAr(n, forms('تغيير واحد', 'تغييران', '{n} تغييرات', '{n} تغييرًا'))
+      : `${n} ${n === 1 ? 'change' : 'changes'}`),
+    backToKeep: IS_AR ? 'العودة إلى الإبقاء' : 'Back to Keep',
+    backToKeepDrops: (n) => (IS_AR ? `العودة إلى الإبقاء (تلغي ${T.changesWord(n)})` : `Back to Keep (drops ${T.changesWord(n)})`),
+    backDone: IS_AR ? 'أُبقيت المقررات المسجّلة كما سُجّلت.' : 'The registered courses are kept as registered again.',
+    // The one confirm, by what it asks about.
+    askMode: (n) => (IS_AR
+      ? `العودة إلى الإبقاء تلغي ${T.changesWord(n)} في المقررات المسجّلة، وتبقى المقررات التي أضفتها.`
+      : `Back to Keep drops ${T.changesWord(n)} to the registered courses. The courses you added stay.`),
+    askModeGo: IS_AR ? 'إلغاء التغييرات' : 'Drop the changes',
+    askModeKeep: IS_AR ? 'متابعة التعديل' : 'Keep editing',
+    askEligConverted: IS_AR
+      ? 'تغيير قاعدة المتطلبات السابقة يعيد تحميل المقررات المقترحة، ويزيل المقررات التي أضفتها، ويعيد المقررات المسجّلة كما سُجّلت.'
+      : 'Changing the prerequisite rule reloads the recommended courses, clears the courses you added and keeps the registered courses as registered again.',
+    askBoth: (n) => (IS_AR
+      ? `الاستعادة تعيد القواعد المعتادة: يعاد تحميل المقررات المقترحة، وتزال المقررات التي أضفتها، وتلغى التغييرات على المقررات المسجّلة (${T.changesWord(n)}).`
+      : `Reset puts back the usual rules: the recommended courses reload, the courses you added are cleared and ${T.changesWord(n)} to the registered courses ${n === 1 ? 'is' : 'are'} dropped.`),
+    askBothGo: IS_AR ? 'استعد وامسح' : 'Reset and clear',
+    askKeepCurrent: IS_AR ? 'إبقاء الحالي' : 'Keep current',
+    // The section menu of an editable registered course.
+    ownSection: IS_AR ? 'شعبته المسجّلة' : 'Registered section',
+    clashRequired: (label) => (IS_AR ? ['يتعارض مع ', bdi(label), ' (إلزامي)'] : ['Clashes with ', bdi(label), ' (required)']),
+    loadingSections: IS_AR ? 'جارٍ تحميل الشُعب…' : 'Loading the sections…',
+    unrequire: (codes) => [IS_AR ? 'لا يمكن إدراج كل المقررات الإلزامية معًا: ' : 'Required courses that cannot all be placed: ',
+      ...codes.flatMap((c, i) => (i ? [IS_AR ? '، ' : ', ', bdi(c)] : [bdi(c)])),
+      IS_AR ? '. أزل علامة «إلزامي» عن المقررات التي يجوز للبناء تغييرها.' : '. Turn Required off on those the build may move.'],
+    // What an option changes against the registration.
+    chgLead: IS_AR ? 'التغييرات: ' : 'Changes: ',
+    chgNone: IS_AR ? 'لا تغيير على التسجيل' : 'No change to the registration',
+    chg: {
+      moved: (c) => [bdi(c.code), ' ', bdi(`§${c.from}`), IS_AR ? ' ‹ ' : ' › ', bdi(`§${c.to}`)],
+      dropped: (c) => [bdi(c.code), IS_AR ? ' أُزيل' : ' dropped'],
+      notPlaced: (c) => [bdi(c.code), IS_AR ? ' لم يوضع' : ' not placed'],
+      added: (c) => [bdi(`+${c.code}`)],
+    },
+    applyConverted: IS_AR ? 'يحفظ هذا الخطة كما بُنيت، ولا يتغيّر جدول التسجيل الرسمي.' : "This saves the plan as built. The registrar's timetable is unchanged.",
+    ownBlock: IS_AR ? 'الشعبة المسجّلة' : 'registered section',
+    // The credits line when the registered load is above the limit set.
+    regOver: (n) => (IS_AR
+      ? `المسجّل يزيد على الحد: ${T.credits(n)}، لا يتسع إلا لاستبدال مقرر بآخر بالساعات نفسها`
+      : `registered courses are ${n} cr over the limit: only a swap for the same credits fits`),
+    capRaised: (limit) => (IS_AR
+      ? `الحد ${T.credits(limit)}، وهو المسجّل: يتسع لاستبدال مقرر بآخر بالساعات نفسها`
+      : `the limit stands at ${limit} cr, the registered load: a swap for the same credits fits`),
   };
   const NUMBER_EN = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven'];
 
@@ -514,7 +577,14 @@
     bandEnds: '',      // the completion term the student band shows
     planCredits: null, // {done, total}: the plan's credits passed and in all, once the plan reply is in
     catalog: null,     // Map normalised course code -> [section]; null = unknown
+    catState: 'idle',  // the section catalogue: idle | loading | ready | error
     shortlist: [],
+    // Ignore with the registered courses as rows (S7). `converted` is null in Keep; once a control of
+    // a registered row is used it holds the registered courses as they were ({regs}), so a change
+    // can be counted and Back to Keep can drop it. `loadOnly`: the registered courses with no
+    // usable section, kept OUT of the shortlist (counted in every credit figure, never placed).
+    converted: null,
+    loadOnly: [],
     pickTab: 'avail',  // phones: which picker panel shows (avail | plan)
     hues: {},          // this student's course colours: code -> 1..HUES, kept while the plan changes
     rules: { ...DEFAULT_RULES },
@@ -732,10 +802,15 @@
   };
 
   /* ── The one status line ───────────────────────────────────────────────── */
+  // A conversion of the registered courses is said once, in front of the change that made it
+  // (convertRegistered sets this; the next message carries it).
+  let convLead = false;
   function setStatus(kind, ...parts) {
     const line = $('plbStatus');
+    const lead = convLead && parts.length ? [T.convLead] : [];
+    convLead = false;
     line.dataset.kind = kind || '';
-    line.replaceChildren(...parts.map((p) => (typeof p === 'string' ? document.createTextNode(p) : p)));
+    line.replaceChildren(...[...lead, ...parts].map((p) => (typeof p === 'string' ? document.createTextNode(p) : p)));
   }
 
   /* ── Rules ─────────────────────────────────────────────────────────────── */
@@ -781,8 +856,9 @@
     return { ok: true, value };
   }
 
-  // What a change of rules does, whichever control made it.
-  function commitRules(next) {
+  // What a change of rules does, whichever control made it. `quiet`: the caller redraws the
+  // courses itself, once (a conversion of the registered courses).
+  function commitRules(next, quiet) {
     const before = { ...state.rules };
     closeEligConfirm(false);
     state.rules = next;
@@ -790,7 +866,9 @@
     // Options built under other rules are not options for these: they stay, marked out of date.
     if (Object.keys(DEFAULT_RULES).some((key) => state.rules[key] !== before[key])) planChanged();
     // The other rules apply at once, whatever happens to the reload below.
-    renderCourses();
+    if (!quiet) renderCourses();
+    // The registered week loses its lock in Ignore (and the legend says it).
+    if (state.ctx && state.rules.mode !== before.mode) renderWeek();
     if (state.ctx && (state.rules.programOnly !== before.programOnly || state.rules.mode !== before.mode)) {
       loadCatalog(state.gen);
     }
@@ -801,68 +879,120 @@
   // A switch on the board.
   function changeRuleInPlace(key, value) {
     if (state.rules[key] === value) return;
+    // Keep and Ignore move the registered courses: Ignore makes them rows of the plan (the same
+    // conversion as a change to one of them), Keep drops those rows again (and asks first when
+    // any of them was changed).
+    if (key === 'mode' && state.ctx) {
+      if (value === 'ignore') {
+        closeEligConfirm(false);
+        convertRegistered();
+        renderCourses();
+        renderActions();
+        setStatus('ok', T.convManual);
+      } else requestBackToKeep('switch');
+      return;
+    }
     // The reload clears Your plan back to the registered courses: when the adviser has added
-    // courses, an inline confirm says so and asks. The switch keeps showing the rule in force
-    // until "Change and clear".
-    if (key === 'eligibility' && state.ctx && !nothingAdded()) {
+    // courses or changed a registered one, an inline confirm says so and asks. The switch keeps
+    // showing the rule in force until "Change and clear".
+    if (key === 'eligibility' && state.ctx && isDirty()) {
       renderRules();
-      openEligConfirm(value);
+      openEligConfirm('elig', value);
       return;
     }
     closeEligConfirm(false);
     commitRules({ ...state.rules, [key]: value });
   }
-  // The eligibility the confirm is asking about; null while it is closed. `eligReset`: the question
-  // came from "Reset", so Go puts back every usual rule, not only the eligibility.
+  // The one confirm of the rules zone. `confirmKind`: what it asks about ('elig': a reload of the
+  // recommendations; 'mode': Back to Keep with changes; 'both': Reset, which does the two).
+  // `eligPending`: the eligibility asked about; `eligReset`: the question came from "Reset", so Go
+  // puts back every usual rule, not only the eligibility. Null/false while it is closed.
   let eligPending = null;
   let eligReset = false;
+  let confirmKind = null;
+  // The template's own words (the eligibility question), kept for when it asks that again.
+  let eligWords = null;
   // Escape closes the confirm wherever the keyboard is while it is open.
   function eligEscape(event) {
     if (event.key !== 'Escape' || event.defaultPrevented) return;
     event.preventDefault();
     closeEligConfirm(true);
   }
-  function openEligConfirm(value, reset) {
+  function openEligConfirm(kind, value, reset) {
+    if (!eligWords) {
+      eligWords = { text: $('plbEligConfirmText').textContent, go: $('plbEligGo').textContent, keep: $('plbEligKeep').textContent };
+    }
+    confirmKind = kind;
     eligPending = value;
     eligReset = !!reset;
+    const n = changesCount();
+    let words = eligWords;
+    if (kind === 'mode') words = { text: T.askMode(n), go: T.askModeGo, keep: T.askModeKeep };
+    else if (kind === 'both') words = { text: T.askBoth(n), go: T.askBothGo, keep: T.askKeepCurrent };
+    else if (state.converted) words = { ...eligWords, text: T.askEligConverted };
+    $('plbEligConfirmText').textContent = words.text;
+    $('plbEligGo').textContent = words.go;
+    $('plbEligKeep').textContent = words.keep;
+    $('plbEligConfirm').dataset.kind = kind;
     $('plbEligConfirm').hidden = false;
     document.addEventListener('keydown', eligEscape);
     $('plbEligGo').focus();
   }
-  // `focusBack`: the keyboard returns to the Eligibility switch (Keep or Escape). Any other change
+  // `focusBack`: the keyboard returns to the switch asked about (Keep or Escape). Any other change
   // closes the confirm and leaves the keyboard where it is.
   function closeEligConfirm(focusBack) {
     const box = $('plbEligConfirm');
     if (box.hidden) return;
+    const kind = confirmKind;
     box.hidden = true;
     eligPending = null;
     eligReset = false;
+    confirmKind = null;
     document.removeEventListener('keydown', eligEscape);
     if (focusBack) {
-      const on = document.querySelector('input[name="plbEligIn"]:checked');
+      const on = document.querySelector(kind === 'mode' ? 'input[name="plbRegIn"]:checked' : 'input[name="plbEligIn"]:checked');
       if (on) on.focus();
     }
   }
   function goEligConfirm() {
+    const kind = confirmKind;
+    if (!kind) return;
     const value = eligPending;
-    if (!value) return;
-    const next = eligReset ? { ...state.defaults } : { ...state.rules, eligibility: value };
+    const reset = eligReset;
     const wasInside = $('plbEligConfirm').contains(document.activeElement);
     closeEligConfirm(false);
-    commitRules(next);
+    if (kind === 'mode') {
+      backToKeep(true);
+      if (reset) commitRules({ ...state.defaults });
+      return;
+    }
+    // The reload ends in Keep with the registered courses as registered (loadStudent), and only
+    // once it lands: a reload that fails leaves the plan as it was. Reset puts back Keep itself,
+    // so it drops an edited plan at once.
+    if (reset && state.converted) backToKeep(false);
+    commitRules(reset ? { ...state.defaults } : { ...state.rules, eligibility: value });
     if (wasInside) {
       const on = document.querySelector('input[name="plbEligIn"]:checked');
       if (on) on.focus();
     }
   }
-  // "Reset": back to the usual rules. Putting back another eligibility reloads the student, which
-  // clears the courses the adviser added, so then it asks first, as the switch does.
+  // "Reset": back to the usual rules, Keep among them. Putting back another eligibility reloads the
+  // student, which clears what the adviser added or changed, so then it asks first, as the switch
+  // does; going back to Keep with changes to the registered courses asks the same as Back to Keep.
   function resetRules() {
-    if (state.ctx && !nothingAdded() && state.defaults.eligibility !== state.rules.eligibility) {
-      openEligConfirm(state.defaults.eligibility, true);
+    const reload = state.ctx && state.defaults.eligibility !== state.rules.eligibility;
+    const changes = state.converted ? changesCount() : 0;
+    if (reload && isDirty()) {
+      openEligConfirm(changes ? 'both' : 'elig', state.defaults.eligibility, true);
+      return;
+    }
+    if (changes) {
+      renderRules();
+      openEligConfirm('mode', null, true);
       return;
     }
     closeEligConfirm(false);
+    if (state.converted) backToKeep(false);
     commitRules({ ...state.defaults });
   }
   function commitMaxInPlace() {
@@ -961,6 +1091,9 @@
   }
 
   /* ── The registered week: model, tab facts and grid ────────────────────── */
+  // The registrar's own sources (core/services/timetable_snapshots.py REGISTRAR_SOURCES): a row of
+  // any other source is a forecast (an expected plan, or sections saved from this page).
+  const REGISTRAR_SOURCES = new Set(['scraper_timetable', 'fallback_studying']);
   function registeredCourses() {
     const seen = new Map();
     for (const row of state.baseline) {
@@ -974,13 +1107,26 @@
           section: String(row.section || '').trim(),
           credits: finiteNonNegative(row.credits),
           timed: false,
+          // For the rows of Your plan: the section the student holds, whether a build can place it
+          // (every meeting has a day and a start before its end), and who says so.
+          tsid: null,
+          complete: true,
+          fallback: false,
+          registrar: false,
         });
       }
       const entry = seen.get(key);
       if (entry.credits === null) entry.credits = finiteNonNegative(row.credits);
-      if (normDay(row.day) && toMins(row.start_time) !== null && toMins(row.end_time) !== null) entry.timed = true;
+      const st = toMins(row.start_time);
+      const en = toMins(row.end_time);
+      if (normDay(row.day) && st !== null && en !== null) entry.timed = true;
+      if (!(normDay(row.day) && st !== null && en !== null && en > st)) entry.complete = false;
+      if (entry.tsid === null && row.term_section_id) entry.tsid = row.term_section_id;
+      const source = String(row.source || '').trim().toLowerCase();
+      if (source === 'fallback_studying' || !row.term_section_id) entry.fallback = true;
+      if (REGISTRAR_SOURCES.has(source)) entry.registrar = true;
     }
-    return [...seen.values()];
+    return [...seen.values()].map((entry) => ({ ...entry, complete: entry.complete && entry.tsid !== null }));
   }
   // Registered rows the registrar's timetable took from a fallback mapping: how many sections.
   function fallbackRows() {
@@ -1013,6 +1159,9 @@
     const meetings = [];
     for (const mapping of opt.mappings || []) {
       const key = courseKeyOf(mapping);
+      // The section the student holds (an edited plan kept it): marked, in words too.
+      const own = state.build && state.build.rules.mode === 'ignore'
+        && (state.build.registered || []).some((c) => String(c.tsid) === String(mapping.term_section_id));
       for (const mm of mapping.meetings || []) {
         const day = normDay(mm.day);
         const st = toMins(mm.start_time);
@@ -1020,10 +1169,11 @@
         if (!day || st === null || en === null || en <= st) continue;
         meetings.push({
           day, st, en,
-          code: key || String(mapping.course_code || ''),
+          code: shownCode(key || String(mapping.course_code || '')),
           section: String(mapping.section || '').trim(),
           key,
           kind: 'new',
+          own,
         });
       }
     }
@@ -1085,6 +1235,8 @@
   function renderTab(model) {
     const credits = registeredCredits();
     $('plbTabCredits').textContent = credits === null || !state.ctx ? '' : T.credits(credits);
+    // The registered week is locked only while it is kept (Ignore: the registrar's classes, no lock).
+    $('plbTabRegistered').querySelector('.plb-tab-lock').hidden = state.rules.mode !== 'keep';
     const facts1 = $('plbTabFacts1');
     const facts2 = $('plbTabFacts2');
     if (!state.ctx) { facts1.textContent = '—'; facts2.textContent = ''; return; }
@@ -1151,7 +1303,8 @@
     if (m.clash) block.dataset.clash = 'true';
     if (hueOf(m.key)) block.dataset.hue = String(hueOf(m.key));
     const label = `${m.code}${m.section ? ` ${IS_AR ? 'شعبة' : 'section'} ${m.section}` : ''}, ${DAY_SHORT[m.day]} ${range}`
-      + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
+      + `${m.kind === 'new' ? `, ${T.plannedBlock}` : ''}${m.own ? `, ${T.ownBlock}` : ''}${m.clash ? `, ${T.clashBlock}` : ''}`;
+    if (m.own) block.dataset.own = 'true';
     if (item) {
       const name = courseName(m.key, item.course_name);
       const said = `${m.code}${name ? ` ${name}` : ''}, ${T.detailsWord}`;
@@ -1162,8 +1315,10 @@
       block.setAttribute('role', 'img');
       block.setAttribute('aria-label', label);
     }
+    // A registered class is locked while it is kept; in Ignore it is the registrar's class, no lock.
+    const locked = m.kind !== 'new' && (inert || weekKeepsRegistered());
     block.append(...present(
-      el('span', 'plb-cd', m.kind === 'new' ? null : svg(ICONS.lock, 11), bdi(m.code)),
+      el('span', 'plb-cd', locked ? svg(ICONS.lock, 11) : null, bdi(m.code)),
       m.section ? el('span', 'plb-bs', bdi(`§${m.section}`)) : null,
       el('span', 'plb-bt', bdi(range))));
     return block;
@@ -1214,11 +1369,20 @@
     block.setAttribute('aria-hidden', 'true');
     return block;
   }
+  // Whether the week on screen keeps the registered classes (a lock on them): the build's mode on an
+  // option's tab, the board's on the Registered tab.
+  function weekKeepsRegistered() {
+    const opt = currentOption();
+    return opt ? state.build.rules.mode === 'keep' : state.rules.mode === 'keep';
+  }
   function renderLegend(opt, alt) {
     const showRegistered = !opt || state.build.rules.mode === 'keep';
     const parts = [];
-    if (showRegistered) parts.push(el('span', 'plb-lg-i', svg(ICONS.lock, 11), T.legendRegistered));
+    if (showRegistered && weekKeepsRegistered()) parts.push(el('span', 'plb-lg-i', svg(ICONS.lock, 11), T.legendRegistered));
+    else if (showRegistered) parts.push(el('span', 'plb-lg-i', el('i', 'plb-k'), T.legendRegistered));
     if (opt) parts.push(...(parts.length ? [' '] : []), el('span', 'plb-lg-i', el('i', 'plb-k plb-k--new'), T.planned));
+    // An edited plan's option: its classes at the sections the student holds are marked.
+    if (opt && optionMeetings(opt).some((m) => m.own)) parts.push(' ', el('span', 'plb-lg-i', el('i', 'plb-k plb-k--new plb-k--own'), T.ownSection));
     if (alt) parts.push(...(parts.length ? [' '] : []), el('span', 'plb-lg-i', el('i', 'plb-k plb-k--alt'), T.legendAlt));
     $('plbLegend').replaceChildren(...parts);
     for (const mark of $('plbLegend').querySelectorAll('i, svg')) mark.setAttribute('aria-hidden', 'true');
@@ -1408,7 +1572,43 @@
       const item = state.build.shortlist.find((c) => norm(c.course_code) === courseKeyOf(m) || norm(c.course_code) === norm(m.course_code));
       return sum + (item ? Number(item.credits) || 0 : 0);
     }, 0);
-    return added + (state.build.rules.mode === 'keep' ? registeredCredits() || 0 : 0);
+    const held = (state.build.loadOnly || []).reduce((sum, r) => sum + (finitePositive(r.credits) || 0), 0);
+    return added + (state.build.rules.mode === 'keep' ? registeredCredits() || 0 : held);
+  }
+  // WHAT AN OPTION CHANGES AGAINST THE REGISTRATION (a build of an edited plan), course by course,
+  // by section id: the same section says nothing; another one "CS205 §M1 › §M3"; a registered
+  // course the adviser removed "GS311 dropped"; one still Required-off in the plan that the build
+  // left out "not placed"; a course the student does not hold "+IS482" (one they hold, added back
+  // from Available, is not "+"). A load-only course is "dropped" only when it was removed. null
+  // when there is nothing to compare with (a Keep build, or no registered course).
+  function changesOf(opt) {
+    const build = state.build;
+    if (!build || build.rules.mode !== 'ignore' || !build.registered || !build.registered.length) return null;
+    const out = [];
+    const regKeys = new Set();
+    for (const c of build.registered) {
+      const key = norm(c.key);
+      const code = shownCode(c.code || c.key);
+      regKeys.add(key);
+      if (!c.complete) {
+        if (!(build.loadOnly || []).some((r) => norm(r.key) === key)) out.push({ kind: 'dropped', code });
+        continue;
+      }
+      const m = mappingFor(opt, key);
+      if (m) {
+        if (String(m.term_section_id) !== String(c.tsid)) out.push({ kind: 'moved', code, from: c.section || '?', to: String(m.section || '').trim() || '?' });
+      } else if (build.shortlist.some((it) => norm(it.course_code) === key)) out.push({ kind: 'notPlaced', code });
+      else out.push({ kind: 'dropped', code });
+    }
+    for (const m of opt.mappings || []) {
+      const key = courseKeyOf(m) || norm(m.course_code);
+      if (!regKeys.has(key)) out.push({ kind: 'added', code: shownCode(key) });
+    }
+    return out;
+  }
+  function changesNodes(list) {
+    if (!list.length) return [T.chgNone];
+    return list.flatMap((c, i) => [...(i ? [' · '] : []), ...T.chg[c.kind](c)]);
   }
   function optionIds(opt) {
     return (opt.mappings || []).map((m) => m.term_section_id).filter(Boolean);
@@ -1471,6 +1671,7 @@
     const terms = termsNode(forecastFor(opt.name));
     const seats = fewestSeats(opt);
     const flags = [unplaced ? T.notScheduled(unplaced) : null, seats === null ? null : T.seatsLeft(seats)].filter(Boolean);
+    const changes = changesOf(opt);
     const selected = state.selected === opt.name;
     // An option that stands for identical ones carries their names too: "A1 | B2 | C2".
     const also = (opt.aliases || []).map((a) => el('span', 'plb-tab-aka', ' | ', bdi(a.name)));
@@ -1482,7 +1683,8 @@
         ? el('span', 'plb-tab-x plb-tab-x--sg', el('span', '', ...facts.second), ' ', el('span', 'plb-mic plb-sg', T.suggested))
         : el('span', 'plb-tab-x', ...facts.second),
       alike ? differenceLine(opt, state.build.options) : null,
-      flags.length ? el('span', 'plb-tab-x plb-tab-warn', flags.join(' · ')) : null);
+      flags.length ? el('span', 'plb-tab-x plb-tab-warn', flags.join(' · ')) : null,
+      changes ? el('span', 'plb-tab-x plb-tab-chg', T.chgLead, ...changesNodes(changes)) : null);
     tab.type = 'button';
     tab.id = tabId(opt.name);
     tab.dataset.opt = opt.name;
@@ -1830,6 +2032,14 @@
         rows.push(row);
       }
     }
+    if (opt && state.build.rules.mode === 'ignore') {
+      for (const r of state.build.loadOnly || []) {
+        const row = el('li', 'plb-sr plb-sr--load', swatch(r.key), el('span', 'plb-code', bdi(shownCode(r.code || r.key))),
+          nameNode('plb-nm', r.key, r.name), el('span', 'plb-kt', T.loadOnlyNote));
+        row.dataset.code = norm(r.key);
+        rows.push(row);
+      }
+    }
     if (!opt || state.build.rules.mode === 'keep') {
       for (const c of registeredCourses()) {
         // A registered course has its colour too: the same swatch as its blocks in the week.
@@ -1892,6 +2102,152 @@
     return known.length ? known.reduce((sum, c) => sum + c.credits, 0) : null;
   }
   const inShortlist = (code) => state.shortlist.some((c) => norm(c.course_code) === norm(code));
+
+  /* ── The registered courses as rows of Your plan (S7) ──────────────────── */
+  // The registered courses Your plan lists. An elective slot the plan names (AI1) with 0 credits is
+  // how the plan names a course already counted (its mapped elective), not a registration: no row.
+  function planRegistered() {
+    return registeredCourses().filter((c) => !(c.fallback && c.credits === 0));
+  }
+  const regWord = (c) => (c && c.registrar ? T.regTag : T.expTag);
+  // A CODE::NAME key is shown by its code; the key stays the course's identity everywhere else.
+  const shownCode = (code) => String(code || '').split('::')[0];
+  const isKeptRow = (code) => state.rules.mode === 'keep' && planRegistered().some((c) => norm(c.key) === norm(code));
+  const isLoadOnly = (code) => state.loadOnly.some((r) => norm(r.key) === norm(code));
+  const loadOnlyCredits = () => state.loadOnly.reduce((sum, r) => sum + (finitePositive(r.credits) || 0), 0);
+  // Every row Your plan lists, by course key: planned, registered (Keep) and load only (Ignore).
+  function planRowCodes() {
+    return [
+      ...state.shortlist.map((c) => norm(c.course_code)),
+      ...(state.rules.mode === 'keep' ? planRegistered().map((c) => norm(c.key)) : state.loadOnly.map((r) => norm(r.key))),
+    ];
+  }
+  // A registered course as a row of the plan: Required, pinned to the section the student holds.
+  // Its credits are the registered figure; when no source knows them they are said to be unknown
+  // (the build counts the registered figure itself, server-side).
+  function itemFromRegistered(c) {
+    const credits = finitePositive(c.credits);
+    return {
+      course_code: norm(c.key), course_name: c.name, credits: credits || 0, priority: 'Med', status: 'Eligible',
+      missing_prerequisites: [], must_take: true, score: 0,
+      pinned_sections: [{ term_section_id: Number(c.tsid), section: c.section }],
+      origin: 'registered',
+      registered_section: { term_section_id: Number(c.tsid), section: c.section },
+      ...(credits === null ? { credits_unknown: true } : {}),
+    };
+  }
+  // THE ONE ENTRY POINT: every control of a registered row in Keep calls this first (the section
+  // control, Required, ×, ‹ with registered rows ticked, «), and so does the switch to Ignore. Each
+  // registered course becomes a row of its kind: a section with usable meetings a Required row
+  // pinned to it; one without (no section, or no usable meetings) a load-only row. Then the mode is
+  // Ignore (builds go out of date, the catalogue reloads with the registered sections in it). The
+  // caller applies its own change, redraws once and says what happened (convLead puts "Registered
+  // courses are now editable" in front of it). A tick alone only selects: it never converts.
+  function convertRegistered() {
+    if (!state.ctx || state.rules.mode !== 'keep') return false;
+    const regs = planRegistered();
+    if (!regs.length) {
+      // Nothing registered: Ignore is only the rule.
+      commitRules({ ...state.rules, mode: 'ignore' }, true);
+      return true;
+    }
+    const items = [];
+    const loadOnly = [];
+    for (const c of regs) {
+      if (inShortlist(c.key)) continue;
+      if (c.complete) items.push(itemFromRegistered(c));
+      else loadOnly.push({ key: norm(c.key), code: c.code, name: c.name, credits: c.credits, section: c.section, tsid: c.tsid, registrar: c.registrar });
+    }
+    state.converted = { regs: regs.map((c) => ({ ...c })) };
+    state.shortlist = [...state.shortlist, ...items];
+    state.loadOnly = loadOnly;
+    convLead = true;
+    commitRules({ ...state.rules, mode: 'ignore' }, true);
+    return true;
+  }
+  // How many registered courses the edited plan no longer holds as they were registered: dropped,
+  // another section or any section, no longer Required.
+  function changesCount() {
+    if (!state.converted) return 0;
+    let n = 0;
+    for (const c of state.converted.regs) {
+      const key = norm(c.key);
+      if (!c.complete) {
+        if (!isLoadOnly(key)) n += 1;
+        continue;
+      }
+      const item = state.shortlist.find((it) => norm(it.course_code) === key);
+      const pins = pinsOf(item).map((p) => String(p.term_section_id));
+      if (!item || item.origin !== 'registered' || !item.must_take || pins.length !== 1 || pins[0] !== String(c.tsid)) n += 1;
+    }
+    return n;
+  }
+  // Courses the adviser added (from Available): every planned row that is not a registered one.
+  const addedItems = () => state.shortlist.filter((it) => it.origin !== 'registered');
+  // What a reload would lose: courses added, or a registered row changed.
+  const isDirty = () => addedItems().length > 0 || changesCount() > 0;
+  // BACK TO KEEP: the registered courses are kept as registered again. The converted and load-only
+  // rows go (and a registered course added back from Available: Keep holds it already); the courses
+  // added from Available stay; ticks and the popover close; builds go out of date; the keyboard goes
+  // to the Keep switch.
+  function backToKeep(focusSwitch) {
+    const regKeys = new Set(planRegistered().map((c) => norm(c.key)));
+    state.shortlist = state.shortlist.filter((it) => it.origin !== 'registered' && !regKeys.has(norm(it.course_code)));
+    state.loadOnly = [];
+    state.converted = null;
+    state.pick.planTicked.clear();
+    state.detail = null;
+    closeConvAsk(false);
+    commitRules({ ...state.rules, mode: 'keep' }, true);
+    renderCourses();
+    renderActions();
+    setStatus('ok', T.backDone);
+    if (focusSwitch) $('plbRegKeep').focus();
+  }
+  // Back to Keep from the switch, the notice bar or Reset: it asks first when a registered row was
+  // changed (the switch in the rules zone, the bar in the bar itself).
+  function requestBackToKeep(from) {
+    if (!state.converted) { commitRules({ ...state.rules, mode: 'keep' }); return; }
+    if (!changesCount()) { backToKeep(true); return; }
+    if (from === 'bar') { openConvAsk(); return; }
+    renderRules();               // the switch shows the rule in force while it asks
+    openEligConfirm('mode', null, false);
+  }
+  // The notice bar above Your plan, while the registered courses are rows: its words are a live
+  // region of their own (always in the page, empty in Keep, so a change of words is announced).
+  function renderConvBar() {
+    const on = !!(state.ctx && state.converted);
+    $('plbConvBar').dataset.on = String(on);
+    const text = on ? T.convBar : '';
+    if ($('plbConvText').textContent !== text) $('plbConvText').textContent = text;
+    const back = $('plbBackKeep');
+    back.hidden = !on;
+    const n = on ? changesCount() : 0;
+    const label = n ? T.backToKeepDrops(n) : T.backToKeep;
+    if (back.textContent !== label) back.textContent = label;
+    if (!on) closeConvAsk(false);
+    else if (!$('plbConvAsk').hidden) $('plbConvAskText').textContent = T.askMode(n);
+  }
+  function convAskEscape(event) {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    event.preventDefault();
+    closeConvAsk(true);
+  }
+  function openConvAsk() {
+    $('plbConvAskText').textContent = T.askMode(changesCount());
+    $('plbConvGo').textContent = T.askModeGo;
+    $('plbConvKeep').textContent = T.askModeKeep;
+    $('plbConvAsk').hidden = false;
+    document.addEventListener('keydown', convAskEscape);
+    $('plbConvGo').focus();
+  }
+  function closeConvAsk(focusBack) {
+    const ask = $('plbConvAsk');
+    if (ask.hidden) return;
+    ask.hidden = true;
+    document.removeEventListener('keydown', convAskEscape);
+    if (focusBack && !$('plbBackKeep').hidden) $('plbBackKeep').focus();
+  }
   function planPool() {
     if (!state.planCourses) return [];
     // Kept registered courses are fixed; when they are ignored they can be planned again.
@@ -1960,7 +2316,8 @@
     .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
     .toLowerCase().replace(/\s+/g, '');
-  const takenKeys = () => new Set(state.rules.mode === 'keep' ? registeredCourses().map((c) => c.key) : []);
+  // Keep: the registered courses; Ignore: the load-only rows (the edited rows are in the shortlist).
+  const takenKeys = () => new Set(state.rules.mode === 'keep' ? registeredCourses().map((c) => c.key) : state.loadOnly.map((r) => norm(r.key)));
   // A course the picker can offer: {code, name, credits|null, rec, plan (the plan's row), sections}.
   function sourceLists(src) {
     const kept = takenKeys();
@@ -2144,10 +2501,11 @@
     if (known) metaText.push(sections.length ? T.sectionWord(sections.length) : T.noSections);
     const tags = [];
     if (entry.rec) tags.push(tagNode(T.tagRecommended, ''));
-    // Keep mode: an open elective row a registered course outside the plan likely counts for says
-    // so. It stays addable (an assumption; the adviser may know better). Ignoring the registered
-    // courses, there is nothing to count.
-    const filled = state.rules.mode === 'keep' ? filledByOf(code) : null;
+    // An open elective row a registered course outside the plan likely counts for says so, while
+    // that course is still a row of Your plan (in either mode: removed, it counts for nothing). It
+    // stays addable (an assumption; the adviser may know better).
+    const filledRow = filledByOf(code);
+    const filled = filledRow && planRowCodes().some((key) => shownCode(key) === norm(filledRow.course_code)) ? filledRow : null;
     if (filled) {
       const tag = el('span', 'plb-flag plb-flag--filled', ...T.filledBy(filled.course_code));
       tag.dataset.filledBy = norm(filled.course_code);
@@ -2285,8 +2643,14 @@
         parts.push(T.notInBuild);
       } else { miss = true; parts.push(T.notScheduledHere); }
     }
-    const credits = el('span', 'plb-cr', T.credits(Number(item.credits) || 0));
-    const sub = el('span', 'plb-sl', credits, ...(opt ? [el('span', `plb-sc${miss ? ' plb-sc--miss' : ''}`, ...parts)] : []),
+    const credits = el('span', 'plb-cr', item.credits_unknown ? T.creditsUnknown : T.credits(Number(item.credits) || 0));
+    // A registered row the adviser can edit keeps a quiet "Registered §M1".
+    const held = item.origin === 'registered' && state.converted ? state.converted.regs.find((c) => norm(c.key) === key) : null;
+    const regTag = item.origin === 'registered'
+      ? el('span', 'plb-flag plb-reg-tag', ...T.regTagSec(regWord(held), (item.registered_section && item.registered_section.section) || ''))
+      : null;
+    const sub = el('span', 'plb-sl', credits, ...present(regTag ? ' ' : null, regTag),
+      ...(opt ? [el('span', `plb-sc${miss ? ' plb-sc--miss' : ''}`, ...parts)] : []),
       ...present(opt ? effectNode(code, 'new') : null));
     const open = !!state.detail && state.detail.code === key;
     const label = pins.length === 0 ? T.anySection : T.sectionsBtn(pins.map(pinLabel));
@@ -2299,7 +2663,9 @@
     secbtn.setAttribute('aria-expanded', String(open));
     secbtn.setAttribute('aria-controls', 'plbPop');
     secbtn.setAttribute('aria-label', T.sectionsOfPlanned(code, label));
-    const req = el('button', 'plb-req', svg(ICONS.pin, 14), item.must_take ? el('span', 'plb-req-t', T.required) : null);
+    // A registered row is Required as it comes: its pin says so pressed, without the word (the row
+    // already carries its section and its "Registered" tag), so the name keeps its room.
+    const req = el('button', 'plb-req', svg(ICONS.pin, 14), item.must_take && item.origin !== 'registered' ? el('span', 'plb-req-t', T.required) : null);
     req.type = 'button';
     req.dataset.act = 'must';
     req.dataset.code = key;
@@ -2307,23 +2673,60 @@
     req.setAttribute('aria-label', item.must_take ? T.requiredOn(code) : T.makeRequired(code));
     req.title = item.must_take ? T.requiredOn(code) : T.makeRequired(code);
     const remove = iconButton('x', T.removeCourse(code), 'remove', code);
-    const row = el('div', 'plb-prow', box, el('span', 'plb-code', swatch(code), bdi(code)),
+    const row = el('div', 'plb-prow', box, el('span', 'plb-code', swatch(code), bdi(shownCode(code))),
       el('span', 'plb-pmain', nameNode('plb-nm plb-nm--wrap', code, item.course_name), sub),
       secbtn, req, remove);
     row.dataset.code = key;
+    if (item.origin === 'registered') row.dataset.reg = 'edit';
     if (open) row.dataset.open = 'true';
     return row;
   }
-  function keptRowNode(course) {
-    const lock = el('span', 'plb-lock', svg(ICONS.lock, 14));
-    lock.setAttribute('role', 'img');
-    lock.setAttribute('aria-label', T.registeredLock);
-    const sub = [course.credits === null ? T.creditsUnknown : T.credits(course.credits)];
-    if (course.section) sub.push(`${IS_AR ? 'شعبة' : 'section'} ${course.section}`);
-    const row = el('div', 'plb-prow plb-prow--kept', lock, el('span', 'plb-code', bdi(course.code)),
-      el('span', 'plb-pmain', nameNode('plb-nm plb-nm--wrap', course.key, course.name), el('span', 'plb-sl', el('span', 'plb-cr', sub.join(' · ')))),
-      el('span', 'plb-flag plb-kept-tag', T.registeredKept));
-    row.dataset.code = course.code;
+  // The credits of a registered course as its row says them: unknown for a section no source
+  // gives hours to, never "0 cr".
+  const regCredits = (c) => (c.credits === null || (!c.fallback && !c.credits) ? T.creditsUnknown : T.credits(c.credits));
+  // A registered course in Keep (`keep`): a row like a planned one (tick, section, Required, ×)
+  // that the build keeps exactly as registered. Using any of its controls but the tick makes the
+  // registered courses editable (convertRegistered). One with no usable section is load only:
+  // counted, never placed, so it has no section control and no Required. In Ignore the same row
+  // stands for a load-only course of the edited plan.
+  function registeredRowNode(held, keep) {
+    const key = norm(held.key);
+    const code = shownCode(held.code || held.key);
+    const box = el('input', 'plb-tick');
+    box.type = 'checkbox';
+    box.checked = state.pick.planTicked.has(key);
+    box.dataset.act = 'ptick';
+    box.dataset.code = key;
+    box.setAttribute('aria-label', T.tickPlanned(code));
+    const loadOnly = !keep || !held.complete;
+    const tag = el('span', 'plb-flag plb-reg-tag', regWord(held));
+    const sub = el('span', 'plb-sl', el('span', 'plb-cr', regCredits(held)), ' ', tag,
+      ...(loadOnly ? [' ', el('span', 'plb-load-note', T.loadOnlyNote)] : []));
+    const parts = [box, el('span', 'plb-code', swatch(key), bdi(code)),
+      el('span', 'plb-pmain', nameNode('plb-nm plb-nm--wrap', key, held.name), sub)];
+    if (!loadOnly) {
+      const secbtn = el('button', 'plb-secbtn', el('span', 'plb-secbtn-t', bdi(`§${held.section || '?'}`)), svg(ICONS.chev, 12));
+      secbtn.type = 'button';
+      secbtn.dataset.act = 'detail';
+      secbtn.dataset.code = key;
+      secbtn.dataset.limited = 'true';
+      secbtn.setAttribute('aria-haspopup', 'dialog');
+      secbtn.setAttribute('aria-expanded', 'false');
+      secbtn.setAttribute('aria-controls', 'plbPop');
+      secbtn.setAttribute('aria-label', T.sectionsOfPlanned(code, T.regSection(held.section || '?', regWord(held))));
+      const req = el('button', 'plb-req', svg(ICONS.pin, 14));
+      req.type = 'button';
+      req.dataset.act = 'must';
+      req.dataset.code = key;
+      req.setAttribute('aria-pressed', 'true');
+      req.setAttribute('aria-label', T.requiredOn(code));
+      req.title = T.requiredOn(code);
+      parts.push(secbtn, req);
+    }
+    parts.push(iconButton('x', T.removeCourse(code), 'remove', key));
+    const row = el('div', `plb-prow${keep ? ' plb-prow--kept' : ''}${loadOnly ? ' plb-prow--load' : ''}`, ...parts);
+    row.dataset.code = key;
+    row.dataset.reg = keep ? 'keep' : 'load';
     return row;
   }
   function renderPlanPane() {
@@ -2340,7 +2743,10 @@
       if (open && norm(item.course_code) === open) { nodes.push(pop); popPlaced = true; }
     }
     if (!popPlaced) nodes.push(pop);
-    if (ready && state.rules.mode === 'keep') for (const course of registeredCourses()) nodes.push(keptRowNode(course));
+    const keep = state.rules.mode === 'keep';
+    const regs = ready && keep ? planRegistered() : [];
+    for (const course of regs) nodes.push(registeredRowNode(course, true));
+    if (ready && !keep) for (const held of state.loadOnly) nodes.push(registeredRowNode(held, false));
     if (ready) {
       const hint = el('p', 'plb-hint', T.hintA, svg(ICONS.next, 13), T.hintB);
       hint.querySelector('svg').classList.add('plb-dir');
@@ -2348,7 +2754,9 @@
     }
     host.replaceChildren(...nodes);
     if (hadFocus) hadFocus.focus({ preventScroll: true });
-    paneHead($('plbPlanCount'), T.planHead(ready ? state.shortlist.length : 0));
+    // "Your plan · 6 registered + 2 added" while the registered courses are kept; else every row.
+    paneHead($('plbPlanCount'), regs.length ? T.planHeadReg(regs.length, state.shortlist.length)
+      : T.planHead(ready ? state.shortlist.length + (keep ? 0 : state.loadOnly.length) : 0));
     renderCreditsHeader();
   }
   function renderXfer(lists) {
@@ -2356,8 +2764,9 @@
     const shown = lists ? lists.avail : [];
     const canAdd = ready && shown.some((e) => state.pick.ticked.has(e.code) && addable(e));
     const canAll = ready && shown.some(addable);
-    const planned = state.shortlist.length;
-    const ticked = [...state.pick.planTicked].filter((k) => inShortlist(k));
+    const rows = planRowCodes();
+    const planned = rows.length;
+    const ticked = [...state.pick.planTicked].filter((k) => rows.includes(k));
     // The glyphs are SVG chevrons: "towards the plan" is drawn pointing right, and the stylesheet
     // flips every `.plb-dir` under right-to-left, where the plan is on the left.
     const set = (id, enabled, label, left, all) => {
@@ -2387,7 +2796,8 @@
       tab.tabIndex = state.pickTab === name ? 0 : -1;
     };
     set('plbPickTabAvail', 'avail', T.tabAvail(ready && lists ? lists.avail.length : 0));
-    set('plbPickTabPlan', 'plan', T.tabPlan(ready ? state.shortlist.length : 0));
+    // Every row Your plan lists (the registered ones are rows too, S7).
+    set('plbPickTabPlan', 'plan', T.tabPlan(ready ? planRowCodes().length : 0));
   }
   function setPickTab(name, focus) {
     if (name !== 'avail' && name !== 'plan') return;
@@ -2405,35 +2815,52 @@
     delete phoneSum.dataset.over;
     if (!state.ctx) { load.textContent = ''; line.textContent = ''; meter.hidden = true; phoneSum.textContent = ''; return; }
     const keep = state.rules.mode === 'keep';
-    const reg = keep ? registeredCredits() || 0 : 0;
-    const planned = planCredits();
+    // Keep: the registered load and the planned courses. Ignore, the registered courses being rows:
+    // the registered rows (and load-only hours) the plan still holds, and the courses added.
+    const regKeys = new Set(state.converted ? state.converted.regs.map((c) => norm(c.key)) : []);
+    const itemCredits = (list) => list.reduce((sum, c) => sum + (Number(c.credits) || 0), 0);
+    const reg = keep ? registeredCredits() || 0
+      : itemCredits(state.shortlist.filter((c) => regKeys.has(norm(c.course_code)))) + loadOnlyCredits();
+    const planned = keep ? planCredits() : itemCredits(state.shortlist.filter((c) => !regKeys.has(norm(c.course_code))));
     const used = reg + planned;
     const cap = state.rules.maxCredits;
     load.replaceChildren(el('b', '', used), el('span', 'plb-pload-u', cap === null ? ` ${T.creditUnit(used)}` : ` / ${cap} ${T.creditUnit(cap)}`));
     const parts = [T.plannedN(planned)];
-    if (keep) parts.push(T.registeredN(reg));
+    if (keep || state.converted) parts.push(T.registeredN(reg));
     let text = parts.join(' + ');
-    // The limit is the build's: what the registered courses leave of it is the room for the planned
-    // ones (the build's `credit_room`). Only planned credits can be over it: registered courses
-    // that use the whole limit leave no room, they are not "over" when nothing is planned.
-    const room = cap === null ? null : Math.max(0, cap - reg);
-    const free = room === null ? null : room - planned;
+    let over = false;
+    let overBy = 0;
     if (cap !== null) {
-      if (free < 0) text += ` · ${T.overLimitN(-free)}`;
-      else if (room === 0) text += ` · ${T.noRoomLeft}`;
-      else text += ` · ${free} ${T.creditUnit(free)} ${T.free2}`;
-      load.dataset.over = free < 0 ? 'true' : 'false';
-      line.dataset.over = free < 0 ? 'true' : 'false';
-      const total = Math.max(cap, used) || 1;
+      // The limit is the build's. Keep: what the registered courses leave of it is the room for the
+      // planned ones (the build's `credit_room`); registered courses that use the whole limit leave
+      // no room, and above it they are said to be over it, with what still fits: a swap for a course
+      // of the same credits (a change to a registered row makes them editable). Ignore: the limit
+      // is never below the load the student holds (the build raises it to that), so the edited plan
+      // may hold as much as is registered.
+      const held = keep ? reg : (state.converted ? registeredCredits() || 0 : 0);
+      const limit = keep ? cap : Math.max(cap, held);
+      const room = keep ? Math.max(0, cap - reg) : limit;
+      const free = room - (keep ? planned : used);
+      if (free < 0) { over = true; overBy = -free; text += ` · ${T.overLimitN(-free)}`; }
+      if (keep && reg > cap) { over = true; text += ` · ${T.regOver(reg - cap)}`; }
+      else if (!keep && limit > cap) text += `${free > 0 ? ` · ${free} ${T.creditUnit(free)} ${T.free2}` : ''} · ${T.capRaised(limit)}`;
+      else if (free >= 0 && room === 0) text += ` · ${T.noRoomLeft}`;
+      else if (free >= 0) text += ` · ${free} ${T.creditUnit(free)} ${T.free2}`;
+      load.dataset.over = over ? 'true' : 'false';
+      line.dataset.over = over ? 'true' : 'false';
+      const total = Math.max(limit, used) || 1;
       meter.hidden = false;
       meter.firstChild.style.width = `${(planned / total) * 100}%`;
       meter.lastChild.style.width = `${(reg / total) * 100}%`;
-      meter.dataset.over = free < 0 ? 'true' : 'false';
+      meter.dataset.over = over ? 'true' : 'false';
     } else meter.hidden = true;
     line.textContent = text;
-    const sum = T.phoneSum(state.shortlist.length, cap === null ? T.loadOnly(used) : T.loadOf(used, cap));
-    phoneSum.textContent = cap !== null && free < 0 ? `${sum} · ${T.overLimitN(-free)}` : sum;
-    if (cap !== null) phoneSum.dataset.over = free < 0 ? 'true' : 'false';
+    const sum = T.phoneSum(planRowCodes().length, cap === null ? T.loadOnly(used) : T.loadOf(used, cap));
+    let phone = sum;
+    if (overBy) phone = `${sum} · ${T.overLimitN(overBy)}`;
+    else if (keep && cap !== null && reg > cap) phone = `${sum} · ${T.overLimitN(reg - cap)}`;
+    phoneSum.textContent = phone;
+    if (cap !== null) phoneSum.dataset.over = over ? 'true' : 'false';
   }
   // The courses zone, drawn again from the state. Keyboard focus is found again by its action,
   // course and section; where that control has gone it falls to the search box.
@@ -2463,12 +2890,10 @@
     renderPlanPane();
     renderXfer(ready ? lists : null);
     renderPickTabs(ready ? lists : null);
+    renderConvBar();
     renderDetail();
     restoreFocus(mark);
   }
-  // Fetch puts no course in Your plan: every planned course is one the adviser moved across. So
-  // there are no suggestions to reset to, and « (remove every planned course) is the way back.
-  const nothingAdded = () => state.shortlist.length === 0;
   function restoreFocus(mark) {
     const want = state.focus;
     state.focus = null;
@@ -2507,18 +2932,24 @@
     if (how !== 'row' && (document.activeElement === document.body || document.activeElement.disabled)) $('plbFind').focus({ preventScroll: true });
   }
   function removeCoursesFromPlan(codes, how) {
+    // A registered row in Keep: the registered courses become editable rows first.
+    if (codes.some((code) => isKeptRow(code))) convertRegistered();
     const gone = [];
     for (const code of codes) {
       const at = state.shortlist.findIndex((c) => norm(c.course_code) === norm(code));
-      if (at < 0) continue;
-      gone.push(...state.shortlist.splice(at, 1));
+      const held = state.loadOnly.findIndex((r) => norm(r.key) === norm(code));
+      if (at >= 0) gone.push(...state.shortlist.splice(at, 1));
+      else if (held >= 0) gone.push(...state.loadOnly.splice(held, 1).map((r) => ({ course_code: r.key })));
+      else continue;
       state.pick.planTicked.delete(norm(code));
       // "Only these" with nothing ticked belonged to the course that has just gone, not to the panel.
       if (state.detail && state.detail.code === norm(code)) delete state.detail.only;
     }
     if (!gone.length) return;
     planChanged();
-    setStatus('ok', ...(gone.length === 1 ? T.removed(gone[0].course_code) : [T.removedMany(gone.length)]));
+    const emptied = how === 'all' && !planRowCodes().length && state.converted;
+    setStatus('ok', ...(emptied ? [T.convCleared]
+      : (gone.length === 1 ? T.removed(shownCode(gone[0].course_code)) : [T.removedMany(gone.length)])));
     state.focus = how === 'row' ? { kind: 'tick', code: gone[0].course_code } : null;
     if (state.build) renderWeek();
     renderCourses();
@@ -2565,12 +2996,19 @@
     renderXfer(listsFor(state.pick.src));
   }
   function toggleRequired(code) {
+    // A registered row in Keep is shown Required: pressing it makes the registered courses
+    // editable, then takes Required off that one.
+    const converted = isKeptRow(code) && convertRegistered();
     const item = state.shortlist.find((c) => norm(c.course_code) === code);
     if (!item) return;
     item.must_take = !item.must_take;
     if (state.build || state.inflight) planChanged();
     state.focus = { kind: 'must', code };
     renderCourses();
+    if (converted) {
+      renderActions();
+      setStatus('ok', ...T.convNotRequired(shownCode(code)));
+    }
   }
 
   /* ── Data: plan and section catalogue ──────────────────────────────────── */
@@ -2645,17 +3083,24 @@
       ...planPool().map((c) => c.code), ...state.shortlist.map((c) => norm(c.course_code)),
       ...state.recs.map((r) => norm(r.course_code)).filter(Boolean),
     ])];
-    if (!codes.length) { state.catalog = new Map(); renderCourses(); return; }
+    if (!codes.length) { state.catalog = new Map(); state.catState = 'ready'; renderCourses(); return; }
+    state.catState = 'loading';
     let result = null;
     try {
-      result = await postJson('/ops/planner/sections-catalog/', {
+      const body = {
         student_id: state.ctx.studentId, academic_year: state.ctx.year, term: state.ctx.term,
         course_codes: codes, program_sections_only: state.rules.programOnly,
-      });
+      };
+      // The registered courses as rows: their sections are listed whatever the programme filter
+      // says (the server reads which they are).
+      if (state.converted) body.include_registered = true;
+      result = await postJson('/ops/planner/sections-catalog/', body);
     } catch (err) { result = null; }
     if (run !== state.gen || mine !== state.catGen) return;
+    state.catState = result && result.response.ok ? 'ready' : 'error';
     if (!result || !result.response.ok || !result.data || !Array.isArray(result.data.sections)) {
       state.catalog = null;
+      state.catState = 'error';
       setStatus('warn', T.sectionsFailed);
     } else {
       const map = new Map();
@@ -2718,6 +3163,8 @@
   }
   async function loadStudent(options) {
     const reuse = !!(options && options.reuse && state.ctx);
+    // After an apply in Ignore the board stays as it was built (decision 3): the plan comes back.
+    const restore = reuse && options.restore ? options.restore : null;
     const studentId = reuse ? state.ctx.studentId : $('plbStudentId').value.trim();
     const year = reuse ? state.ctx.year : $('plbYear').value.trim();
     const term = reuse ? state.ctx.term : $('plbTerm').value;
@@ -2792,9 +3239,21 @@
     // as if this term's registrations were already done, so prefilling it put 8 credits on top of
     // a full 18-credit registration. A reload (a rule, a save) clears the plan the same way.
     state.shortlist = [];
+    // Every load starts in Keep: the registered courses as registered, nothing of an edit kept.
+    state.rules.mode = 'keep';
+    state.converted = null;
+    state.loadOnly = [];
+    if (restore) {
+      state.rules.mode = 'ignore';
+      state.shortlist = restore.shortlist;
+      state.loadOnly = restore.loadOnly;
+      state.converted = restore.converted;
+    }
+    closeConvAsk(false);
     state.planCourses = null;
     state.planCredits = null;
     state.catalog = null;
+    state.catState = 'idle';
     // The picker starts again on the same source; the whole-term list belongs to this student and term.
     state.pick = { ...newPick(), src: state.pick ? state.pick.src : 'recommended', find: state.pick ? state.pick.find : '' };
     // The whole-term list is kept for the same student and term (an eligibility switch reloads
@@ -2958,6 +3417,9 @@
     }
     for (const [why, codes] of groups) lines.push(codes.length ? [...T.notScheduledList(codes), ' — ', why] : [why]);
     if (!lines.length && !noRoom) lines.push([T.noFeasible]);
+    // An edited plan whose Required rows cannot all be placed: name them, and say what to change.
+    const musts = [...new Set(build.failures.filter((f) => f.kind === 'must_take' && f.course_code).map((f) => shownCode(String(f.course_code))))];
+    if (build.rules.mode === 'ignore' && musts.length && !build.options.length) lines.push(T.unrequire(musts));
     return lines;
   }
   function applicability() {
@@ -3553,6 +4015,8 @@
       max_credits: Number(state.rules.maxCredits || 0),
       shortlist: state.shortlist,
       baseline: state.baseline,
+      // Ignore: the registered courses held as load only (the server checks each one is).
+      ...(state.rules.mode === 'ignore' ? { registered_load_only: state.loadOnly.filter((r) => finitePositive(r.credits)).map((r) => r.key) } : {}),
     };
   }
   async function runBuild() {
@@ -3569,6 +4033,10 @@
     const gen = ++state.buildGen;
     const rules = { mode: state.rules.mode, programOnly: state.rules.programOnly, maxCredits: state.rules.maxCredits };
     const shortlist = JSON.parse(JSON.stringify(state.shortlist));
+    // What the options are compared with (Changes against the registration): the registered
+    // courses and the load-only rows as they were when this build was asked for.
+    const registered = state.converted ? JSON.parse(JSON.stringify(state.converted.regs)) : [];
+    const loadOnly = JSON.parse(JSON.stringify(state.loadOnly));
     const body = buildBody();
     setBuildLine('busy', T.building);
     renderStrip();
@@ -3600,6 +4068,8 @@
         options: distinct,
         shortlist,
         rules,
+        registered,
+        loadOnly,
         madeAt: now.getTime(),
         stale: null,
         at: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
@@ -3641,10 +4111,13 @@
         el('span', 'plb-apply-when', ...whenNodes(m.meetings)));
     }));
     const registered = registeredCourses();
-    $('plbApplyReg').replaceChildren(build.rules.mode === 'keep'
-      ? el('span', '', T.keptRegistered(registered.length), ' ',
-        ...registered.flatMap((c, i) => (i ? [' · ', bdi(c.code)] : [bdi(c.code)])))
-      : T.droppedRegistered);
+    const changes = changesOf(opt);
+    let said = T.droppedRegistered;
+    if (build.rules.mode === 'keep') {
+      said = el('span', '', T.keptRegistered(registered.length), ' ',
+        ...registered.flatMap((c, i) => (i ? [' · ', bdi(c.code)] : [bdi(c.code)])));
+    } else if (changes) said = el('span', '', T.applyConverted, ' ', T.chgLead, ...changesNodes(changes));
+    $('plbApplyReg').replaceChildren(said);
     $('plbApplyWarn').textContent = T.replaceWarn;
     const err = $('plbApplyErr');
     err.textContent = '';
@@ -3689,6 +4162,22 @@
       term_section_ids: optionIds(opt),
       confirm_replace: true,
     };
+    // An edited plan says so, and which registered courses the adviser took out of it: the clash
+    // check sets their registrar rows aside (and those of the courses this option places).
+    const built = state.build;
+    const edited = built.rules.mode === 'ignore';
+    const changes = changesOf(opt);
+    if (edited) {
+      body.mode = 'ignore';
+      body.dropped_registered = (built.registered || []).map((c) => norm(c.key)).filter((key) => (
+        !built.shortlist.some((it) => norm(it.course_code) === key) && !(built.loadOnly || []).some((r) => norm(r.key) === key)));
+    }
+    // After the save the board stays as built (decision 3): the plan comes back after the reload.
+    const restore = edited && state.converted ? {
+      shortlist: JSON.parse(JSON.stringify(state.shortlist)),
+      loadOnly: JSON.parse(JSON.stringify(state.loadOnly)),
+      converted: JSON.parse(JSON.stringify(state.converted)),
+    } : null;
     const refuse = (line) => {
       state.applying = false;
       const err = $('plbApplyErr');
@@ -3725,8 +4214,10 @@
       sentences.push([T.clashSaved(clashes.length), ' (',
         ...clashes.flatMap((x, i) => [i ? ', ' : '', bdi(`${x.course_code || ''} ${x.section || ''} · ${x.clashes_with || ''}`.trim())]), ').']);
     }
+    // The registrar's timetable is unchanged; what the option changes against it is said.
+    if (changes) sentences.push([T.chgLead, ...changesNodes(changes), '.']);
     setBuildLine('busy', T.loading);
-    const reloaded = state.ctx && state.ctx.studentId === ctx.studentId ? await loadStudent({ reuse: true }) : false;
+    const reloaded = state.ctx && state.ctx.studentId === ctx.studentId ? await loadStudent({ reuse: true, restore }) : false;
     if (reloaded) {
       // With no registrar timetable the saved sections are what this page reads back as the week.
       if (state.baseline.some((row) => String(row.source || '') === 'planner')) sentences.splice(1, 0, [T.savedShown]);
@@ -3759,23 +4250,50 @@
         && registered.some((r) => r.day === day && st < r.en && r.st < en);
     });
   }
+  // The sections the student holds: their own is never full or unusable for them.
+  const ownSections = () => new Set(planRegistered().map((c) => String(c.tsid)).filter((id) => id && id !== 'null'));
+  // Ignore: the Required rows pinned to one section that this section would clash with.
+  function requiredClashes(section) {
+    if (state.rules.mode !== 'ignore') return [];
+    const own = courseKeyOf(section);
+    const mine = (section.meetings || []).map((mm) => ({ day: normDay(mm.day), st: toMins(mm.start_time), en: toMins(mm.end_time) }))
+      .filter((m) => m.day && m.st !== null && m.en !== null && m.en > m.st);
+    const out = [];
+    for (const item of state.shortlist) {
+      const pins = pinsOf(item);
+      if (!item.must_take || pins.length !== 1 || norm(item.course_code) === own) continue;
+      const other = findSection(pins[0].term_section_id);
+      if (!other) continue;
+      const hit = (other.meetings || []).some((mm) => {
+        const day = normDay(mm.day);
+        const st = toMins(mm.start_time);
+        const en = toMins(mm.end_time);
+        return day && st !== null && en !== null && mine.some((m) => m.day === day && m.st < en && st < m.en);
+      });
+      if (hit) out.push(`${shownCode(item.course_code)} §${pinLabel(pins[0])}`);
+    }
+    return out;
+  }
   // What the panel says about one section.
   function sectionModel(section) {
     const cap = sectionCapacity(section);
+    const own = ownSections().has(String(section.term_section_id));
     const reasons = [];
-    if (cap.known && cap.full && !state.rules.allowFull) reasons.push(T.cannotFull);
+    if (cap.known && cap.full && !state.rules.allowFull && !own) reasons.push(T.cannotFull);
     const clash = state.rules.mode === 'keep' && sectionClashes(section);
     if (clash) reasons.push(T.cannotClash);
     const taken = finiteNonNegative(section.registered_count);
     const max = finiteNonNegative(section.available_capacity);
     let seats = T.seatsUnknown;
-    if (cap.known) seats = cap.full ? T.seatsFull : T.seatsTaken(taken, max);
+    // The student's own section is never "full" for them: its seats are said as a count.
+    if (cap.known) seats = cap.full && !own ? T.seatsFull : T.seatsTaken(taken, max);
     const options = state.build
       ? state.build.options.filter((o) => (o.mappings || []).some((m) => String(m.term_section_id) === String(section.term_section_id))).map((o) => o.name)
       : [];
     return {
       id: String(section.term_section_id), label: String(section.section || '').trim(), cap, clash, reasons, seats,
-      when: whenNodes(section.meetings), programmes: programmesOf(section), options,
+      when: whenNodes(section.meetings), programmes: programmesOf(section), options, own,
+      requiredClash: requiredClashes(section),
     };
   }
   // The allowed sections of a course: [{term_section_id, section}], at most MAX_ONLY.
@@ -3800,12 +4318,15 @@
     input.disabled = !ticked && (!usable || atMax);   // a tick that became unusable stays, flagged
     const flags = [];
     // A section that cannot be used says why in a sentence below: a chip saying the same is noise.
-    if (usable && model.cap.known && model.cap.full) flags.push(el('span', 'plb-flag plb-flag--bad', T.seatsFull));
-    if (fewSeats(model.cap)) flags.push(el('span', 'plb-flag plb-flag--warn', T.seatsLeft(model.cap.remaining)));
+    if (model.own) flags.push(el('span', 'plb-flag plb-flag--own', T.ownSection));
+    if (usable && model.cap.known && model.cap.full && !model.own) flags.push(el('span', 'plb-flag plb-flag--bad', T.seatsFull));
+    if (fewSeats(model.cap) && !model.own) flags.push(el('span', 'plb-flag plb-flag--warn', T.seatsLeft(model.cap.remaining)));
     if (usable && model.clash) flags.push(el('span', 'plb-flag plb-flag--bad', T.clashFlag));
+    for (const label of model.requiredClash) flags.push(el('span', 'plb-flag plb-flag--warn', ...T.clashRequired(label)));
     if (model.options.length) flags.push(el('span', 'plb-flag', ...T.inOptions(model.options)));
     row.dataset.tsid = model.id;
     if (!usable) row.dataset.unusable = 'true';
+    if (model.own) row.dataset.own = 'true';
     row.append(...present(
       inPlan ? input : null,
       el('span', 'plb-dt-sec-body',
@@ -3850,8 +4371,8 @@
     const atMax = pins.length >= MAX_ONLY;
     // "Only these" shows once a section is ticked, or once the adviser asked for it in this opening.
     const only = !!item && (pins.length > 0 || state.detail.only === true);
-    const title = el('h3', 'plb-dt-title', bdi(code), info.name ? ' ' : null, info.name ? isolate(info.name) : null,
-      el('span', 'plb-dt-cr', ` · ${T.credits(info.credits)}`));
+    const title = el('h3', 'plb-dt-title', bdi(shownCode(code)), info.name ? ' ' : null, info.name ? isolate(info.name) : null,
+      el('span', 'plb-dt-cr', ` · ${item && item.credits_unknown ? T.creditsUnknown : T.credits(info.credits)}`));
     title.id = 'plbDetailTitle';
     title.tabIndex = -1;
     title.dataset.fk = 'title';
@@ -3867,7 +4388,10 @@
     const group = el('fieldset', 'plb-dt-group');
     group.append(el('legend', 'plb-mic', T.detailSections));
     group.append(modeRow('any', T.anySectionOpt, T.anySectionHint, !only), modeRow('only', T.onlyOpt, null, only));
-    if (list === null) group.append(el('p', 'plb-dt-hint', T.noCatalog));
+    // While the catalogue is on its way (it reloads when the registered courses become rows) the
+    // list is loading, never "no sections".
+    if (state.catState === 'loading' && (!list || !list.length)) group.append(el('p', 'plb-dt-hint', T.loadingSections));
+    else if (list === null) group.append(el('p', 'plb-dt-hint', T.noCatalog));
     else if (!list.length) group.append(el('p', 'plb-dt-hint', T.noSections));
     else {
       for (const section of sortedSections(code)) {
@@ -3925,6 +4449,9 @@
   // `fromBlock` is the week block that opened the panel, when one did: closing returns there.
   function openDetail(code, fromBlock) {
     const key = norm(code);
+    // The section control of a registered row in Keep: the registered courses become editable
+    // rows first, then its menu opens (Escape leaves them editable; Back to Keep is one click away).
+    const converted = isKeptRow(key) && convertRegistered();
     const item = state.shortlist.find((c) => norm(c.course_code) === key);
     if (!item) return;
     state.detail = {
@@ -3937,7 +4464,11 @@
     // From the week the planned row is brought into view first: the popover hangs under its button.
     const row = document.querySelector(`#plbPlanList .plb-prow[data-code="${CSS.escape(key)}"]`);
     if (fromBlock && row) row.scrollIntoView({ block: 'nearest' });
-    renderDetail();
+    if (converted) {
+      renderCourses();
+      renderActions();
+      setStatus('ok', ...T.convSection(shownCode(key)));
+    } else renderDetail();
     $('plbDetailTitle').focus({ preventScroll: true });
   }
   // Closing redraws the popover and the open marks only: a click that closes it by landing elsewhere
@@ -4063,6 +4594,9 @@
     $('plbFullIn').addEventListener('change', (event) => changeRuleInPlace('allowFull', event.target.checked));
     $('plbRulesReset').addEventListener('click', resetRules);
     $('plbEligGo').addEventListener('click', goEligConfirm);
+    $('plbBackKeep').addEventListener('click', () => requestBackToKeep('bar'));
+    $('plbConvGo').addEventListener('click', () => backToKeep(true));
+    $('plbConvKeep').addEventListener('click', () => closeConvAsk(true));
     $('plbEligKeep').addEventListener('click', () => closeEligConfirm(true));
     $('plbCurTT').addEventListener('toggle', renderCurTT);
     $('plbMaxIn').addEventListener('keydown', (event) => {
@@ -4129,7 +4663,7 @@
         if (kind === 'add') moveTicked();
         else if (kind === 'addall') moveAll();
         else if (kind === 'rem') removeCoursesFromPlan([...state.pick.planTicked], '');
-        else if (kind === 'remall') removeCoursesFromPlan(state.shortlist.map((c) => c.course_code), '');
+        else if (kind === 'remall') removeCoursesFromPlan(planRowCodes(), 'all');
       });
     }
     window.addEventListener('resize', () => { if (state.detail) placePop(); });

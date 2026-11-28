@@ -200,7 +200,9 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def test_every_rule_changes_in_place_and_the_other_rules_ride_along(self) -> None:
         fake = BuildFake()
         page = self._open(fake)
-        self._rules(page, mode="ignore", elig="relaxed", max=15, prog=False, full=True)
+        # A prerequisite reload starts in Keep (S7), so Ignore is set after it.
+        self._rules(page, elig="relaxed")
+        self._rules(page, mode="ignore", max=15, prog=False, full=True)
         expect(page.locator("#plbRegIgnore")).to_be_checked()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
         self.assertEqual(page.input_value("#plbMaxIn"), "15")
@@ -343,7 +345,8 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
         self._fetch(page, STUDENT_ID)
         self._eligible(page)
         self.assertEqual(fake.context_bodies[0]["eligibility_mode"], "relaxed")
-        expect(page.locator("#plbRegIgnore")).to_be_checked()
+        # A load starts in Keep (S7: the registered courses as registered); the others ride along.
+        expect(page.locator("#plbRegKeep")).to_be_checked()
         expect(page.locator("#plbEligRelaxed")).to_be_checked()
 
     # ── touch and size ──────────────────────────────────────────────────────
@@ -463,7 +466,10 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     # ── the layout ──────────────────────────────────────────────────────────
     def test_the_plan_header_has_no_reset_to_suggestions_any_more(self) -> None:
         # Fetch adds no course, so there are no suggestions to go back to: « is the way back.
-        for language, title in (("en", "Your plan · 0 courses"), ("ar", "خطتك · 0 مقررًا")):
+        for language, title in (
+            ("en", "Your plan · 3 registered + 0 added"),
+            ("ar", "خطتك · 3 مسجّلة + 0 مضافة"),
+        ):
             with self.subTest(language=language):
                 page = self._open(BuildFake(), language=language, plan=False)
                 self.assertEqual(page.locator("#plbReset, [data-act='reset']").count(), 0)
@@ -476,10 +482,15 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def test_remove_all_clears_the_plan_back_to_the_registered_courses(self) -> None:
         page = self._open(BuildFake())
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])
+        # « in Keep starts from scratch (S7); Back to Keep gives back the registered courses.
         page.click("#plbXRemAll")
         self.assertEqual(self._rows(page, "new"), [])
-        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
+        self.assertEqual(self._rows(page, "registered"), [])
         expect(page.locator("#plbFind")).to_be_focused()
+        page.click("#plbBackKeep")
+        page.click("#plbConvGo")
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
 
     def test_the_source_and_the_search_share_one_line_at_1440_and_1152(self) -> None:
         for font in ("app", "wide"):

@@ -188,11 +188,19 @@ class PlannerBoardGapsTests(PlannerBoardCase):
         self._open_panel(page, "AI331")
         page.locator("#plbPop [data-tsid='21'] input").check()
         self.assertEqual(self._rows(page, "new"), ["AI331", "STAT305"])
+        # « in Keep starts from scratch (S7): the registered rows go too, and Back to Keep brings
+        # them back as registered, with no course of the adviser's.
         page.click("#plbXRemAll")
         self.assertEqual(self._rows(page, "new"), [])
-        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
-        expect(page.locator("#plbStatus")).to_have_text("Removed 2 courses from the plan.")
+        self.assertEqual(self._rows(page, "registered"), [])
+        expect(page.locator("#plbStatus")).to_have_text(
+            "Registered courses are now editable (Ignore). Your plan is empty: start from scratch."
+        )
         expect(page.locator("#plbFind")).to_be_focused()
+        page.click("#plbBackKeep")
+        page.click("#plbConvGo")
+        self.assertEqual(self._rows(page, "new"), [])
+        self.assertEqual(self._rows(page, "registered"), ["CS301", "CS322", "CS330"])
         # What a build would send is the registered courses' room and no course of the adviser's.
         page.click("#plbBuild")
         expect(page.locator("#plbBuild")).to_have_text("Rebuild options")

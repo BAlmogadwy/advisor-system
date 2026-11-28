@@ -48,9 +48,12 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
 
     def test_the_build_body_follows_the_rules_and_the_plan(self) -> None:
         fake = BuildFake()
-        # The rules first: a changed eligibility reloads the student, which clears Your plan.
+        # The rules first: a changed eligibility reloads the student, which clears Your plan and
+        # starts again in Keep (S7), so Ignore comes after it. Ignore makes the registered courses
+        # rows of the plan; they are taken out, so the shortlist is the adviser's course alone.
         page = self._open(fake, plan=False)
-        self._rules(page, mode="ignore", elig="relaxed", max=15, prog=False, full=True)
+        self._rules(page, elig="relaxed", max=15, prog=False, full=True)
+        self._registered_ignored(page)
         self._plan_recommended(page)
         page.click("#plbPlanList button[data-act='remove'][data-code='AI342']")
         page.click("#plbPlanList button[data-act='must'][data-code='AI331']")
@@ -69,6 +72,8 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
                 "program_sections_only": False,
                 "allow_full_sections": True,
                 "max_credits": 15,
+                # Ignore sends the registered courses it holds as load only: none here.
+                "registered_load_only": [],
             },
         )
         self.assertEqual([c["course_code"] for c in body["shortlist"]], ["AI331"])
@@ -283,10 +288,14 @@ class PlannerBoardBuildBrowserTests(PlannerBoardCase):
         self.assertEqual(self._cell(page, "AI331"), "§M1")
         self.assertEqual(self._cell(page, "AI342"), "not scheduled in this option")
         self.assertEqual(self._tab_lines(page, "B2")[-1], "1 not scheduled")
-        # Registered courses keep their cells; the Registered tab reads as in part one.
+        # Registered courses keep their cells (the section is their own control now, S7); the
+        # Registered tab reads as in part one.
         self.assertEqual(
-            self._text(page, "#plbPlanList .plb-prow--kept[data-code='CS301'] .plb-cr"),
-            "3 cr · section M1",
+            self._text(page, "#plbPlanList .plb-prow--kept[data-code='CS301'] .plb-cr"), "3 cr"
+        )
+        self.assertEqual(
+            self._text(page, "#plbPlanList .plb-prow--kept[data-code='CS301'] .plb-secbtn"),
+            "§M1",
         )
         page.click("#plbTabRegistered")
         self.assertEqual(self._cell(page, "AI331"), "Any section")

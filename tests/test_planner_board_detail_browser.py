@@ -105,8 +105,15 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         self.assertEqual(button.get_attribute("aria-haspopup"), "dialog")
         self.assertEqual(self._text(page, self._button("AI331")), "Any section")
         self.assertTrue(page.locator("#plbPop").is_hidden())
-        # Registered and blocked rows have no popover.
-        self.assertEqual(page.locator("#plbPlanList .plb-prow--kept [data-act]").count(), 0)
+        # A registered row has the controls of a planned one (S7: using one makes the registered
+        # courses editable); a blocked row has none.
+        self.assertEqual(
+            page.eval_on_selector_all(
+                "#plbPlanList .plb-prow--kept[data-code='CS301'] [data-act]",
+                "ns => ns.map(n => n.dataset.act)",
+            ),
+            ["ptick", "detail", "must", "remove"],
+        )
         self._rows(page, "blocked")
         self.assertEqual(page.locator("#plbBlocked [data-act], #plbBlocked input").count(), 0)
         button.click()
