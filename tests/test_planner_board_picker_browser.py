@@ -490,14 +490,12 @@ class PlannerBoardPickerTests(PlannerBoardCase):
         )
         self.assertEqual(pointing, ["right", "left"])
 
-    def test_on_a_phone_the_columns_stack_and_nothing_overflows(self) -> None:
+    def test_on_a_phone_one_panel_shows_and_nothing_overflows(self) -> None:
         page, fake = self._page(width=390, height=844)
         self.assertEqual(page.evaluate(OVERFLOWS), [])
-        avail = page.locator("#plbAvail").bounding_box()
-        xfer = page.locator("#plbXAdd").bounding_box()
-        plan = page.locator("#plbPlan").bounding_box()
-        self.assertLessEqual(avail["y"] + avail["height"], xfer["y"] + 1)
-        self.assertLessEqual(xfer["y"] + xfer["height"], plan["y"] + 1)
+        # one panel at a time (the switch itself: test_planner_board_phone_browser.py)
+        self.assertTrue(page.locator("#plbAvail").is_visible())
+        self.assertFalse(page.locator("#plbPlan").is_visible())
         self._source(page, "eligible")
         page.click(f"{ROW.format('STAT305')} button[data-act='open']")
         self._sections_pop(page, "AI331")

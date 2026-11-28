@@ -783,7 +783,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         page, _ = self._built()
         expect(page.locator("#plbGuide")).to_be_visible()
         self.assertEqual(page.get_attribute("#plbGuide", "data-stale"), None)
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
+        self._remove(page, "AI342")
         expect(page.locator("#plbGuide")).to_be_visible()
         self.assertEqual(page.get_attribute("#plbGuide", "data-stale"), "changed")
         self.assertEqual(page.get_attribute("#plbStrip", "data-stale"), "changed")
@@ -814,7 +814,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         self.assertTrue(state["review"]["disabled"])
         # Out of date: Rebuild is the outline in the brand colour and Review is disabled.
         page.click("#plbTab_B1")
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
+        self._remove(page, "AI342")
         state = self._buttons(page)
         self.assertEqual(
             (state["build"]["filled"], state["review"]["filled"]), (False, False), state
@@ -913,7 +913,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
             ),
             ["AI331", "AI331"],
         )
-        page.click("#plbPlanList button[data-act='remove'][data-code='AI331']")
+        self._remove(page, "AI331")
         # The course is out of the plan: its blocks are pictures now, not controls.
         self.assertEqual(page.locator("#plbWeek button.plb-b[data-code='AI331']").count(), 0)
 
@@ -929,6 +929,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         expect(page.locator("#plbPop")).to_be_hidden()
         expect(blocks.nth(1)).to_be_focused()
         # From the row: back to the row's button, as before.
+        self._plan_panel(page)
         row = page.locator("#plbPlanList [data-act='detail'][data-code='AI331']")
         row.click()
         expect(page.locator("#plbDetailTitle")).to_be_focused()
@@ -1027,7 +1028,7 @@ class PlannerBoardGuidanceTests(PlannerBoardCase):
         fake.build_answer = lambda body: (200, support.build_reply(options))
         page = self._open(fake, language=language, width=width, font=font, load=False)
         self._fetch(page, support.STUDENT_ID)
-        expect(page.locator("#plbPlanList")).to_be_visible()
+        expect(page.locator("#plbPlanList")).to_be_attached()
         self._wait_for(page, lambda: len(fake.catalog_bodies) >= 1)
         page.click("#plbBuild")
         expect(page.locator("#plbGuide")).to_be_visible()

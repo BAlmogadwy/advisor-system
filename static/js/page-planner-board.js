@@ -10,6 +10,8 @@
 
   const IS_AR = document.documentElement.lang === 'ar';
   const $ = (id) => document.getElementById(id);
+  // Phones: the picker shows one panel at a time and the section popover is a sheet under its row.
+  const PHONE = window.matchMedia('(max-width: 768px)');
 
   /* ── Strings ───────────────────────────────────────────────────────────── */
   const forms = (one, two, few, many) => ({ one, two, few, many, other: many });
@@ -29,23 +31,15 @@
     noStudentHint: IS_AR ? 'أدخل رقم الطالب أعلاه واضغط جلب.' : 'Enter a student ID above and press Fetch.',
     gpa: IS_AR ? 'المعدل التراكمي' : 'GPA',
     registeredCredits: IS_AR ? 'مسجّل هذا الفصل' : 'Registered this term',
-    creditCap: IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap',
     advisory: (max) => (max ? (IS_AR ? `إرشادي · الأقصى ${max}` : `advisory · max ${max}`) : (IS_AR ? 'إرشادي' : 'advisory')),
     programme: IS_AR ? 'البرنامج' : 'Programme',
-    idLabel: IS_AR ? 'الرقم' : 'ID',
     registered: IS_AR ? 'المسجّل' : 'Registered',
-    registeredFixed: IS_AR ? 'المسجّل · ثابت هنا' : 'Registered · fixed here',
-    registeredIgnored: IS_AR ? 'المسجّل · مُتجاهَل في هذا البناء' : 'Registered · ignored in this build',
-    newInPlan: IS_AR ? 'جديد في هذه الخطة' : 'New in this plan',
-    mustTake: IS_AR ? 'إلزامي' : 'Must-take',
-    couldAdd: IS_AR ? 'يمكن إضافته' : 'Could be added',
     blocked: IS_AR ? 'غير مؤهل' : 'Blocked',
     missing: IS_AR ? 'ناقص:' : 'Missing:',
     inThisPlan: IS_AR ? '(ضمن هذه الخطة)' : '(in this plan)',
     prereqNotMet: IS_AR ? 'المتطلبات غير مستوفاة' : 'Prerequisites not met',
     anySection: IS_AR ? 'أي شعبة' : 'Any section',
     noRegistered: IS_AR ? 'لا مقررات مسجلة في هذا الفصل.' : 'No registered courses this term.',
-    nothingAdded: IS_AR ? 'لم تُضف مقررات بعد.' : 'No courses added yet.',
     loadFirstCourses: IS_AR ? 'حمّل طالبًا لعرض مقرراته.' : 'Load a student to see their courses.',
     loadingPlan: IS_AR ? 'جارٍ تحميل خطة الطالب…' : "Loading the student's plan…",
     noSections: IS_AR ? 'لا شُعب هذا الفصل' : 'No sections this term',
@@ -61,7 +55,6 @@
     noTimedClasses: IS_AR ? 'بلا محاضرات' : 'No timed classes',
     removeCourse: (code) => (IS_AR ? `إزالة ${code}` : `Remove ${code}`),
     addCourse: (code) => (IS_AR ? `إضافة ${code}` : `Add ${code}`),
-    mustTakeFor: (code) => (IS_AR ? `إلزامي ${code}` : `Must-take ${code}`),
     registeredLock: IS_AR ? 'مسجّل' : 'Registered',
     added: (code) => (IS_AR ? ['أُضيف ', bdi(code), ' إلى الخطة.'] : ['Added ', bdi(code), ' to the plan.']),
     removed: (code) => (IS_AR ? ['أُزيل ', bdi(code), ' من الخطة.'] : ['Removed ', bdi(code), ' from the plan.']),
@@ -104,12 +97,20 @@
       if (!list.length) return [IS_AR ? 'غير مرتبط ببرنامج' : 'Unassigned'];
       return [IS_AR ? (list.length === 1 ? 'لبرنامج ' : 'لبرامج ') : 'For ', bdi(list.join(' / '))];
     },
-    resetPlan: IS_AR ? 'العودة إلى المقترح' : 'Reset to suggestions',
     // The course picker (zone 02)
     srcRecommended: (n) => (IS_AR ? `مقترحة لهذا الطالب (${n})` : `Recommended for this student (${n})`),
     srcPlan: (n) => (IS_AR ? `خطة هذا الطالب (${n})` : `This student's plan (${n})`),
     srcEligible: (n) => (IS_AR ? `كل ما يمكنه تسجيله (${n})` : `Everything they can register (${n})`),
     srcAll: (n) => (n === null ? (IS_AR ? 'مقررات كل البرامج' : "All programmes' courses") : (IS_AR ? `مقررات كل البرامج (${n})` : `All programmes' courses (${n})`)),
+    mustTake: IS_AR ? 'إلزامي' : 'Must-take',
+    tabAvail: (n) => (IS_AR ? `المتاحة · ${n}` : `Available · ${n}`),
+    tabPlan: (n) => (IS_AR ? `خطتك · ${n}` : `Your plan · ${n}`),
+    addCourse: (code, secs) => {
+      if (!secs.length) return IS_AR ? `إضافة ${code}` : `Add ${code}`;
+      const list = IS_AR ? secs.join(' و') : (secs.length > 1 ? `${secs.slice(0, -1).join(', ')} and ${secs[secs.length - 1]}` : secs[0]);
+      return IS_AR ? `إضافة ${code}، الشُعب ${list}` : `Add ${code}, section${secs.length > 1 ? 's' : ''} ${list}`;
+    },
+    phoneSum: (n, load) => `${T.courseWord(n)} · ${load}`,
     availHead: (n) => `${IS_AR ? 'المتاحة' : 'Available'} · ${T.courseWord(n)}`,
     planHead: (n) => `${IS_AR ? 'خطتك' : 'Your plan'} · ${T.courseWord(n)}`,
     tickedLine: (k, cr) => (IS_AR ? `${k} محدد · ${cr} ${T.creditUnit(cr)}` : `${k} ticked · ${cr} cr`),
@@ -176,7 +177,6 @@
     },
     maxError: (max) => (IS_AR ? `أدخل عددًا صحيحًا من 1 إلى ${max}.` : `Enter a whole number from 1 to ${max}.`),
     // The student band and the current-timetable disclosure.
-    usualRules: IS_AR ? 'القواعد المعتادة' : 'The usual rules',
     termButton: (year, term) => (IS_AR ? [`الفصل ${term}، `, bdi(year)] : [`Term ${term}, `, bdi(year)]),
     bandProgress: IS_AR ? 'التقدم' : 'Progress',
     bandRegistered: IS_AR ? 'المسجّل الآن' : 'Registered now',
@@ -268,7 +268,6 @@
       ? 'للمقارنة فقط: تتضمن الخيارات شُعب برامج أخرى'
       : "Comparison only: other programmes' sections are included",
     nothingToSave: IS_AR ? 'لا شُعب في هذا الخيار للحفظ' : 'This option has no sections to save',
-    safe: IS_AR ? 'لا يُحفظ شيء ولا يُحجز أي مقعد حتى تضغط تطبيق.' : 'Nothing is saved and no seat is held until you apply.',
     keptRegistered: (n) => (IS_AR
       ? `المقررات المسجّلة تبقى كما هي (${n}). لا يغيّرها هذا الحفظ.`
       : `Registered courses stay as they are (${n}). This save does not change them.`),
@@ -317,9 +316,6 @@
     tickBroken: IS_AR ? 'محدَّدة، لكن لم يعد استخدامها ممكنًا. ' : 'Ticked, but it can no longer be used. ',
     tickGone: IS_AR ? 'محدَّدة، لكنها ليست في قائمة الشُعب الحالية.' : 'Ticked, but it is not in the current section list.',
     noCatalog: IS_AR ? 'بيانات الشُعب غير متاحة.' : 'Section data is not available.',
-    readOnlyHint: IS_AR ? 'هذا المقرر ليس في الخطة بعد. أضفه لاختيار شُعبه.' : 'This course is not in the plan yet. Add it to choose its sections.',
-    removeFromPlan: IS_AR ? 'إزالة من الخطة' : 'Remove from plan',
-    addToPlan: IS_AR ? 'إضافة إلى الخطة' : 'Add to plan',
     // "Only these": several allowed sections for a course.
     onlyOpt: IS_AR ? 'هذه فقط' : 'Only these',
     onlyNone: IS_AR
@@ -327,13 +323,6 @@
       : 'Tick the sections the build may use. Until one is ticked, any section may be used.',
     onlyPicks: IS_AR ? 'يختار البناء إحدى الشُعب المحدَّدة.' : 'The build picks one of the ticked sections.',
     sixMax: IS_AR ? 'ست شُعب على الأكثر.' : 'Six sections at most.',
-    // The table's line: "Only §3", "Only §3 or §4", "Only 3 sections".
-    onlyLine: (labels) => {
-      const tag = (l) => bdi(`§${l}`);
-      if (labels.length === 1) return [IS_AR ? 'فقط ' : 'Only ', tag(labels[0])];
-      if (labels.length === 2) return [IS_AR ? 'فقط ' : 'Only ', tag(labels[0]), IS_AR ? ' أو ' : ' or ', tag(labels[1])];
-      return [`${IS_AR ? 'فقط ' : 'Only '}${T.sectionWord(labels.length)}`];
-    },
     // On an option's tab, the other ticked sections: " · or §4", " · or 2 others".
     orOthers: (labels) => {
       if (labels.length === 1) return [' · ', IS_AR ? 'أو ' : 'or ', bdi(`§${labels[0]}`)];
@@ -359,7 +348,6 @@
     altTag: (label) => [el('span', 'plb-alt-w', IS_AR ? 'بديل ' : 'alt '), bdi(`§${label}`)],
     legendAlt: IS_AR ? 'بديل' : 'Alternative',
     // Why these options.
-    whyButton: IS_AR ? 'لماذا هذه الخيارات' : 'Why these options',
     whyMethod: {
       A: IS_AR ? 'تحاول جدولة أكبر عدد ممكن من مقررات الخطة.' : 'Tries to schedule as many courses of the plan as it can.',
       B: IS_AR ? 'تبحث عن أسبوع مضغوط: أيام أقل وفجوات أقل معًا.' : 'Looks for a compact week: few days and few gaps together.',
@@ -529,6 +517,7 @@
     planCredits: null, // {done, total}: the plan's credits passed and in all, once the plan reply is in
     catalog: null,     // Map normalised course code -> [section]; null = unknown
     shortlist: [],
+    pickTab: 'avail',  // phones: which picker panel shows (avail | plan)
     hues: {},          // this student's course colours: code -> 1..6, kept while the plan changes
     suggested: [],     // the courses the page suggested when the student loaded ("Reset to suggestions")
     rules: { ...DEFAULT_RULES },
@@ -1849,9 +1838,6 @@
       .filter((c) => (c.status === 'not_taken' && c.canRegister) || (includeStudying && c.status === 'studying'))
       .sort((a, b) => b.importance - a.importance);
   }
-  function blockedRecs() {
-    return state.recs.filter((r) => String(r.status) !== 'Eligible' && !inShortlist(r.course_code));
-  }
   function shortlistFromRecs(recs) {
     return recs
       .filter((r) => r.status === 'Eligible')
@@ -1870,10 +1856,6 @@
   }
   function planCredits() {
     return state.shortlist.reduce((sum, c) => sum + (Number(c.credits) || 0), 0);
-  }
-  function usedCredits() {
-    const registered = state.rules.mode === 'keep' ? registeredCredits() : 0;
-    return (registered || 0) + planCredits();
   }
   // The section list of a course as the picker and the popover read it: the catalogue the rules
   // asked for, else the whole-term catalogue (the "All programmes' courses" source) when it has it.
@@ -2046,7 +2028,7 @@
       seats.append(String(model.cap.remaining));
       if (fewSeats(model.cap)) seats.append(' ', tagNode(T.leftTag(model.cap.remaining), 'warn'));
     }
-    const row = el('div', 'plb-sec', input, el('span', 'plb-sec-n', bdi(model.label || '?')), meets, seats);
+    const row = el('label', 'plb-sec', input, el('span', 'plb-sec-n', bdi(model.label || '?')), meets, seats);
     row.dataset.tsid = model.id;
     if (input.disabled) row.dataset.off = 'true';
     void src;
@@ -2083,9 +2065,16 @@
     if (src === 'all' && entry.compareOnly) tags.push(tagNode(T.tagCompare, 'warn', T.compareWhy));
     if (known && sections.length && caps.every((c) => c.known && c.full)) tags.push(tagNode(T.allFull, 'bad'));
     else if (openCaps.length && openCaps.every(fewSeats)) tags.push(tagNode(T.tagFewSeats, 'warn'));
+    // Phones have no transfer column: every row carries its own "+" (only the ticked sections when some are).
+    const plus = el('button', 'plb-addbtn', svg(ICONS.plus, 18));
+    plus.type = 'button';
+    plus.dataset.act = 'add';
+    plus.dataset.code = code;
+    plus.disabled = !addable(entry);
+    plus.setAttribute('aria-label', T.addCourse(code, pinsFor(entry, src).map((p) => p.section)));
     const main = el('div', 'plb-ar-main', chev, box, el('span', 'plb-code', bdi(code)),
       el('span', 'plb-nm', entry.name ? isolate(entry.name) : ''),
-      el('span', 'plb-meta', metaText.join(' · '), ...tags.flatMap((t) => [' ', t])));
+      el('span', 'plb-meta', metaText.join(' · '), ...tags.flatMap((t) => [' ', t])), plus);
     if (entry.compareOnly && src === 'all') main.title = T.compareWhy;
     if (!addable(entry)) main.title = T.creditsUnknownWhy;
     const body = el('div', 'plb-secs');
@@ -2276,6 +2265,25 @@
     set('plbXRem', ready && ticked.length > 0, T.xRem, true, false);
     set('plbXRemAll', ready && planned > 0, T.xRemAll, true, true);
   }
+  // Phones: the two-tab switch above the panels. The choice is kept across every redraw.
+  function renderPickTabs(lists) {
+    const ready = !!state.ctx;
+    $('plbZoneCourses').dataset.tab = state.pickTab;
+    const set = (id, name, text) => {
+      const tab = $(id);
+      tab.textContent = text;
+      tab.setAttribute('aria-selected', String(state.pickTab === name));
+      tab.tabIndex = state.pickTab === name ? 0 : -1;
+    };
+    set('plbPickTabAvail', 'avail', T.tabAvail(ready && lists ? lists.avail.length : 0));
+    set('plbPickTabPlan', 'plan', T.tabPlan(ready ? state.shortlist.length : 0));
+  }
+  function setPickTab(name, focus) {
+    if (name !== 'avail' && name !== 'plan') return;
+    state.pickTab = name;
+    renderCourses();
+    if (focus) $(name === 'avail' ? 'plbPickTabAvail' : 'plbPickTabPlan').focus();
+  }
   function renderCreditsHeader() {
     renderReset();
     const load = $('plbPlanLoad');
@@ -2283,7 +2291,9 @@
     const meter = $('plbMeter');
     delete load.dataset.over;                  // "over" is only ever said against a known cap
     delete line.dataset.over;
-    if (!state.ctx) { load.textContent = ''; line.textContent = ''; meter.hidden = true; return; }
+    const phoneSum = $('plbPhoneSum');
+    delete phoneSum.dataset.over;
+    if (!state.ctx) { load.textContent = ''; line.textContent = ''; meter.hidden = true; phoneSum.textContent = ''; return; }
     const keep = state.rules.mode === 'keep';
     const reg = keep ? registeredCredits() || 0 : 0;
     const planned = planCredits();
@@ -2305,6 +2315,9 @@
       meter.dataset.over = free < 0 ? 'true' : 'false';
     } else meter.hidden = true;
     line.textContent = text;
+    const sum = T.phoneSum(state.shortlist.length, cap === null ? T.loadOnly(used) : T.loadOf(used, cap));
+    phoneSum.textContent = cap !== null && used > cap ? `${sum} · ${T.overLimitN(used - cap)}` : sum;
+    if (cap !== null) phoneSum.dataset.over = used > cap ? 'true' : 'false';
   }
   // The courses zone, drawn again from the state. Keyboard focus is found again by its action,
   // course and section; where that control has gone it falls to the search box.
@@ -2333,6 +2346,7 @@
     renderSource();
     renderPlanPane();
     renderXfer(ready ? lists : null);
+    renderPickTabs(ready ? lists : null);
     renderDetail();
     restoreFocus(mark);
   }
@@ -2418,10 +2432,10 @@
   function moveAll() {
     addEntries(shownEntries().map((entry) => ({ entry, pins: [] })), '');
   }
-  function moveOne(code, onlyPins) {
+  function moveOne(code, onlyPins, how) {
     const entry = shownEntries().find((e) => e.code === code);
     if (!entry) return;
-    addEntries([{ entry, pins: pinsFor(entry, state.pick.src) }], onlyPins ? '' : 'row');
+    addEntries([{ entry, pins: pinsFor(entry, state.pick.src) }], onlyPins ? '' : (how || 'row'));
   }
   function setSource(src) {
     if (!SOURCES.includes(src) || src === state.pick.src) return;
@@ -3837,6 +3851,8 @@
     const button = row ? row.querySelector('.plb-secbtn') : null;
     if (!button) { pop.style.top = '0px'; return; }
     if (pop.previousElementSibling !== row) row.after(pop);
+    // A phone shows it as a full-width sheet in the flow, directly under its row.
+    if (PHONE.matches) { pop.removeAttribute('style'); return; }
     const pr = plan.getBoundingClientRect();
     const br = button.getBoundingClientRect();
     const zone = $('plbZoneCourses').getBoundingClientRect();
@@ -3954,6 +3970,7 @@
         renderCourses();
       } else if (act === 'fold') { state.pick.blockedOpen = !state.pick.blockedOpen; renderCourses(); }
       else if (act === 'only') moveOne(code, true);
+      else if (act === 'add') moveOne(code, false, 'plus');
     });
     pick.addEventListener('change', (event) => {
       const target = event.target;
@@ -3985,6 +4002,19 @@
       });
     }
     window.addEventListener('resize', () => { if (state.detail) placePop(); });
+    PHONE.addEventListener('change', () => { if (state.detail) placePop(); });
+    const ptabs = $('plbPickTabs');
+    ptabs.addEventListener('click', (event) => {
+      const tab = event.target.closest('[role="tab"]');
+      if (tab) setPickTab(tab.id === 'plbPickTabPlan' ? 'plan' : 'avail', false);
+    });
+    ptabs.addEventListener('keydown', (event) => {
+      const keys = { ArrowLeft: 1, ArrowRight: 1, Home: 'avail', End: 'plan' };
+      if (!(event.key in keys)) return;
+      event.preventDefault();
+      const next = typeof keys[event.key] === 'string' ? keys[event.key] : (state.pickTab === 'avail' ? 'plan' : 'avail');
+      setPickTab(next, true);
+    });
     $('plbSource').addEventListener('change', (event) => setSource(event.target.value));
     $('plbFind').addEventListener('input', (event) => { state.pick.find = event.target.value; renderCourses(); });
     // The popover closes on a click outside it, once that click has done its work: closing on the

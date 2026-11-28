@@ -207,6 +207,15 @@ class PlannerBoardAuditTests(PlannerBoardCase):
             expect(page.locator("#plbGrad")).not_to_have_attribute("data-state", "loading")
             self._settle(page, script)
             yield f"tab {index}"
+        phone = page.viewport_size["width"] <= 768
+        if phone:
+            # one panel at a time: the available rows (their "+"), then the plan
+            expect(page.locator("#plbAvailList .plb-addbtn").first).to_be_visible()
+            self._settle(page, script)
+            yield "phone available"
+            page.click("#plbPickTabPlan")
+            self._settle(page, script)
+            yield "phone plan"
         button = "#plbPlanList button[data-act='detail'][data-code='AI331']"
         if page.locator(button).count():
             page.click(button)
@@ -232,8 +241,10 @@ class PlannerBoardAuditTests(PlannerBoardCase):
         page.evaluate(f"document.documentElement.setAttribute('data-theme', '{theme}')")
         self._settle(page, script)
 
-    def _audit(self, language: str, script: str, *, inject: str = "") -> list[str]:
-        page = self._open(_fake(), language=language)
+    def _audit(
+        self, language: str, script: str, *, inject: str = "", width: int = 1440
+    ) -> list[str]:
+        page = self._open(_fake(), language=language, width=width)
         if inject:
             page.add_style_tag(content=inject)
         found: list[str] = []
@@ -255,6 +266,21 @@ class PlannerBoardAuditTests(PlannerBoardCase):
         for language in LANGUAGES:
             with self.subTest(language=language):
                 self.assertEqual(self._audit(language, CONTRAST), [])
+
+    def test_the_phone_picker_glance_and_apply_bar_clear_contrast_and_cursor_audits(self) -> None:
+        for language in LANGUAGES:
+            with self.subTest(language=language):
+                self.assertEqual(self._audit(language, CONTRAST, width=390), [])
+                self.assertEqual(self._audit(language, FALSE_AFFORDANCES, width=390), [])
+
+    def test_the_page_never_scrolls_sideways_at_the_three_widths(self) -> None:
+        over = "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        for language in LANGUAGES:
+            for width in (1440, 1152, 390):
+                with self.subTest(language=language, width=width):
+                    page = self._open(_fake(), language=language, width=width)
+                    for state in self._states(page, CONTRAST):
+                        self.assertLessEqual(page.evaluate(over), 0, msg=(language, width, state))
 
     def test_nothing_shows_a_hand_cursor_unless_it_is_clickable(self) -> None:
         for language in LANGUAGES:

@@ -7865,7 +7865,6 @@ html[data-theme="dark"] .plb {
   overflow-wrap: anywhere;
 }
 .plb-big-u { font-family: var(--font-body); font-size: var(--text-sm); color: var(--t3); }
-.plb-big--name { font-size: var(--text-xl); line-height: 1.25; }
 .plb-big--muted { font-size: var(--text-md); line-height: 1.4; color: var(--t3); }
 .plb-smeta { font-size: var(--text-sm); line-height: 18px; color: var(--t3); overflow-wrap: anywhere; }
 .plb-bar { block-size: 4px; border-radius: 2px; background: var(--rule); overflow: hidden; }
@@ -8128,7 +8127,6 @@ html[dir="rtl"] .plb-xb[data-side="plan-to-list"] .plb-dir { transform: none; }
   display: inline-flex; align-items: center; justify-content: center; width: var(--control-h-sm); height: var(--control-h-sm);
   padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--t3); cursor: pointer;
 }
-.plb-ib--add { color: var(--text-brand); box-shadow: inset 0 0 0 1px var(--control-edge); }
 .plb-ib:hover { color: var(--text-brand); }
 .plb-tick { width: 16px; height: 16px; margin: 0; accent-color: var(--text-brand); cursor: pointer; }
 .plb-chip {
@@ -8186,7 +8184,6 @@ html[dir="rtl"] .plb-xb[data-side="plan-to-list"] .plb-dir { transform: none; }
 .plb-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--text-brand); }
 .plb-err { margin: 0; font-size: var(--text-xs); font-weight: 600; color: var(--sev-critical); }
 .plb-err[hidden] { display: none; }
-.plb-foot-start { margin-inline-end: auto; }
 
 /* the course detail panel, seat warnings, the out-of-date build, "Why these options" */
 .plb-dt-close:focus-visible, .plb-why-btn:focus-visible, .plb-dt-title:focus-visible {
@@ -8490,6 +8487,86 @@ button.plb-b:focus-visible { outline: 2px solid var(--text-brand); outline-offse
   .plb-view { margin-block: 0; }
   .plb-load .btn.btn-sm { min-height: var(--control-h-lg); }
   .plb-dt-close, .plb-dt-sec, .plb-why-btn { min-height: var(--control-h-lg); }
+}
+
+/* Planner board on phones (<= 768px). The picker shows one panel (a two-tab switch), every available
+   row carries its own "+", the section popover is a sheet in the flow, and nothing makes the page
+   scroll sideways: the week and the option tabs scroll inside their own boxes. */
+.plb-ptabs, .plb-phsum, .plb-addbtn { display: none; }
+@media (max-width: 768px) {
+  /* masthead: the Student ID alone on a line, then the term and Fetch side by side */
+  .plb-load { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; width: 100%; }
+  .plb-load > .plb-cap { grid-column: 1 / -1; }
+  .plb-load .plb-w-id { width: 100%; flex: 1 1 auto; }
+  .plb-termwrap { position: static; min-width: 0; }
+  .plb-termbtn, .plb-load #plbFetch { width: 100%; justify-content: center; }
+  .plb-termpop { inset-inline: 0; margin-top: 4px; }
+  .plb-termpop .plb-cap { flex: 1 1 120px; }
+  .plb-w-year { width: 6ch; }
+  /* rules: one per line, segmented controls in equal halves */
+  .plb-rules { flex-direction: column; align-items: stretch; gap: 14px; }
+  .plb-rc-row, .plb-seg { width: 100%; }
+  .plb-rc-row--checks { align-self: stretch; }
+  .plb-seg-o { flex: 1 1 0; text-align: center; padding-inline: 8px; }
+  .plb-rc-row--max .plb-rc-in { width: 100%; }
+  /* courses */
+  .plb-srcrow { flex-direction: column; align-items: stretch; }
+  .plb-srcf, .plb-find { flex: 1 1 auto; max-width: none; width: 100%; }
+  .plb-select { width: 100%; min-height: var(--control-h-lg); }
+  .plb-find { min-height: var(--control-h-lg); }
+  .plb-ptabs { display: flex; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--control-edge); }
+  .plb-ptab {
+    flex: 1 1 0; min-width: 0; min-height: var(--control-h-lg); padding: 0 8px; border: 0; border-radius: var(--radius-sm);
+    background: none; cursor: pointer; font: inherit; font-size: var(--text-sm); font-weight: 600; color: var(--t2);
+  }
+  .plb-ptab[aria-selected="true"] { background: var(--brand-soft); color: var(--text-brand); box-shadow: inset 0 0 0 1px var(--text-brand); }
+  .plb-ptab:focus-visible { outline: 2px solid var(--text-brand); outline-offset: 2px; }
+  #plbZoneCourses[data-tab="avail"] #plbPlan, #plbZoneCourses[data-tab="plan"] #plbAvail { display: none; }
+  .plb-pick { display: block; }
+  .plb-xfer { display: none; }
+  .plb-pane { border-top: 0; }
+  #plbAvailList { max-height: none; }
+  .plb-tick[data-act="tick"], .plb-tick[data-act="ptick"] { display: none; }
+  .plb-ar-main:not(.plb-ar-main--off) { grid-template-columns: 44px max-content minmax(0, 1fr) 44px; column-gap: 8px; padding-inline-end: 0; }
+  .plb-ar-main > .plb-chev { inline-size: 44px; block-size: 44px; }
+  .plb-ar-main > .plb-meta { grid-column: 2 / 4; grid-row: 2; justify-content: flex-start; }
+  .plb-addbtn {
+    grid-column: 4; grid-row: 1 / span 2; display: inline-flex; align-items: center; justify-content: center;
+    inline-size: 44px; block-size: 44px; padding: 0; border: 0; border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-brand); box-shadow: inset 0 0 0 1px var(--control-edge); cursor: pointer;
+  }
+  .plb-addbtn:hover:not(:disabled) { background: var(--brand-soft); }
+  .plb-addbtn:disabled { color: var(--t4); box-shadow: inset 0 0 0 1px var(--rule); cursor: default; opacity: .6; }
+  .plb-addbtn:focus-visible { outline: 2px solid var(--text-brand); outline-offset: 2px; }
+  .plb-fxl { padding-inline: 12px 8px; }
+  .plb-secs { padding-inline-start: 8px; }
+  .plb-sec { grid-template-columns: 44px 36px minmax(0, 1fr) auto; min-height: var(--control-h-lg); cursor: pointer; }
+  .plb-sec--h { min-height: 22px; cursor: default; }
+  .plb-sec .plb-tick { justify-self: center; }
+  .plb-prow { grid-template-columns: max-content minmax(0, 1fr) 44px; row-gap: 2px; }
+  .plb-prow > .plb-code { grid-column: 1; grid-row: 1; }
+  .plb-prow > .plb-pmain { grid-column: 2; grid-row: 1; }
+  .plb-prow > .plb-ib { grid-column: 3; grid-row: 1; }
+  .plb-prow > .plb-secbtn { grid-column: 1 / 3; grid-row: 2; justify-self: start; }
+  .plb-prow > .plb-req { grid-column: 3; grid-row: 2; justify-self: end; }
+  .plb-prow--kept { grid-template-columns: 20px max-content minmax(0, 1fr); }
+  .plb-prow--kept > .plb-lock { grid-column: 1; grid-row: 1; }
+  .plb-prow--kept > .plb-code { grid-column: 2; grid-row: 1; }
+  .plb-prow--kept > .plb-pmain { grid-column: 3; grid-row: 1; }
+  .plb-prow--kept > .plb-kept-tag { grid-column: 2 / -1; grid-row: 2; justify-self: start; margin-inline-end: 0; }
+  .plb-pop { position: static; width: auto; max-height: none; margin-block: 4px 8px; overflow: visible; box-shadow: 0 0 0 1px var(--rule); }
+  .plb-phsum { display: block; margin: 0; font-size: var(--text-sm); font-weight: 600; line-height: 20px; color: var(--ink); }
+  .plb-phsum[data-over="true"] { color: var(--sev-warning-ink); }
+  .plb-buildrow { flex-direction: column; align-items: stretch; }
+  .plb-buildrow .btn, .plb-applybar .btn { width: 100%; }
+  /* options: the tabs scroll sideways in their own row; the week scrolls inside its box */
+  .plb-tablist { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; padding-inline-end: 2px; scrollbar-width: thin; }
+  .plb-tab { flex: 0 0 200px; max-width: none; }
+  .plb-more { flex: 1 1 100%; }
+  .plb-more-btn { width: 100%; justify-content: center; }
+  .plb-wkwrap, .plb-curtt-body { overflow-x: auto; max-width: 100%; }
+  .plb-applybar { flex-direction: column; align-items: stretch; }
+  .plb-applynotes, .plb-buildnotes { flex: 0 0 auto; }
 }
 
 /* ============================================================

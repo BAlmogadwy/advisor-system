@@ -138,7 +138,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def _changed_list(self):
         fake = BuildFake()
         page = self._open(fake)
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
+        self._remove(page, "AI342")
         self.assertEqual(self._rows(page, "new"), ["AI331"])
         return page, fake
 
@@ -338,9 +338,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     # ── touch and size ──────────────────────────────────────────────────────
     def test_every_control_has_the_boards_touch_size_on_a_phone(self) -> None:
         page = self._open(BuildFake(), width=390, height=844)
-        page.click(
-            "#plbPlanList [data-act='remove'][data-code='AI342']"
-        )  # shows Reset to suggestions
+        self._remove(page, "AI342")  # shows Reset to suggestions
         heights = page.evaluate(
             """() => ['#plbRulesReset', '#plbMaxIn', '.plb-seg-o', '#plbReset']
               .flatMap(s => [...document.querySelectorAll(s)].map(n => [s, n.getBoundingClientRect().height]))"""
@@ -464,7 +462,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
                 )
                 # nothing to reset while the list is the suggested one
                 expect(page.locator("#plbReset")).to_be_hidden()
-                page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
+                self._remove(page, "AI342")
                 expect(page.locator("#plbReset")).to_be_visible()
                 head = page.evaluate(BOX, "#plbPlanCount")
                 reset = page.evaluate(BOX, "#plbReset")
@@ -478,7 +476,7 @@ class PlannerBoardRulesInlineTests(PlannerBoardCase):
     def test_reset_in_its_new_place_still_resets(self) -> None:
         page = self._open(BuildFake())
         expect(page.locator("#plbReset")).to_be_hidden()
-        page.click("#plbPlanList [data-act='remove'][data-code='AI342']")
+        self._remove(page, "AI342")
         expect(page.locator("#plbReset")).to_be_enabled()
         page.click("#plbReset")
         self.assertEqual(self._rows(page, "new"), ["AI331", "AI342"])

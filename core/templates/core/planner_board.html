@@ -114,6 +114,10 @@
             </div>
             <label class="plb-cap plb-find"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input id="plbFind" type="text" autocomplete="off" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر أو اسمه{% else %}Course code or name{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث في المقررات المتاحة{% else %}Search the available courses{% endif %}" disabled></label>
           </div>
+          <div class="plb-ptabs" id="plbPickTabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}عرض المقررات{% else %}Courses view{% endif %}">
+            <button type="button" class="plb-ptab" id="plbPickTabAvail" role="tab" aria-selected="true" aria-controls="plbAvail"></button>
+            <button type="button" class="plb-ptab" id="plbPickTabPlan" role="tab" aria-selected="false" aria-controls="plbPlan" tabindex="-1"></button>
+          </div>
           <div class="plb-pick" id="plbPick">
             <section class="plb-pane" id="plbAvail" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المتاحة{% else %}Available courses{% endif %}">
               <div class="plb-ph">
@@ -141,6 +145,7 @@
               <div class="plb-pop" id="plbPop" role="dialog" aria-modal="false" aria-labelledby="plbDetailTitle" hidden></div>
             </section>
           </div>
+          <p class="plb-phsum" id="plbPhoneSum"></p>
           <div class="plb-buildrow">
             <div class="plb-buildnotes">
               <p class="plb-acts-note" id="plbBuildLine" role="status" aria-live="polite"></p>
@@ -252,5 +257,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-planner-board.js' %}?v=16"></script>
+<script src="{% static 'js/page-planner-board.js' %}?v=17"></script>
 {% endblock %}

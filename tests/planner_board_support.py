@@ -678,7 +678,7 @@ class PlannerBoardCase(StaticLiveServerTestCase):
             expect(page.locator("#plbSource option[value='eligible']")).to_have_text(
                 re.compile(r"\([1-9]\d*\)")
             )
-            expect(page.locator("#plbPlanList .plb-prow[data-code='AI331']")).to_be_visible()
+            expect(page.locator("#plbPlanList .plb-prow[data-code='AI331']")).to_be_attached()
             # Most tests read the courses the student could add: that is the "eligible" source.
             page.select_option("#plbSource", source)
         return page
@@ -795,12 +795,20 @@ class PlannerBoardCase(StaticLiveServerTestCase):
         page.click("#plbXAdd")
 
     @staticmethod
+    def _plan_panel(page) -> None:
+        """On a phone only one picker panel shows: bring the plan's forward."""
+        if page.locator("#plbPickTabs").is_visible() and not page.locator("#plbPlan").is_visible():
+            page.click("#plbPickTabPlan")
+
+    @staticmethod
     def _remove(page, code: str) -> None:
+        PlannerBoardCase._plan_panel(page)
         page.click(f"#plbPlanList button[data-act='remove'][data-code='{code}']")
 
     @staticmethod
     def _sections_pop(page, code: str) -> None:
         """Open the section popover of a planned course."""
+        PlannerBoardCase._plan_panel(page)
         page.click(f"#plbPlanList button[data-act='detail'][data-code='{code}']")
         expect(page.locator("#plbPop")).to_be_visible()
 
@@ -879,7 +887,7 @@ OVERFLOWS = """() => {
   const root = document.documentElement;
   if (root.scrollWidth > W + 1) bad.push(`the page scrolls sideways: ${root.scrollWidth} > ${W}`);
   for (const el of document.querySelectorAll('.plb *, .plb-load *')) {
-    if (!el.getClientRects().length || el.closest('.plb-wkwrap') || el.closest('.sr-only') || el.closest('.plb-curtt-d')) continue;
+    if (!el.getClientRects().length || el.closest('.plb-wkwrap') || el.closest('.sr-only') || (el.closest('.plb-tablist') && getComputedStyle(el.closest('.plb-tablist')).overflowX === 'auto' && el !== el.closest('.plb-tablist')) || el.closest('.plb-curtt-d')) continue;
     const r = el.getBoundingClientRect();
     if (r.width <= 2 && r.height <= 2) continue;
     if (r.left < -0.5 || r.right > W + 0.5)

@@ -60,6 +60,7 @@ class PlannerBoardDetailBrowserTests(PlannerBoardCase):
         return f"#plbPlanList button[data-act='detail'][data-code='{code}']"
 
     def _open_panel(self, page, code: str) -> None:
+        self._plan_panel(page)
         page.click(self._button(code))
         expect(page.locator("#plbPop")).to_be_visible()
         expect(page.locator("#plbDetailTitle")).to_contain_text(code)
