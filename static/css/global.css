@@ -8179,8 +8179,16 @@ html[dir="rtl"] .plb-xb[data-side="plan-to-list"] .plb-dir { transform: none; }
    range, never the start hour (in a right-to-left box it would cut "11:" off the front). */
 .plb-bt { direction: ltr; }
 html[dir="rtl"] .plb-bt { text-align: right; }
-.plb-b .plb-cd { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.plb-bs { margin-inline-start: auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; line-height: 14px; color: var(--t2); white-space: nowrap; }
+.plb-b .plb-cd { min-width: 0; max-width: 100%; overflow: hidden; }
+.plb-bs { margin-inline-start: auto; max-width: 100%; overflow: hidden; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; line-height: 14px; color: var(--t2); white-space: nowrap; }
+/* A code and a section label read left to right in both languages (each is a <bdi dir="ltr">), so
+   the ellipsis either may end in is the label's own and takes its end: on the code's or the
+   section's box, in a right-to-left block, it took the START ("…E124" for COE124, "…1" for §M1).
+   Each box is a row of its parts and only the label is cut; the lock and the word "alt" keep the
+   box's start edge, and the word (a phone does not show it at all) gives way before the label. */
+.plb-b .plb-cd, .plb-gb .plb-cd, .plb-bs { display: flex; align-items: baseline; }
+.plb-b .plb-cd > bdi, .plb-gb .plb-cd > bdi, .plb-bs > bdi { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.plb-bs > .plb-alt-w { flex: 0 1000000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 /* How many lines a block holds is decided by the script from the block's own geometry (its rows
    x --plb-row against these line heights): "two" = code and section, then the time; "one" = a
    block too short for two lines, code · time · §section. Whatever a column is too narrow for
@@ -8205,11 +8213,13 @@ html[dir="rtl"] .plb-bt { text-align: right; }
   display: flex; flex-wrap: wrap; align-content: flex-start; column-gap: 6px; min-width: 0;
   background: transparent; border: 1px dashed var(--t4); border-inline-start: 3px dashed var(--t4);
 }
-.plb-gb .plb-cd { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--t3); }
+.plb-gb .plb-cd { min-width: 0; max-width: 100%; overflow: hidden; color: var(--t3); }
 .plb-gb .plb-bs, .plb-gb .plb-bt { color: var(--t3); }
 .plb-k--alt { background: transparent; border: 1px dashed var(--t4); border-inline-start: 3px dashed var(--t4); }
 .plb-or { color: var(--t3); font-weight: 400; }
-.plb-b .plb-cd svg { display: inline; vertical-align: -1px; margin-inline-end: 3px; opacity: .75; }
+/* The lock is a part of the code's row (above): its foot on the code's baseline, then 1px lower,
+   where it sat as an inline icon. */
+.plb-b .plb-cd > svg { flex: none; position: relative; top: 1px; margin-inline-end: 3px; opacity: .75; }
 /* On a phone a week column is too narrow for the word "alt": the dashed edge and the legend say it. */
 @media (max-width: 768px) { .plb-gb .plb-alt-w { display: none; } }
 .plb-free {

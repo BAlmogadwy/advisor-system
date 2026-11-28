@@ -8,7 +8,8 @@ rows of "at a glance" carry their swatch too.
 D. A block too short for two lines (a 50-minute class; a 60-minute one that starts at :15) was cut
 mid-line. Such a block now reads on one line (code · time · §section); whether it is short is
 decided from the block's own geometry, so no block of the week, or of the Current timetable, ever
-holds more than it shows.
+holds more than it shows. What a narrow column cuts off a code or a section label is its end, in
+both languages: in Arabic the ellipsis took the start ("…E124" for COE124, "…1" for §M1).
 
 The board fakes answer every request (tests/planner_board_support.py).
 """
@@ -185,6 +186,41 @@ CLIPPED = """() => {
 }"""
 FITS = """() => Object.fromEntries([...document.querySelectorAll('#plbWeek .plb-b')]
   .map((b) => [b.dataset.code + ' ' + b.style.gridRow, b.dataset.fit || '-']))"""
+# Every code and section label a block cuts: [where, part, label, whether what shows is its start].
+# A label reads left to right in both languages, so what shows of a cut one must begin at the left
+# edge of what can be seen of it (inside every box between it and the block that clips).
+CUT_LABELS = """() => {
+  const out = [];
+  for (const b of document.querySelectorAll('.plb-b, .plb-gb')) {
+    if (!b.getClientRects().length) continue;
+    const where = `${b.closest('#plbCurTTWeek') ? 'current' : 'week'} ${b.dataset.code}`;
+    for (const part of b.querySelectorAll(':scope > .plb-cd, :scope > .plb-bs')) {
+      const text = part.querySelector('bdi').firstChild;
+      let left = -Infinity, right = Infinity;
+      for (let n = text.parentElement; ; n = n.parentElement) {
+        const s = getComputedStyle(n);
+        if (s.overflowX !== 'visible' && s.display !== 'inline') {
+          const r = n.getBoundingClientRect();
+          left = Math.max(left, r.left + parseFloat(s.borderLeftWidth));
+          right = Math.min(right, r.right - parseFloat(s.borderRightWidth));
+        }
+        if (n === b) break;
+      }
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const whole = range.getBoundingClientRect();
+      if (whole.left >= left - 0.5 && whole.right <= right + 0.5) continue;
+      range.setStart(text, 0);
+      range.setEnd(text, 1);
+      out.push([where, part.className, text.data, range.getBoundingClientRect().left >= left - 0.5]);
+    }
+  }
+  return out;
+}"""
+# Which side of its code each registered block's lock is on.
+LOCK_SIDES = """() => [...document.querySelectorAll('.plb-b .plb-cd')].filter((cd) => cd.querySelector('svg'))
+  .map((cd) => cd.querySelector('svg').getBoundingClientRect().left
+    < cd.querySelector('bdi').getBoundingClientRect().left ? 'left' : 'right')"""
 
 
 class PlannerBoardShortClassTests(PlannerBoardCase):
@@ -302,6 +338,28 @@ class PlannerBoardShortClassTests(PlannerBoardCase):
             "b => b.getBoundingClientRect().right - b.querySelector('.plb-bt bdi').getBoundingClientRect().right",
         )
         self.assertLess(whole, 12)
+
+    def test_a_cut_code_or_section_shows_its_start_in_both_languages(self) -> None:
+        # A phone's week has 78 px columns. In Arabic the ellipsis took the START of a code
+        # ("…E124" for COE124, "…L214" for ENGL214) and of a section ("…1" beside AI342): a tail
+        # that reads as another code, or as section 1.
+        for language, width in (("ar", 390), ("ar", 1152), ("en", 390)):
+            with self.subTest(language=language, width=width):
+                page = self._week(language, width)
+                cut = page.evaluate(CUT_LABELS)
+                self.assertEqual([c for c in cut if not c[3]], [])
+                if (language, width) == ("ar", 390):
+                    shown = {(where, label) for where, _part, label, _start in cut}
+                    for where in ("week", "current"):
+                        self.assertIn((f"{where} COE124", "COE124"), shown)
+                        self.assertIn((f"{where} ENGL214", "ENGL214"), shown)
+                    self.assertIn(("week AI342", "§M1"), shown)
+                # The lock keeps the start edge of its code: on the right in Arabic.
+                self.assertEqual(
+                    set(page.evaluate(LOCK_SIDES)), {"right" if language == "ar" else "left"}
+                )
+                self.assertEqual(page.evaluate(CLIPPED), [])
+                page.context.close()
 
     def test_dark_theme_and_a_phone_keep_every_line_whole(self) -> None:
         for language in ("en", "ar"):

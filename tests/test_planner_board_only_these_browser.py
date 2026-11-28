@@ -627,6 +627,43 @@ class PlannerBoardOnlyTheseTests(PlannerBoardCase):
                 self.assertEqual(block.locator(".plb-alt-w").is_visible(), word)
                 self.assertIn("\u00a7M3", block.text_content())
 
+    def test_in_a_narrow_dashed_block_the_word_alt_gives_way_before_the_section(self) -> None:
+        # The word is what a phone leaves out (the dashed edge and the legend say it), so a box too
+        # narrow for "alt §M3" cuts the word first; then the label, at its end in both languages.
+        narrow = """([word, label]) => {
+          const b = document.querySelector('#plbWeek .plb-gb');
+          const cd = b.querySelector('.plb-cd'), bs = b.querySelector('.plb-bs');
+          const s = getComputedStyle(b);
+          const chrome = s.boxSizing === 'border-box'
+            ? b.offsetWidth - b.clientWidth + parseFloat(s.paddingLeft) + parseFloat(s.paddingRight) : 0;
+          const column = word * bs.querySelector('.plb-alt-w').scrollWidth + label * bs.querySelector('bdi').scrollWidth;
+          b.style.width = `${chrome + cd.scrollWidth + parseFloat(s.columnGap) + column}px`;
+        }"""
+        cut = """() => {
+          const bs = document.querySelector('#plbWeek .plb-gb .plb-bs');
+          const shy = (n) => { const r = document.createRange(); r.selectNodeContents(n.firstChild);
+            return +(r.getBoundingClientRect().width - n.getBoundingClientRect().width).toFixed(2); };
+          const label = bs.querySelector('bdi'), text = label.firstChild, r = document.createRange();
+          r.setStart(text, 0); r.setEnd(text, 1);
+          return { word: shy(bs.querySelector('.plb-alt-w')), label: shy(label),
+            start: r.getBoundingClientRect().left >= label.getBoundingClientRect().left - 0.5 };
+        }"""
+        for language in ("en", "ar"):
+            with self.subTest(language=language):
+                page, _fake = self._page(language=language)
+                self._panel(page)
+                self._tick(page, 23)  # M3, Mon and Wed: dashed on the Registered tab
+                expect(page.locator("#plbWeek .plb-gb .plb-alt-w").first).to_be_visible()
+                page.evaluate(narrow, [0.5, 1])  # half the word, the whole label
+                now = page.evaluate(cut)
+                self.assertGreater(now["word"], 1, now)
+                self.assertLessEqual(now["label"], 0.01, now)
+                page.evaluate(narrow, [0, 0.7])  # no word, most of the label
+                now = page.evaluate(cut)
+                self.assertGreater(now["label"], 1, now)
+                self.assertTrue(now["start"], now)
+                page.context.close()
+
     def test_arabic_for_every_text(self) -> None:
         page, _ = self._page(language="ar")
         self._panel(page)
