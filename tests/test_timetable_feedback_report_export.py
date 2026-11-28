@@ -223,6 +223,12 @@ def test_the_workbook_keeps_every_row_the_page_only_ranks(people, monkeypatch):
         1,
     )
     assert len(page.sections[0].moves) == 3
+    # Full, by contrast, holds every row, and the same details for each.
+    whole = report.build(staff, {"term": report.EVERY_TERM}, full=True)
+    assert (len(whole.sections), whole.sections_more) == (3, 0)
+    assert [row.reasons for row in whole.sections if row.section == "M1"] == [
+        row.reasons for row in page.sections
+    ]
     _response, book = _book(people["admin"], term=report.EVERY_TERM)
     t = scopy.strings("en")
     sections = _rows(book[t["export_sheet_sections"]])[1:]

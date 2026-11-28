@@ -461,18 +461,22 @@ def _sections(
         )
     )
     shown = groups if full else groups[:SECTION_ROWS]
-    wanted = Q(pk__in=[])
-    for group in shown:
-        wanted |= Q(
-            section_course_identity=group["section_course_identity"],
-            section_label=group["section_label"],
-        )
+    if full:
+        # Every group is shown, so every section point is read: no condition per
+        # group, which on a large term would outgrow SQLite's parameter limit.
+        details = on_sections
+    else:
+        wanted = Q(pk__in=[])
+        for group in shown:
+            wanted |= Q(
+                section_course_identity=group["section_course_identity"],
+                section_label=group["section_label"],
+            )
+        details = on_sections.filter(wanted)
     reasons: dict[tuple[str, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
     moves: dict[tuple[str, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
     registered: dict[tuple[str, str], set[int]] = defaultdict(set)
-    for identity, label, reason, asked, asked_id, student, has_registration in on_sections.filter(
-        wanted
-    ).values_list(
+    for identity, label, reason, asked, asked_id, student, has_registration in details.values_list(
         "section_course_identity",
         "section_label",
         "reason_code",
