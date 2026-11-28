@@ -94,6 +94,8 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "Your feedback goes to your academic advisor, who reads it and replies here.",
         "تصل ملاحظتك إلى مرشدك الأكاديمي، فيطّلع عليها ويرد عليك هنا.",
     ),
+    # Where the student is in the form's two steps, above each step's question.
+    "new_step": ("Step {step} of {steps}", "الخطوة {step} من {steps}"),
     "new_what_legend": ("What is your feedback about?", "ما موضوع ملاحظتك؟"),
     "new_whole_timetable": ("My expected timetable as a whole", "الجدول المتوقع كاملًا"),
     "new_whole_timetable_hint": (

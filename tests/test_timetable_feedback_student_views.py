@@ -827,6 +827,28 @@ def test_the_list_names_itself_once_and_puts_each_status_beside_its_reference(wo
         assert f"<dt>{words[key]}</dt>" in meta, key
 
 
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_the_form_says_which_of_its_two_steps_this_is(world, language):
+    client = _client()
+    first = _html(_get(client, NEW, language))
+    second = _html(_describe(client, world, language=language)[0])
+    for html, step, question in (
+        (first, 1, 'id="ttfAboutLegend"'),
+        (second, 2, 'id="ttfDescribeTitle"'),
+    ):
+        expected = copy.text("new_step", language, step=copy.bdi(step), steps=copy.bdi(2))
+        assert f'<p class="ttf-form-step" dir="auto">{expected}</p>' in html, step
+        # Above the step's own question.
+        assert html.index('class="ttf-form-step"') < html.index(question), step
+
+
+def test_a_form_of_one_step_counts_no_steps(world):
+    # No expected timetable: one form, a note, and nothing to count.
+    html = _html(_get(_client(EMPTY_SID), NEW))
+    assert copy.strings("en")["new_no_forecast_title"] in html
+    assert "ttf-form-step" not in html
+
+
 _TIMES = re.compile("[0-9]{2}:[0-9]{2}" + chr(0x2013) + "[0-9]{2}:[0-9]{2}")
 _KEPT = re.compile(
     '<span class="ttf-when">[^<]+ <bdi dir="ltr">' + _TIMES.pattern + "</bdi></span>"

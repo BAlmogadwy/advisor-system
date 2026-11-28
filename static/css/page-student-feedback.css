@@ -147,6 +147,15 @@
   overflow-wrap: anywhere;
 }
 
+/* Where the student is in the form's two steps: a quiet line above the step's
+   own question. */
+.ttf-form-step {
+  color: var(--t2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
 /* A meeting, its day and its times, never breaks across lines ("13:00–" on one,
    "14:15" on the next reads as two times); a list of them breaks between. Nor
    does a date inside a sentence ("2026-" then "12-08"). */

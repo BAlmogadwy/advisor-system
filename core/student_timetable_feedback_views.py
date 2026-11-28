@@ -138,6 +138,16 @@ def _date(value: Any) -> str:
     return timezone.localtime(value).strftime("%Y-%m-%d") if value else ""
 
 
+#: The form's steps: what the feedback is about, then the issue.
+FORM_STEPS = 2
+
+
+def _step(step: int, language: str) -> object:
+    """The line above a step's question ("Step 1 of 2"), so the student knows how
+    far along the form they are."""
+    return copy.text("new_step", language, step=copy.bdi(step), steps=copy.bdi(FORM_STEPS))
+
+
 def _meetings(rows: Any, language: str) -> list[dict[str, str]]:
     return [
         {"day": copy.day_label(day, language), "start": start, "end": end, "room": room}
@@ -427,6 +437,7 @@ def _render_form(
             extra["note_hint"] = copy.text("new_note_hint_plain", language, max=max_chars)
     elif anchor is None:
         extra["mode"] = "choose"
+        extra["step"] = _step(1, language)
         extra["choices"] = [
             _section_choice(section, forecast, language)
             for section in forecast.sections
@@ -435,6 +446,7 @@ def _render_form(
     else:
         kind, section = anchor
         extra["mode"] = "describe"
+        extra["step"] = _step(2, language)
         extra["anchor_kind"] = kind
         if kind == "SECTION":
             extra["anchor_value"] = f"SECTION|{section.term_section_id}"
