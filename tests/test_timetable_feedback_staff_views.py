@@ -368,6 +368,15 @@ def test_the_queue_costs_the_same_however_many_cases_it_shows(world, staff):
 def test_an_empty_scope_says_why_instead_of_showing_an_empty_table(world, staff, who, key):
     html = _queue(_as(staff[who]))
     assert 'id="ttfsScopeEmpty"' in html and escape(T[key]) in html
+    # The list's own line says no more than the notice: no case can reach them,
+    # so "nothing is waiting on you" would be untrue.
+    row = html.split('id="ttfsEmpty">')[1].split("</td>")[0]
+    assert escape(T["empty_tab_unreachable"]) in row
+    assert escape(T["empty_tab_action"]) not in row
+    # Nor do filters explain it, so clearing them is not offered.
+    filtered = _queue(_as(staff[who]), reason="TIME_CLASH")
+    row = filtered.split('id="ttfsEmpty">')[1].split("</td>")[0]
+    assert escape(T["empty_tab_unreachable"]) in row and "<a " not in row
     assert 'id="ttfsScopeEmpty"' not in _queue(_as(staff["advisor"]))
 
 

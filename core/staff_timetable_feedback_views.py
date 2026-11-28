@@ -564,8 +564,15 @@ def queue_view(request: HttpRequest) -> HttpResponse:
     )
     report_filter = _report_filter_line(filters, language)
     # An empty list says what is empty: the tab, or the filters, which can be
-    # cleared from there.
-    narrowed = bool(filters_active or report_filter)
+    # cleared from there. Where no case can reach this person at all, the notice
+    # above says why, and the row says no more than it ("nothing is waiting on
+    # you" would be untrue).
+    unreachable = empty in ("NO_ADVISOR_ID", "NO_DEPARTMENTS")
+    narrowed = bool(filters_active or report_filter) and not unreachable
+    if unreachable:
+        empty_list = t["empty_tab_unreachable"]
+    else:
+        empty_list = t["empty_filtered"] if narrowed else t[f"empty_tab_{filters.tab}"]
     return render(
         request,
         "core/staff_timetable_feedback_queue.html",
@@ -587,8 +594,8 @@ def queue_view(request: HttpRequest) -> HttpResponse:
                 filters.query_for(page=page.previous_page_number()) if page.has_previous() else ""
             ),
             next_query=(filters.query_for(page=page.next_page_number()) if page.has_next() else ""),
-            empty=t[f"empty_{empty}"] if empty in ("NO_ADVISOR_ID", "NO_DEPARTMENTS") else "",
-            empty_list=t["empty_filtered"] if narrowed else t[f"empty_tab_{filters.tab}"],
+            empty=t[f"empty_{empty}"] if unreachable else "",
+            empty_list=empty_list,
             empty_narrowed=narrowed,
             filters_active=filters_active,
             report_filter=report_filter,

@@ -95,7 +95,12 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "empty_tab_department": ("No case is with the department.", "لا توجد حالة لدى القسم."),
     "empty_tab_closed": ("No case is closed yet.", "لا توجد حالة مغلقة بعد."),
     "empty_tab_all": ("No case has been sent yet.", "لم تُرسل أي حالة بعد."),
-    "empty_filtered": ("No case here matches these filters.", "لا توجد هنا حالة تطابق التصفية."),
+    "empty_filtered": (
+        "No case here matches these filters.",
+        "لا توجد هنا حالة تطابق عوامل التصفية.",
+    ),
+    # Beside a notice that no case can reach this person: says no more than it.
+    "empty_tab_unreachable": ("No cases here.", "لا توجد حالات هنا."),
     "empty_NO_ADVISOR_ID": (
         "Your account has no advisor id, so no student's case can reach you. Please contact"
         " the system administrator.",
